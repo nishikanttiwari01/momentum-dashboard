@@ -1,0 +1,1009 @@
+openapi: 3.1.0
+info:
+  title: Momentum Dashboard (Local-First)
+  version: 0.1.0
+  summary: OpenAPI-first contracts for React + FastAPI app (Parquet+SQLite).
+  description: Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
+servers:
+  - url: http://localhost:8000/api/v1
+
+tags:
+  - name: Health
+  - name: Screener
+  - name: Runs
+  - name: Universe
+  - name: Instruments
+  - name: Positions
+  - name: Snapshots
+  - name: Alerts
+  - name: Watchlist
+  - name: History
+  - name: Settings
+  - name: Learning
+
+paths:
+
+  /health:
+    get:
+      tags: [Health]
+      operationId: health
+      summary: Quick health (combined)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthState' }
+              examples:
+                example: { $ref: '#/components/examples/Health' }
+
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: healthLive
+      summary: Liveness probe
+      responses:
+        '200': { description: Live }
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: healthReady
+      summary: Readiness probe (SQLite + Parquet availability)
+      responses:
+        '200': { description: Ready }
+        '503':
+          description: Not ready
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+              examples:
+                example: { $ref: '#/components/examples/Problem503' }
+
+  /health/metrics:
+    get:
+      tags: [Health]
+      operationId: metrics
+      summary: Prometheus metrics (optional)
+      responses:
+        '200':
+          description: Prometheus exposition
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /screener:
+    get:
+      tags: [Screener]
+      operationId: listScreener
+      summary: Screener rows (filters, sort, pagination)
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Cursor'
+        - name: sort
+          in: query
+          description: Sort key (e.g., score.desc, rsi.asc)
+          schema: { type: string }
+        - name: filters
+          in: query
+          description: |
+            Filtering DSL via query params, e.g.:
+            rsi.gt=70, adx.gt=20, sector.in=IT,FIN, symbol.like=RELI
+          schema: { type: string }
+      responses:
+        '200':
+          description: Screener page
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScreenerRow' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+              examples:
+                example: { $ref: '#/components/examples/ScreenerList' }
+        '304': { description: Not Modified }
+        '422':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /scan:
+    post:
+      tags: [Screener]
+      operationId: postScan
+      summary: Trigger on-demand scan (idempotent)
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run_id: { $ref: '#/components/schemas/RunId' }
+              examples:
+                example:
+                  value: { run_id: "20250101153000" }
+        '429':
+          description: Rate limited
+          headers:
+            Retry-After: { $ref: '#/components/headers/RetryAfter' }
+            X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
+            X-RateLimit-Remaining: { $ref: '#/components/headers/XRateLimitRemaining' }
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /runs:
+    get:
+      tags: [Runs]
+      operationId: listRuns
+      summary: List recent scan runs
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/RunSummary' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+              examples:
+                example: { $ref: '#/components/examples/Runs' }
+
+  /runs/{run_id}:
+    get:
+      tags: [Runs]
+      operationId: getRun
+      summary: Run details
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/RunId' }
+      responses:
+        '200':
+          description: Run detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunDetail' }
+              examples:
+                example:
+                  value:
+                    run_id: "20250101153000"
+                    job_name: "scan_every_15m"
+                    started_at: "2025-01-01T15:30:00Z"
+                    ended_at: "2025-01-01T15:30:12Z"
+                    status: "SUCCEEDED"
+                    counts: { symbols_processed: 500, rows_written: 500 }
+        '404':
+          description: Not found
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /universe:
+    get:
+      tags: [Universe]
+      operationId: listUniverse
+      summary: List/search universe (symbols)
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: sector
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Universe list
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/UniverseInstrument' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+              examples:
+                example: { $ref: '#/components/examples/UniverseList' }
+        '304': { description: Not Modified }
+
+  /universe/sectors:
+    get:
+      tags: [Universe]
+      operationId: listSectors
+      summary: Sector facets with counts
+      responses:
+        '200':
+          description: Sectors
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SectorFacet' }
+              examples:
+                example: { $ref: '#/components/examples/Sectors' }
+
+  /instruments:
+    get:
+      tags: [Instruments]
+      operationId: listInstruments
+      summary: Search/autocomplete instruments
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Instruments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/UniverseInstrument' }
+                  pagination: { $ref: '#/components/schemas/Pagination' }
+
+  /instruments/{symbol}/detail:
+    get:
+      tags: [Instruments]
+      operationId: getInstrumentDetail
+      summary: Drawer detail for a symbol
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+      responses:
+        '200':
+          description: Drawer detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DrawerDetail' }
+              examples:
+                example: { $ref: '#/components/examples/Detail' }
+        '404':
+          description: Not found
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /instruments/{symbol}/prices:
+    get:
+      tags: [Instruments]
+      operationId: getInstrumentPrices
+      summary: Price slice for sparkline
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+        - name: range
+          in: query
+          description: e.g., 30d, 90d, 1y
+          schema: { type: string }
+      responses:
+        '200':
+          description: OHLCV candles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PriceCandle' }
+
+  /instruments/{symbol}/indicators:
+    get:
+      tags: [Instruments]
+      operationId: getInstrumentIndicators
+      summary: Indicator slice for chart tabs
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+        - name: range
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Indicator points
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IndicatorPoint' }
+
+  /positions:
+    get:
+      tags: [Positions]
+      operationId: listPositions
+      summary: List locked positions (optional filter by symbol)
+      parameters:
+        - name: symbol
+          in: query
+          schema: { $ref: '#/components/schemas/Symbol' }
+      responses:
+        '200':
+          description: Positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PositionOut' }
+              examples:
+                example: { $ref: '#/components/examples/Positions' }
+    post:
+      tags: [Positions]
+      operationId: createPosition
+      summary: Lock price / anchor baseline
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PositionIn' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PositionOut' }
+
+  /positions/{id}:
+    put:
+      tags: [Positions]
+      operationId: updatePosition
+      summary: Update note/price/date
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PositionIn' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PositionOut' }
+    delete:
+      tags: [Positions]
+      operationId: deletePosition
+      summary: Remove locked position
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Deleted }
+
+  /snapshots/pin:
+    post:
+      tags: [Snapshots]
+      operationId: pinSnapshot
+      summary: Pin a snapshot for a symbol
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SnapshotPinIn' }
+      responses:
+        '201':
+          description: Pinned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnapshotPinOut' }
+
+  /snapshots/pins:
+    get:
+      tags: [Snapshots]
+      operationId: listSnapshotPins
+      summary: List pins (optionally by symbol)
+      parameters:
+        - name: symbol
+          in: query
+          schema: { $ref: '#/components/schemas/Symbol' }
+      responses:
+        '200':
+          description: Pins
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SnapshotPinOut' }
+              examples:
+                example: { $ref: '#/components/examples/Pins' }
+
+  /snapshots/pin/{id}:
+    delete:
+      tags: [Snapshots]
+      operationId: unpinSnapshot
+      summary: Remove a pin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Unpinned }
+
+  /alerts:
+    get:
+      tags: [Alerts]
+      operationId: listAlerts
+      summary: List alert rules and states
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AlertState' }
+              examples:
+                example: { $ref: '#/components/examples/Alerts' }
+    post:
+      tags: [Alerts]
+      operationId: createAlert
+      summary: Create alert rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertRule' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertState' }
+
+  /alerts/{id}:
+    put:
+      tags: [Alerts]
+      operationId: updateAlert
+      summary: Update alert rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertRule' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertState' }
+    delete:
+      tags: [Alerts]
+      operationId: deleteAlert
+      summary: Delete alert rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Deleted }
+
+  /alerts/digest:
+    get:
+      tags: [Alerts]
+      operationId: previewAlertDigest
+      summary: Preview digest (no send)
+      responses:
+        '200':
+          description: Digest preview
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /watchlist:
+    get:
+      tags: [Watchlist]
+      operationId: getWatchlist
+      summary: Get user watchlists & symbols
+      responses:
+        '200':
+          description: Watchlists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lists:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        symbols:
+                          type: array
+                          items: { $ref: '#/components/schemas/Symbol' }
+              examples:
+                example: { $ref: '#/components/examples/Watchlist' }
+    post:
+      tags: [Watchlist]
+      operationId: addToWatchlist
+      summary: Add symbols (optionally create list)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                symbols:
+                  type: array
+                  items: { $ref: '#/components/schemas/Symbol' }
+              required: [symbols]
+      responses:
+        '201': { description: Added }
+
+  /watchlist/{symbol}:
+    delete:
+      tags: [Watchlist]
+      operationId: removeFromWatchlist
+      summary: Remove symbol from default or named list
+      parameters:
+        - $ref: '#/components/parameters/Symbol'
+        - name: list
+          in: query
+          schema: { type: string }
+      responses:
+        '204': { description: Removed }
+
+  /history:
+    get:
+      tags: [History]
+      operationId: listHistory
+      summary: Historical outcomes (linked to run_id)
+      parameters:
+        - name: date
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/HistoryRow' }
+              examples:
+                example: { $ref: '#/components/examples/History' }
+
+  /settings:
+    get:
+      tags: [Settings]
+      operationId: getSettings
+      summary: Read redacted YAML-backed settings
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Settings' }
+              examples:
+                example: { $ref: '#/components/examples/Settings' }
+    put:
+      tags: [Settings]
+      operationId: putSettings
+      summary: Update settings (validated)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Settings' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Settings' }
+
+  /learning:
+    get:
+      tags: [Learning]
+      operationId: getLearning
+      summary: Static learning content
+      responses:
+        '200':
+          description: Content
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+components:
+
+  parameters:
+    Symbol:
+      name: symbol
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Symbol' }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 2000, default: 100 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string }
+
+  headers:
+    ETag:
+      description: Entity tag of response payload
+      schema: { type: string }
+    RetryAfter:
+      description: Seconds to retry after rate limit
+      schema: { type: string }
+    XRateLimitLimit:
+      description: Request limit window
+      schema: { type: integer }
+    XRateLimitRemaining:
+      description: Remaining requests in window
+      schema: { type: integer }
+
+  schemas:
+    Symbol:
+      type: string
+      description: Canonical uppercase ticker
+      example: "RELIANCE"
+    RunId:
+      type: string
+      description: UTC timestamp yyyymmddHHMMss
+      pattern: '^[0-9]{14}$'
+      example: "20250101153000"
+
+    RunSummary:
+      type: object
+      properties:
+        run_id: { $ref: '#/components/schemas/RunId' }
+        job_name: { type: string }
+        started_at: { type: string, format: date-time }
+        ended_at: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [PENDING, RUNNING, SUCCEEDED, FAILED] }
+      required: [run_id, job_name, started_at, status]
+
+    RunDetail:
+      allOf:
+        - $ref: '#/components/schemas/RunSummary'
+        - type: object
+          properties:
+            counts:
+              type: object
+              properties:
+                symbols_processed: { type: integer }
+                rows_written: { type: integer }
+            error: { type: string, nullable: true }
+    Pagination:
+      type: object
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer, nullable: true }
+        next_cursor: { type: string, nullable: true }
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        code:
+          type: string
+          description: App-specific error code
+          enum: [VALIDATION_ERROR, RATE_LIMITED, SNAPSHOT_CONFLICT, NOT_FOUND]
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+    HealthState:
+      type: object
+      properties:
+        status: { type: string }
+        details:
+          type: object
+          additionalProperties: true
+
+    UniverseInstrument:
+      type: object
+      properties:
+        symbol: { $ref: '#/components/schemas/Symbol' }
+        name: { type: string }
+        sector: { type: string }
+        active: { type: boolean }
+      required: [symbol, name]
+
+    SectorFacet:
+      type: object
+      properties:
+        sector: { type: string }
+        count: { type: integer }
+
+    Score:
+      type: object
+      properties:
+        total: { type: number }
+        momentum_12_1m: { type: number }
+        momentum_6m: { type: number }
+        momentum_3m: { type: number }
+        momentum_1m: { type: number }
+        rsi_component: { type: number }
+        adx_component: { type: number }
+        volatility_penalty: { type: number }
+
+    Badge:
+      type: object
+      properties:
+        key: { type: string }
+        label: { type: string }
+        color: { type: string }
+
+    ScreenerRow:
+      type: object
+      properties:
+        symbol: { $ref: '#/components/schemas/Symbol' }
+        name: { type: string }
+        sector: { type: string }
+        last: { type: number }
+        change_pct: { type: number }
+        score: { $ref: '#/components/schemas/Score' }
+        badges:
+          type: array
+          items: { $ref: '#/components/schemas/Badge' }
+
+    NextAction:
+      type: object
+      properties:
+        action: { type: string, enum: [HOLD, BUY, TRIM, EXIT, TBD] }
+        reason: { type: string }
+
+    DrawerDetail:
+      type: object
+      properties:
+        symbol: { $ref: '#/components/schemas/Symbol' }
+        as_of: { type: string, format: date-time }
+        run_id: { $ref: '#/components/schemas/RunId' }
+        score: { $ref: '#/components/schemas/Score' }
+        indicators:
+          type: object
+          additionalProperties: { type: number }
+        badges:
+          type: array
+          items: { $ref: '#/components/schemas/Badge' }
+        next_action: { $ref: '#/components/schemas/NextAction' }
+
+    PriceCandle:
+      type: object
+      properties:
+        dt: { type: string, format: date }
+        open: { type: number }
+        high: { type: number }
+        low: { type: number }
+        close: { type: number }
+        volume: { type: number }
+
+    IndicatorPoint:
+      type: object
+      properties:
+        dt: { type: string, format: date }
+        key: { type: string, enum: [rsi, adx, ema12, ema26, ema50, ema200, obv, relvol] }
+        value: { type: number }
+
+    AlertRule:
+      type: object
+      properties:
+        symbol: { $ref: '#/components/schemas/Symbol' }
+        enabled: { type: boolean }
+        channels:
+          type: object
+          properties:
+            email: { type: boolean }
+            desktop: { type: boolean }
+            whatsapp: { type: boolean }
+        conditions:
+          type: object
+          additionalProperties: true
+      required: [symbol, enabled]
+
+    AlertState:
+      type: object
+      properties:
+        id: { type: integer }
+        rule: { $ref: '#/components/schemas/AlertRule' }
+        last_fired_at: { type: string, format: date-time, nullable: true }
+        muted_until: { type: string, format: date-time, nullable: true }
+
+    HistoryRow:
+      type: object
+      properties:
+        run_id: { $ref: '#/components/schemas/RunId' }
+        symbol: { $ref: '#/components/schemas/Symbol' }
+        outcome: { type: string }
+        pnl_pct: { type: number }
+        notes: { type: string }
+
+    Settings:
+      type: object
+      description: Redacted YAML-backed settings surfaced to UI
+      additionalProperties: true
+
+    PositionIn:
+      type: object
+      properties:
+        symbol: { $ref: '#/components/schemas/Symbol' }
+        price: { type: number }
+        as_of: { type: string, format: date-time }
+        note: { type: string }
+      required: [symbol, price, as_of]
+
+    PositionOut:
+      allOf:
+        - $ref: '#/components/schemas/PositionIn'
+        - type: object
+          properties:
+            id: { type: integer }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    SnapshotPinIn:
+      type: object
+      properties:
+        symbol: { $ref: '#/components/schemas/Symbol' }
+        run_id: { $ref: '#/components/schemas/RunId' }
+      required: [symbol, run_id]
+
+    SnapshotPinOut:
+      allOf:
+        - $ref: '#/components/schemas/SnapshotPinIn'
+        - type: object
+          properties:
+            id: { type: integer }
+            created_at: { type: string, format: date-time }
+
+  examples:
+    Health:
+      value: { status: "ok", details: { sqlite: "ready", parquet: "writable" } }
+    Problem503:
+      value:
+        type: "about:blank"
+        title: "Service Unavailable"
+        status: 503
+        detail: "Parquet directory not writable"
+        code: "SNAPSHOT_CONFLICT"
+    ScreenerList:
+      value:
+        items:
+          - symbol: "RELIANCE"
+            name: "Reliance Industries"
+            sector: "Energy"
+            last: 2700.5
+            change_pct: 1.2
+            score: { total: 78 }
+            badges: [{ key: "trend", label: "Uptrend", color: "green" }]
+        pagination: { page: 1, per_page: 100, total: 1 }
+    UniverseList:
+      value:
+        items:
+          - symbol: "INFY"
+            name: "Infosys"
+            sector: "IT"
+            active: true
+        pagination: { page: 1, per_page: 100, total: 1 }
+    Sectors:
+      value:
+        - { sector: "IT", count: 120 }
+        - { sector: "Energy", count: 50 }
+    Detail:
+      value:
+        symbol: "RELIANCE"
+        as_of: "2025-01-01T15:30:00Z"
+        run_id: "20250101153000"
+        score: { total: 78 }
+        indicators: { rsi: 65.3, adx: 24.1 }
+        badges: [{ key: "trend", label: "Uptrend", color: "green" }]
+        next_action: { action: "HOLD", reason: "ADX rising" }
+    Alerts:
+      value:
+        - id: 1
+          rule:
+            symbol: "RELIANCE"
+            enabled: true
+            channels: { email: true, desktop: true, whatsapp: false }
+            conditions: { rsi_gt: 70 }
+          last_fired_at: null
+          muted_until: null
+    History:
+      value:
+        - run_id: "20250101153000"
+          symbol: "RELIANCE"
+          outcome: "HIT_TP"
+          pnl_pct: 6.5
+          notes: "TP hit in 10 days"
+    Settings:
+      value:
+        app: { env: "development" }
+        logging: { level: "INFO" }
+    Runs:
+      value:
+        items:
+          - run_id: "20250101153000"
+            job_name: "scan_every_15m"
+            started_at: "2025-01-01T15:30:00Z"
+            ended_at: "2025-01-01T15:30:12Z"
+            status: "SUCCEEDED"
+        pagination: { page: 1, per_page: 50, total: 1 }
+    Positions:
+      value:
+        - id: 10
+          symbol: "RELIANCE"
+          price: 2600
+          as_of: "2025-01-01T10:00:00Z"
+          note: "Anchor from breakout"
+          created_at: "2025-01-01T10:00:01Z"
+          updated_at: "2025-01-01T10:00:01Z"
+    Pins:
+      value:
+        - id: 5
+          symbol: "RELIANCE"
+          run_id: "20250101153000"
+          created_at: "2025-01-01T15:31:00Z"
+    Watchlist:
+      value:
+        lists:
+          - name: "My Watchlist"
+            symbols: ["RELIANCE", "INFY"]

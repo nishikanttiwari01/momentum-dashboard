@@ -1,0 +1,58 @@
+# ----------------------
+# Python
+# ----------------------
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# ----------------------
+# OS cruft
+# ----------------------
+.DS_Store
+Thumbs.db
+
+# ----------------------
+# IDE/editor
+# ----------------------
+.idea/
+.vscode/
+
+# ----------------------
+# Local data / state
+# ----------------------
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ----------------------
+# Alembic
+# ----------------------
+alembic/versions/*.pyc
+alembic/versions/__pycache__/
+
+# ----------------------
+# Frontend (Node/React/Next.js)
+# ----------------------
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/.vercel/
+
+# ----------------------
+# Logs
+# ----------------------
+*.log
+logs/

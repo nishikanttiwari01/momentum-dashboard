@@ -1,0 +1,11 @@
+[
+  {
+    "id": 10,
+    "symbol": "RELIANCE",
+    "price": 2600,
+    "as_of": "2025-01-01T10:00:00Z",
+    "note": "Anchor from breakout",
+    "created_at": "2025-01-01T10:00:01Z",
+    "updated_at": "2025-01-01T10:00:01Z"
+  }
+]

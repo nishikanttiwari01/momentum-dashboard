@@ -1,0 +1,10 @@
+app:
+  env: prod-local
+
+storage:
+  sqlite_path: "./data/prod-local.db"
+  parquet_dir: "./data/parquet"
+
+
+schedules:
+  enabled: true

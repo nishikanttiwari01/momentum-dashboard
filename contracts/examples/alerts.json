@@ -1,0 +1,13 @@
+[
+  {
+    "id": 1,
+    "rule": {
+      "symbol": "RELIANCE",
+      "enabled": true,
+      "channels": { "email": true, "desktop": true, "whatsapp": false },
+      "conditions": { "rsi_gt": 70 }
+    },
+    "last_fired_at": null,
+    "muted_until": null
+  }
+]

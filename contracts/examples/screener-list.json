@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "symbol": "RELIANCE",
+      "name": "Reliance Industries",
+      "sector": "Energy",
+      "last": 2700.5,
+      "change_pct": 1.2,
+      "score": { "total": 78 },
+      "badges": [{ "key": "trend", "label": "Uptrend", "color": "green" }]
+    }
+  ],
+  "pagination": { "page": 1, "per_page": 100, "total": 1 }
+}

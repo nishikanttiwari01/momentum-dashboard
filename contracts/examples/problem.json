@@ -1,0 +1,7 @@
+{
+  "type": "about:blank",
+  "title": "Service Unavailable",
+  "status": 503,
+  "detail": "Parquet directory not writable",
+  "code": "SNAPSHOT_CONFLICT"
+}

@@ -1,0 +1,9 @@
+{
+  "symbol": "RELIANCE",
+  "as_of": "2025-01-01T15:30:00Z",
+  "run_id": "20250101153000",
+  "score": { "total": 78 },
+  "indicators": { "rsi": 65.3, "adx": 24.1 },
+  "badges": [{ "key": "trend", "label": "Uptrend", "color": "green" }],
+  "next_action": { "action": "HOLD", "reason": "ADX rising" }
+}
