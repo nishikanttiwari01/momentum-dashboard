@@ -10,5 +10,5 @@ uvicorn app.main:create_app --reload --factory
 cd backend
 pytest -q
 
-# to run one test
+# Single file tests
 pytest -q tests/test_parquet_datasets.py
