@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
-  title: Momentum Dashboard (Local-First)
-  version: 0.1.0
+  title: Momentum Dashboard API
+  version: 0.7.0   # bump
   summary: OpenAPI-first contracts for React + FastAPI app (Parquet+SQLite).
   description: Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
 servers:
@@ -72,48 +72,74 @@ paths:
             text/plain:
               schema: { type: string }
 
-  /screener:
+  /api/v1/screener:
     get:
       tags: [Screener]
-      operationId: listScreener
-      summary: Screener rows (filters, sort, pagination)
+      summary: List screener rows (filtered, sorted, paginated)
       parameters:
-        - $ref: '#/components/parameters/IfNoneMatch'
-        - $ref: '#/components/parameters/Page'
-        - $ref: '#/components/parameters/PerPage'
-        - $ref: '#/components/parameters/Cursor'
-        - name: sort
+        - name: page
           in: query
-          description: Sort key (e.g., score.desc, rsi.asc)
-          schema: { type: string }
-        - name: filters
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: per_page
           in: query
-          description: |
-            Filtering DSL via query params, e.g.:
-            rsi.gt=70, adx.gt=20, sector.in=IT,FIN, symbol.like=RELI
-          schema: { type: string }
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [score, pct_today, rsi, adx, proximity_52w_high, relvol20, price, name, sector, wk_change, wk_change_pct]
+            default: score
+        - name: sort_dir
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: universe
+          in: query
+          schema: { type: string, enum: [NIFTY50, NIFTY100, NIFTY500, MIDCAP, SMALLCAP, ALL] }
+        - name: sector_in
+          in: query
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: true
+        - name: score_min
+          in: query
+          schema: { type: number }
+        - name: rsi_min
+          in: query
+          schema: { type: number }
+        - name: rsi_max
+          in: query
+          schema: { type: number }
+        - name: adx_min
+          in: query
+          schema: { type: number }
+        - name: price_min
+          in: query
+          schema: { type: number }
+        - name: price_max
+          in: query
+          schema: { type: number }
+        - name: pct_today_min
+          in: query
+          schema: { type: number }
+        - name: proximity_52w_high_max
+          in: query
+          schema: { type: number, description: "Within X% of 52W high if <= X" }
+        - name: watchlist_only
+          in: query
+          schema: { type: boolean, default: false }
+        - name: stale_exclude
+          in: query
+          schema: { type: boolean, default: true }
+        - name: run_id
+          in: query
+          schema: { type: string, description: "If omitted, server uses latest snapshot" }
       responses:
-        '200':
-          description: Screener page
-          headers:
-            ETag: { $ref: '#/components/headers/ETag' }
+        "200":
+          description: Screener result page
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items: { $ref: '#/components/schemas/ScreenerRow' }
-                  pagination: { $ref: '#/components/schemas/Pagination' }
-              examples:
-                example: { $ref: '#/components/examples/ScreenerList' }
-        '304': { description: Not Modified }
-        '422':
-          description: Validation error
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
+                $ref: "#/components/schemas/ScreenerList"
 
   /scan:
     post:
@@ -789,22 +815,60 @@ components:
     Badge:
       type: object
       properties:
-        key: { type: string }
-        label: { type: string }
-        color: { type: string }
+        code: { type: string, example: "very_high_breakout" }
+        text: { type: string, example: "Very High Breakout" }
 
     ScreenerRow:
       type: object
+      # Keep required minimal to avoid breaking; others are optional but documented.
+      required: [symbol, last, change_pct, score]
       properties:
-        symbol: { $ref: '#/components/schemas/Symbol' }
-        name: { type: string }
-        sector: { type: string }
-        last: { type: number }
-        change_pct: { type: number }
-        score: { $ref: '#/components/schemas/Score' }
+        symbol:            { type: string, example: "RELIANCE" }
+        name:              { type: string, example: "Reliance Industries" }
+        sector:            { type: string, example: "Energy" }
+        last:              { type: number, format: float, example: 2700.5 }
+        change_pct:        { type: number, format: float, example: 1.2 }
+
+        wk_change:         { type: number, format: float, nullable: true, example: 35.8 }
+        wk_change_pct:     { type: number, format: float, nullable: true, example: 1.35 }
         badges:
           type: array
-          items: { $ref: '#/components/schemas/Badge' }
+          items: { $ref: "#/components/schemas/Badge" }
+
+        score:             { type: number, format: float, example: 78 }
+        strength:          { type: string, example: "Moderate" }
+
+        rsi:               { type: number, format: float, example: 59.32 }
+        adx:               { type: number, format: float, example: 17.91 }
+        ret_12_1m:         { type: number, format: float, example: 15.4 }
+        ret_6m:            { type: number, format: float, example: 10.8 }
+        ret_3m:            { type: number, format: float, example: 6.1 }
+        ret_1m:            { type: number, format: float, example: 2.3 }
+
+        pct_from_52w_high: { type: number, format: float, example: -4.2 }
+        atr_pct:           { type: number, format: float, example: 2.1 }
+        liquidity:         { type: number, format: float, example: 180000000 }
+        vol_spike:         { type: number, format: float, example: 1.4 }
+        pct_today:         { type: number, format: float, example: 0.85 }
+
+        buy:               { type: boolean, example: false }
+        reason:            { type: string, example: "" }
+        source:            { type: string, example: "scan" }
+        stale:             { type: boolean, example: false }
+
+        run_id:            { type: string, example: "20250910T153000Z" }
+        as_of:             { type: string, format: date-time, example: "2025-09-10T15:30:00Z" }
+        last_index:        { type: string, format: date, example: "2025-09-01" }
+
+
+    ScreenerList:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ScreenerRow" }
+        pagination:
+          $ref: "#/components/schemas/Pagination"
 
     NextAction:
       type: object

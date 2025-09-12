@@ -6,6 +6,7 @@ import pyarrow.compute as pc
 
 from app.repos.parquet import datasets
 
+
 def _resolve_run_id(as_of_str: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     """
     If as_of_str is provided (YYYY-MM-DD), pick the latest run_id <= that date.
@@ -15,6 +16,7 @@ def _resolve_run_id(as_of_str: Optional[str]) -> Tuple[Optional[str], Optional[s
     # Phase 9: map as_of->rid using a runs index; for now, resolve to latest.
     as_of = None
     return rid, as_of
+
 
 def _arrow_filter(tab: pa.Table, filters):
     """
@@ -58,6 +60,7 @@ def _arrow_filter(tab: pa.Table, filters):
         return tab
     return tab.filter(mask)
 
+
 def _arrow_sort_slice(tab: pa.Table, sort: str, page: int, per_page: int) -> pa.Table:
     """
     Arrow 17: Table.sort_by accepts list of tuples: [("col", "ascending"|"descending")].
@@ -83,6 +86,7 @@ def _arrow_sort_slice(tab: pa.Table, sort: str, page: int, per_page: int) -> pa.
     offset = max(0, (page - 1) * per_page)
     return tab.slice(offset, per_page)
 
+
 def _synthesize_badges(row: Dict[str, Any]) -> List[Dict[str, str]]:
     badges: List[Dict[str, str]] = []
     # If parquet has booleans like 'breakout', 'near_uc', map to badge objects.
@@ -92,6 +96,7 @@ def _synthesize_badges(row: Dict[str, Any]) -> List[Dict[str, str]]:
         badges.append({"key": "near_uc", "label": "Near UC", "color": "orange"})
     # You can add more mappings later (e.g., 'overbought', 'new_high', etc.)
     return badges
+
 
 class ScoresRepo:
     def read(
@@ -117,14 +122,12 @@ class ScoresRepo:
         # Read table (projection for speed)
         tab = datasets.scan("scores", run_id=rid, columns=None)  # read all; filter/projection below
 
-# ... unchanged code above ...
-
         # Filter
         tab = _arrow_filter(tab, filters)
 
         total = tab.num_rows
 
-        # NEW: capture as_of before projection (if present)
+        # Capture as_of before projection (if present)
         as_of_value = None
         if total > 0 and "as_of" in tab.column_names:
             try:
@@ -153,11 +156,36 @@ class ScoresRepo:
         arrays = {name: tab[name] for name in tab.column_names}
         for i in range(tab.num_rows):
             row = {name: arrays[name][i].as_py() for name in tab.column_names}
+
             # Ensure ret_1w exists even if parquet lacks it (Phase 9 will populate)
             if "ret_1w" not in row:
                 row["ret_1w"] = None
-            # Synthesize badges from boolean columns if present
-            row["badges"] = _synthesize_badges(row)
+
+            # Phase7: derive 1-week fields if missing (wk_change & wk_change_pct) ----------
+            if row.get("wk_change") is None or row.get("wk_change_pct") is None:  # Phase7
+                last = row.get("last")                                           # Phase7
+                ret_1w = row.get("ret_1w")                                       # Phase7 (percent)
+                wk_chg = wk_pct = None                                           # Phase7
+                try:                                                             # Phase7
+                    if last is not None and ret_1w is not None:                  # Phase7
+                        r = float(ret_1w)                                        # Phase7
+                        denom = 1.0 + (r / 100.0)                                # Phase7
+                        if denom > 0.0:                                          # Phase7
+                            base = float(last) / denom                           # Phase7
+                            wk_chg = float(last) - base                          # Phase7
+                            wk_pct = r                                           # Phase7
+                except Exception:                                                # Phase7
+                    wk_chg, wk_pct = None, None                                 # Phase7
+                row.setdefault("wk_change", wk_chg)                              # Phase7
+                row.setdefault("wk_change_pct", wk_pct)                          # Phase7
+            # ---------------------------------------------------------------------------
+
+            # Keep existing badges if present; otherwise synthesize
+            if "badges" in row and row["badges"]:  # preserve provided badges
+                pass
+            else:
+                row["badges"] = _synthesize_badges(row)
+
             out.append(row)
 
         # If as_of wasn’t resolved from run-index, use captured value (if any)

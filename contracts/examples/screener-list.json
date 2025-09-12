@@ -6,9 +6,44 @@
       "sector": "Energy",
       "last": 2700.5,
       "change_pct": 1.2,
-      "score": { "total": 78 },
-      "badges": [{ "key": "trend", "label": "Uptrend", "color": "green" }]
+
+      "wk_change": 35.8,
+      "wk_change_pct": 1.35,
+      "badges": [
+        { "code": "very_high_breakout", "text": "Very High Breakout" },
+        { "code": "high_momentum", "text": "High Momentum" }
+      ],
+
+      "score": 78,
+      "strength": "Moderate",
+
+      "rsi": 59.32,
+      "adx": 17.91,
+      "ret_12_1m": 15.4,
+      "ret_6m": 10.8,
+      "ret_3m": 6.1,
+      "ret_1m": 2.3,
+
+      "pct_from_52w_high": -4.2,
+      "atr_pct": 2.1,
+      "liquidity": 180000000,
+      "vol_spike": 1.4,
+      "pct_today": 0.85,
+
+      "buy": false,
+      "reason": "",
+      "source": "scan",
+      "stale": false,
+
+      "run_id": "20250910T153000Z",
+      "as_of": "2025-09-10T15:30:00Z",
+      "last_index": "2025-09-01"
     }
   ],
-  "pagination": { "page": 1, "per_page": 100, "total": 1 }
+  "pagination": {
+    "page": 1,
+    "per_page": 100,
+    "total": 1,
+    "next_cursor": null
+  }
 }

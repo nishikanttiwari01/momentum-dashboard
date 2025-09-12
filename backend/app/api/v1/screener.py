@@ -39,12 +39,47 @@ def _parse_filters(params) -> Dict[tuple[str, str], Any]:
 
 
 def _badge(b: dict) -> dict:
-    """Normalize a badge dict into the expected shape."""
+    """Normalize a badge dict into the expected shape.
+    Phase7: keep key/label/color, also expose code/text for the new compact schema.
+    """
     return {
         "key": b.get("key", ""),
         "label": b.get("label", ""),
         "color": b.get("color", "grey"),
+        # Phase7 additions:
+        "code": b.get("code") or b.get("key") or "",
+        "text": b.get("text") or b.get("label") or "",
     }
+
+
+def _derive_week_fields(row: Dict[str, Any]) -> None:
+    """Phase7: ensure wk_change and wk_change_pct exist.
+    If parquet supplies ret_1w (percent), we compute:
+      base = last / (1 + ret_1w/100)
+      wk_change = last - base
+      wk_change_pct = ret_1w
+    """
+    if row.get("wk_change") is not None and row.get("wk_change_pct") is not None:
+        return
+    last = row.get("last")
+    ret_1w = row.get("ret_1w")  # percent, e.g. 1.35
+    if last is None or ret_1w is None:
+        row.setdefault("wk_change", None)
+        row.setdefault("wk_change_pct", None)
+        return
+    try:
+        r = float(ret_1w)
+        denom = 1.0 + (r / 100.0)
+        if denom <= 0.0:
+            row["wk_change"] = None
+            row["wk_change_pct"] = None
+            return
+        base = float(last) / denom
+        row["wk_change"] = float(last) - base
+        row["wk_change_pct"] = r
+    except Exception:
+        row["wk_change"] = None
+        row["wk_change_pct"] = None
 
 
 @router.get("/screener", response_model=ScreenerList)
@@ -73,6 +108,8 @@ def list_screener(
                 "ret_1w","pct_from_52w_high","atr_pct","liquidity","vol_spike","pct_today",
                 "buy","reason","source","stale","badges",
                 "run_id","as_of","last_index",
+                # Phase7: if parquet already has these, include them directly:
+                "wk_change","wk_change_pct",
             ],
         )
     except Exception:
@@ -81,9 +118,13 @@ def list_screener(
     # Normalize rows
     norm_items: List[ScreenerRow] = []
     for r in items:
+        # Phase7: derive week fields when not present
+        _derive_week_fields(r)
+        # Phase7: normalize badges (keep old fields, add code/text)
         badges = r.get("badges") or []
         r["badges"] = [_badge(b) for b in badges if isinstance(b, dict)]
         r.setdefault("symbol", "")
+        r.pop("ret_1w", None)        # <-- Phase7: ensure internal helper is not returned
         norm_items.append(ScreenerRow(**r))
 
     return {

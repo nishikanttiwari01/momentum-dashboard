@@ -2,6 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
+import math
 
 import pyarrow as pa
 from fastapi.testclient import TestClient
@@ -26,6 +27,7 @@ def _seed_scores(tmp_root: Path, run_id: str = "20250912T101500Z", rows: int = 4
         "ret_6m": [10.0]*rows,
         "ret_3m": [6.0]*rows,
         "ret_1m": [2.0]*rows,
+        # kept in parquet so API can derive week fields
         "ret_1w": [0.5, 0.4, 0.2, 0.1][:rows],
         "pct_from_52w_high": [-4.0]*rows,
         "atr_pct": [2.0]*rows,
@@ -39,6 +41,7 @@ def _seed_scores(tmp_root: Path, run_id: str = "20250912T101500Z", rows: int = 4
         "run_id": [run_id]*rows,
         "as_of": [datetime.now(timezone.utc).isoformat().replace("+00:00","Z")]*rows,
         "last_index": ["2025-09-01"]*rows,
+        # simple flags that may synthesize badges
         "breakout": [True, False, False, False][:rows],
         "near_uc":  [False, True,  False, False][:rows],
     }
@@ -62,12 +65,28 @@ def test_screener_api_happy_path(tmp_path, monkeypatch):
     r = client.get("/api/v1/screener")
     assert r.status_code == 200
     body = r.json()
+
+    # envelope + trace
     assert body["pagination"]["total"] == 4
     assert body["run_id"] == rid
     assert isinstance(body["items"], list)
-    assert "symbol" in body["items"][0]
-    assert "ret_1w" in body["items"][0]
-    assert isinstance(body["items"][0]["badges"], list)
+
+    # row shape
+    row0 = body["items"][0]
+    assert "symbol" in row0
+    assert "wk_change" in row0
+    assert "wk_change_pct" in row0
+    assert isinstance(row0.get("badges", []), list)
+    # internal parquet helper should not leak
+    assert "ret_1w" not in row0
+
+    # math sanity: wk_change ≈ last - last/(1 + pct/100)
+    if row0["wk_change"] is not None and row0["wk_change_pct"] is not None:
+        last = float(row0["last"])
+        pct = float(row0["wk_change_pct"])
+        base = last / (1.0 + pct / 100.0)
+        expected = last - base
+        assert math.isclose(row0["wk_change"], expected, rel_tol=1e-6, abs_tol=1e-6)
 
     # Filters + sort + page
     r2 = client.get("/api/v1/screener?sector.in=Energy&score.gte=60&sort=score.desc&page=1&per_page=1")
