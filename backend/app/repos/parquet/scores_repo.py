@@ -161,27 +161,26 @@ class ScoresRepo:
             if "ret_1w" not in row:
                 row["ret_1w"] = None
 
-            # Phase7: derive 1-week fields if missing (wk_change & wk_change_pct) ----------
-            if row.get("wk_change") is None or row.get("wk_change_pct") is None:  # Phase7
-                last = row.get("last")                                           # Phase7
-                ret_1w = row.get("ret_1w")                                       # Phase7 (percent)
-                wk_chg = wk_pct = None                                           # Phase7
-                try:                                                             # Phase7
-                    if last is not None and ret_1w is not None:                  # Phase7
-                        r = float(ret_1w)                                        # Phase7
-                        denom = 1.0 + (r / 100.0)                                # Phase7
-                        if denom > 0.0:                                          # Phase7
-                            base = float(last) / denom                           # Phase7
-                            wk_chg = float(last) - base                          # Phase7
-                            wk_pct = r                                           # Phase7
-                except Exception:                                                # Phase7
-                    wk_chg, wk_pct = None, None                                 # Phase7
-                row.setdefault("wk_change", wk_chg)                              # Phase7
-                row.setdefault("wk_change_pct", wk_pct)                          # Phase7
-            # ---------------------------------------------------------------------------
+            # Phase7: derive 1-week fields if missing (wk_change & wk_change_pct)
+            if row.get("wk_change") is None or row.get("wk_change_pct") is None:
+                last = row.get("last")
+                ret_1w = row.get("ret_1w")  # percent
+                wk_chg = wk_pct = None
+                try:
+                    if last is not None and ret_1w is not None:
+                        r = float(ret_1w)
+                        denom = 1.0 + (r / 100.0)
+                        if denom > 0.0:
+                            base = float(last) / denom
+                            wk_chg = float(last) - base
+                            wk_pct = r
+                except Exception:
+                    wk_chg, wk_pct = None, None
+                row.setdefault("wk_change", wk_chg)
+                row.setdefault("wk_change_pct", wk_pct)
 
             # Keep existing badges if present; otherwise synthesize
-            if "badges" in row and row["badges"]:  # preserve provided badges
+            if "badges" in row and row["badges"]:
                 pass
             else:
                 row["badges"] = _synthesize_badges(row)
@@ -193,3 +192,21 @@ class ScoresRepo:
             resolved_as_of = as_of_value
 
         return out, total, rid, resolved_as_of
+
+    # ---- Phase 8: tiny helpers needed by the Detail service ----
+
+    def latest_run(self) -> Tuple[Optional[str], Optional[str]]:
+        """Return the latest available run_id for 'scores' (and as_of if tracked)."""
+        rid = datasets.latest_snapshot("scores")
+        as_of = None
+        return rid, as_of
+
+    def read_one(self, *, symbol: str, run_id: str) -> Optional[Dict[str, Any]]:
+        """Return a single row for `symbol` from the given `run_id`."""
+        tab = datasets.scan("scores", run_id=run_id, columns=None)
+        if "symbol" not in tab.column_names:
+            return None
+        t2 = tab.filter(pc.equal(tab["symbol"], symbol))
+        if t2.num_rows == 0:
+            return None
+        return {name: t2[name][0].as_py() for name in t2.column_names}

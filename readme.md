@@ -10,5 +10,8 @@ uvicorn app.main:create_app --reload --factory
 cd backend
 pytest -q
 
-# Single file tests
+## Single file tests
 pytest -q tests/test_parquet_datasets.py
+
+## Overall Test Coverage
+pytest --cov=app --cov-report=html

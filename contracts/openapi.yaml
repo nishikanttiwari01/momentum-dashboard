@@ -553,6 +553,32 @@ paths:
                 type: object
                 additionalProperties: true
 
+  /api/v1/instruments/{symbol}/detail:
+    get:
+      tags: [Instruments]
+      summary: Get instrument drawer detail (backend-only)
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema: { type: string }
+          description: Canonical symbol, e.g. TCS.NS
+        - name: run_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: Use a specific snapshot; defaults to pinned or latest
+      responses:
+        "200":
+          description: Drawer detail payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrawerDetail"
+              examples:
+                default:
+                  $ref: "#/components/examples/DrawerDetailExample"
+
   /watchlist:
     get:
       tags: [Watchlist]
@@ -876,21 +902,6 @@ components:
         action: { type: string, enum: [HOLD, BUY, TRIM, EXIT, TBD] }
         reason: { type: string }
 
-    DrawerDetail:
-      type: object
-      properties:
-        symbol: { $ref: '#/components/schemas/Symbol' }
-        as_of: { type: string, format: date-time }
-        run_id: { $ref: '#/components/schemas/RunId' }
-        score: { $ref: '#/components/schemas/Score' }
-        indicators:
-          type: object
-          additionalProperties: { type: number }
-        badges:
-          type: array
-          items: { $ref: '#/components/schemas/Badge' }
-        next_action: { $ref: '#/components/schemas/NextAction' }
-
     PriceCandle:
       type: object
       properties:
@@ -978,6 +989,131 @@ components:
           properties:
             id: { type: integer }
             created_at: { type: string, format: date-time }
+
+    DrawerDetail:
+      type: object
+      properties:
+        run_id:       { type: string, example: "20250911_153000" }
+        as_of:        { type: string, format: date-time, example: "2025-09-11T15:30:00Z" }
+        symbol:       { type: string, example: "TCS.NS" }
+        symbol_canon: { type: string, example: "TCS.NS" }
+        name:         { type: string, example: "Tata Consultancy Services" }
+        sector:       { type: string, example: "IT Services" }
+
+        price:        { type: number, format: float, example: 4012.5 }
+        pct_today:    { type: number, format: float, example: 1.24 }
+        score:        { type: number, format: float, example: 0.82 }
+
+        indicators:
+          $ref: "#/components/schemas/Indicators"
+
+        badges:
+          type: array
+          items: { $ref: "#/components/schemas/Badge" }
+
+        position:
+          $ref: "#/components/schemas/Position"
+
+        method_pill:  { type: string, example: "EMA10" }
+
+        meters:
+          type: object
+          properties:
+            risk:     { $ref: "#/components/schemas/Meter" }
+            euphoria: { $ref: "#/components/schemas/Meter" }
+
+        next_action:
+          $ref: "#/components/schemas/DrawerNextAction"
+
+        alert_templates:
+          type: array
+          items: { $ref: "#/components/schemas/AlertTemplate" }
+
+        channels:
+          $ref: "#/components/schemas/Channels"
+
+    Indicators:
+      type: object
+      properties:
+        rsi14:                  { type: number, format: float, example: 68.4 }
+        adx14:                  { type: number, format: float, example: 32.1 }
+        adx_slope:              { type: number, format: float, example: 0.9 }
+        ema_fast:               { type: integer, example: 8 }
+        ema_fast_value:         { type: number, format: float, example: 3950.3 }
+        ema_slow:               { type: integer, example: 10 }
+        ema_slow_value:         { type: number, format: float, example: 3928.7 }
+        relvol20:               { type: number, format: float, example: 1.8 }
+        proximity_52w_high_pct: { type: number, format: float, example: 0.7 }
+
+    Position:
+      type: object
+      properties:
+        entry_price:          { type: number, format: float, nullable: true, example: 3840.0 }
+        entry_price_locked:   { type: number, format: float, nullable: true, example: 3820.0 }
+        qty:                  { type: integer, nullable: true, example: 50 }
+        trade_on:             { type: boolean, example: true }
+        stop_now:             { type: number, format: float, nullable: true, example: 3925.0 }
+        exit_close_threshold: { type: number, format: float, nullable: true, example: 3901.5 }
+        breakeven_active:     { type: boolean, example: true }
+        euphoria_on:          { type: boolean, example: false }
+        note:                 { type: string, nullable: true, example: null }
+
+    Meter:
+      type: object
+      properties:
+        level:
+          type: string
+          enum: [Low, Medium, High]
+          example: Medium
+        basis:
+          type: object
+          additionalProperties:
+            type: number
+          example:
+            atr_pct: 2.1
+            spread_pct: 0.18
+
+    DrawerNextAction:
+      type: object
+      properties:
+        code:    { type: string, example: "HOLD_TRAIL" }
+        text:    { type: string, example: "Hold (trail stop at ₹3925.0)" }
+        reasons:
+          type: array
+          items: { type: string }
+          example: ["Close ≥ EMA10", "Momentum intact"]
+        refs:
+          type: object
+          additionalProperties: true
+          example:
+            stop_now: 3925.0
+            ema_n: 10
+            ema_value: 3928.7
+
+    AlertTemplate:
+      type: object
+      properties:
+        code:    { type: string, example: "price_crosses" }
+        example: { type: string, example: "price crosses ₹4050" }
+
+    Channels:
+      type: object
+      properties:
+        email:
+          type: object
+          properties:
+            enabled: { type: boolean, example: true }
+            sound:   { type: boolean, example: false }
+        desktop:
+          type: object
+          properties:
+            enabled: { type: boolean, example: true }
+            sound:   { type: boolean, example: true }
+        whatsapp:
+          type: object
+          properties:
+            enabled: { type: boolean, example: false }
+
 
   examples:
     Health:
@@ -1071,3 +1207,57 @@ components:
         lists:
           - name: "My Watchlist"
             symbols: ["RELIANCE", "INFY"]
+    DrawerDetailExample:
+      summary: Full drawer detail
+      value:
+        run_id: "20250911_153000"
+        as_of: "2025-09-11T15:30:00Z"
+        symbol: "TCS.NS"
+        symbol_canon: "TCS.NS"
+        name: "Tata Consultancy Services"
+        sector: "IT Services"
+        price: 4012.50
+        pct_today: 1.24
+        score: 0.82
+        indicators:
+          rsi14: 68.4
+          adx14: 32.1
+          adx_slope: 0.9
+          ema_fast: 8
+          ema_fast_value: 3950.3
+          ema_slow: 10
+          ema_slow_value: 3928.7
+          relvol20: 1.8
+          proximity_52w_high_pct: 0.7
+        badges:
+          - { code: "very_high_breakout", text: "Very High Breakout" }
+          - { code: "high_momentum",      text: "High Momentum" }
+        position:
+          entry_price: 3840.0
+          entry_price_locked: 3820.0
+          qty: 50
+          trade_on: true
+          stop_now: 3925.0
+          exit_close_threshold: 3901.5
+          breakeven_active: true
+          euphoria_on: false
+          note: null
+        method_pill: "EMA10"
+        meters:
+          risk:     { level: "Medium",  basis: { atr_pct: 2.1, spread_pct: 0.18 } }
+          euphoria: { level: "Medium",  basis: { rsi14: 68.4, adx14: 32.1 } }
+        next_action:
+          code: "HOLD_TRAIL"
+          text: "Hold (trail stop at ₹3925.0)"
+          reasons: ["Close ≥ EMA10", "Momentum intact"]
+          refs: { stop_now: 3925.0, ema_n: 10, ema_value: 3928.7 }
+        alert_templates:
+          - { code: "price_crosses",    example: "price crosses ₹4050" }
+          - { code: "enters_breakout",  example: "enters breakout" }
+          - { code: "close_below_ema",  example: "close < EMAₙ (₹3928.7)" }
+          - { code: "breakeven_active", example: "breakeven active" }
+          - { code: "stop_hit",         example: "stop hit" }
+        channels:
+          email:   { enabled: true,  sound: false }
+          desktop: { enabled: true,  sound: true  }
+          whatsapp:{ enabled: false }

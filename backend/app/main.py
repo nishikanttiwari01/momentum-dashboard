@@ -19,6 +19,8 @@ from app.api.errors import (
     on_unhandled_exception,
 )
 from app.core import db
+from app.api.v1 import instruments
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(alerts.router,      prefix=prefix, tags=["Alerts"])
     app.include_router(history.router,     prefix=prefix, tags=["History"])
     app.include_router(settings.router,    prefix=prefix, tags=["Settings"])
+    app.include_router(instruments.router, prefix="/api/v1")
 
     return app
 

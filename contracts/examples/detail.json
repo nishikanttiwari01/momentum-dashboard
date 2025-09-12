@@ -1,9 +1,81 @@
 {
-  "symbol": "RELIANCE",
-  "as_of": "2025-01-01T15:30:00Z",
-  "run_id": "20250101153000",
-  "score": { "total": 78 },
-  "indicators": { "rsi": 65.3, "adx": 24.1 },
-  "badges": [{ "key": "trend", "label": "Uptrend", "color": "green" }],
-  "next_action": { "action": "HOLD", "reason": "ADX rising" }
+  "run_id": "20250911_153000",
+  "as_of": "2025-09-11T15:30:00Z",
+
+  "symbol": "TCS.NS",
+  "symbol_canon": "TCS.NS",
+  "name": "Tata Consultancy Services",
+  "sector": "IT Services",
+
+  "price": 4012.50,
+  "pct_today": 1.24,
+  "score": 0.82,
+
+  "indicators": {
+    "rsi14": 68.4,
+    "adx14": 32.1,
+    "adx_slope": 0.9,
+    "ema_fast": 8,
+    "ema_fast_value": 3950.3,
+    "ema_slow": 10,
+    "ema_slow_value": 3928.7,
+    "relvol20": 1.8,
+    "proximity_52w_high_pct": 0.7
+  },
+
+  "badges": [
+    { "code": "very_high_breakout", "text": "Very High Breakout" },
+    { "code": "high_momentum",      "text": "High Momentum" }
+  ],
+
+  "position": {
+    "entry_price": 3840.0,
+    "entry_price_locked": 3820.0,
+    "qty": 50,
+    "trade_on": true,
+
+    "stop_now": 3925.0,
+    "exit_close_threshold": 3901.5,
+    "breakeven_active": true,
+    "euphoria_on": false,
+    "note": null
+  },
+
+  "method_pill": "EMA10",
+
+  "meters": {
+    "risk": {
+      "level": "Medium",
+      "basis": { "atr_pct": 2.1, "spread_pct": 0.18 }
+    },
+    "euphoria": {
+      "level": "Medium",
+      "basis": { "rsi14": 68.4, "adx14": 32.1 }
+    }
+  },
+
+  "next_action": {
+    "code": "HOLD_TRAIL",
+    "text": "Hold (trail stop at ₹3925.0)",
+    "reasons": ["Close ≥ EMA10", "Momentum intact"],
+    "refs": {
+      "stop_now": 3925.0,
+      "ema_n": 10,
+      "ema_value": 3928.7
+    }
+  },
+
+  "alert_templates": [
+    { "code": "price_crosses",    "example": "price crosses ₹4050" },
+    { "code": "enters_breakout",  "example": "enters breakout" },
+    { "code": "close_below_ema",  "example": "close < EMAₙ (₹3928.7)" },
+    { "code": "breakeven_active", "example": "breakeven active" },
+    { "code": "stop_hit",         "example": "stop hit" }
+  ],
+
+  "channels": {
+    "email":   { "enabled": true,  "sound": false },
+    "desktop": { "enabled": true,  "sound": true  },
+    "whatsapp":{ "enabled": false }
+  }
 }

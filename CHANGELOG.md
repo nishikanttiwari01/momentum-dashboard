@@ -4,6 +4,40 @@ All notable changes to this project will be documented here.
 We follow a **phase-based versioning** (v0.x.0) where each phase corresponds to a locked milestone.
 
 ---
+## [0.8.0] - 2025-09-12
+### Added
+- **Endpoint:** `GET /api/v1/instruments/{symbol}/detail` returns the Drawer Detail payload.
+- **Service layer:** `app/services/detail_service.py` to compose scores + indicators + positions + pins.
+- **Domain logic:** `app/domain/meters.py` (risk/euphoria), `app/domain/next_action.py` (next_action, method pill).
+- **Repos:**
+  - `ScoresRepo.latest_run()` to resolve latest snapshot.
+  - `ScoresRepo.read_one(symbol, run_id)` for single-row lookups.
+  - `IndicatorsRepo.read_one(symbol, run_id)` minimal reader.
+  - `PositionsRepo.get(symbol)` returns position dict incl. `entry_price_locked`, `qty`; derives `trade_on`.
+  - `SnapshotPinsRepo.get(symbol)` returns pinned `run_id`.
+- **Drawer fields:**
+  - `position.entry_price`, `position.entry_price_locked`, `position.qty`, `position.trade_on`.
+  - `meters.risk`, `meters.euphoria`.
+  - `next_action.code`, `next_action.text`, `next_action.refs`, `method_pill`.
+  - `badges[]` passthrough.
+  - Trace fields: `run_id`, `as_of`, `symbol_canon`.
+  - `score_total_0_100` (normalized score; `score` retained for back-compat).
+- **Optional slice:** `GET /api/v1/instruments/{symbol}/sparkline` (returns empty list if dataset helper not present).
+
+### Changed
+- **OpenAPI (`contracts/openapi.yaml`):** Added DrawerDetail schema & `/instruments/{symbol}/detail` path; reused existing `NextAction` to avoid duplicates.
+- **Routers:** `app/api/v1/instruments.py` (new) wired into `main.py`.
+- **Error mapping:** Instruments route now returns `404 {detail: "Snapshot not found"}` when no run is available.
+
+### Fixed
+- None applicable.
+
+### Notes
+- **No DB migrations.** `trade_on` is derived from `qty > 0` when not stored.
+- **Back-compat:** Kept existing imports working; `PositionsRepo` class accepts optional session.  
+- **Frontend:** No changes required in Phase 8; endpoint is ready when FE implements the drawer.
+
+
 ## v0.7.0 — Phase 7: Screener Read Path (2025-09-12)
 - Implemented real **GET /api/v1/screener** backed by Parquet “scores” snapshots.
 - Added filtering DSL (server-side):
