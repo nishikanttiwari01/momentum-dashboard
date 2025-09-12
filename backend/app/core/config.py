@@ -20,6 +20,8 @@ def _find_repo_root(start: Path) -> Path:
 REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 CONFIG_DIR = REPO_ROOT / "configs"
 
+
+# ----------------- Sections -----------------
 class LoggingCfg(BaseModel):
     level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     file: str = "./logs/app.log"
@@ -36,11 +38,18 @@ class AppCfg(BaseModel):
     env: str = Field(default="development")   # effective env after layering
     api_prefix: str = "/api/v1"
 
+class StorageCfg(BaseModel):
+    # default works out-of-the-box; test can override via env APP_SQLITE_PATH
+    sqlite_path: str = "./data/local.db"
+
 class Settings(BaseModel):
     app: AppCfg = AppCfg()
     logging: LoggingCfg = LoggingCfg()
     server: ServerCfg = ServerCfg()
+    storage: StorageCfg = StorageCfg()
 
+
+# ----------------- YAML helpers -----------------
 def _read_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
@@ -60,22 +69,24 @@ def _maybe_merge(data: Dict[str, Any], p: Path) -> Dict[str, Any]:
         return _deep_merge(data, _read_yaml(p))
     return data
 
+
+# ----------------- Loader (with env overrides) -----------------
 @lru_cache
 def load() -> Settings:
     _LOADED_FILES.clear()
     data: Dict[str, Any] = {}
 
-    # 1) default
+    # 1) default.yaml (optional)
     data = _maybe_merge(data, CONFIG_DIR / "default.yaml")
 
-    # 2) env selection
+    # 2) pick env
     env = os.getenv("APP_ENV") or data.get("app", {}).get("env") or "development"
 
-    # 3) env + env-local
+    # 3) env + env-local (optional)
     data = _maybe_merge(data, CONFIG_DIR / f"{env}.yaml")
     data = _maybe_merge(data, CONFIG_DIR / f"{env}-local.yaml")
 
-    # 4) explicit override file
+    # 4) explicit override file (optional)
     app_config = os.getenv("APP_CONFIG")
     if app_config:
         data = _maybe_merge(data, Path(app_config).expanduser().resolve())
@@ -83,22 +94,21 @@ def load() -> Settings:
     # Ensure effective env is set
     data = _deep_merge(data, {"app": {"env": env}})
 
+    # 5) Env var overrides for nested keys (keep it simple)
+    #    APP_SQLITE_PATH => storage.sqlite_path
+    sqlite_path_env = os.getenv("APP_SQLITE_PATH")
+    if sqlite_path_env:
+        data = _deep_merge(data, {"storage": {"sqlite_path": sqlite_path_env}})
+
     try:
         return Settings(**data)
     except ValidationError as e:
         raise RuntimeError(f"Invalid configuration: {e}") from e
 
+
 def api_prefix() -> str:
     return load().app.api_prefix
 
-# backend/app/core/config.py
-class _Storage:
-    sqlite_path: str = "./data/local.db"
-
-class _Settings:
-    storage: _Storage = _Storage()
-
-def get_settings() -> _Settings:
-    # Minimal settings object used by init_sqlite()
-    return _Settings()
-
+# Back-compat for modules that still call get_settings()
+def get_settings() -> Settings:
+    return load()

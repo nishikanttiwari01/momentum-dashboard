@@ -1,26 +1,39 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+# backend/app/main.py
+from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from .core import config
-from .core.logging_setup import setup_logging
-from .core.middleware import RequestLogMiddleware
-from .core.problem import on_validation_error, on_http_exception, on_unhandled_exception
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .api.v1 import health, screener, instruments, alerts, history, settings
-from .core import db
+from app.core import config as config
+from app.core.db import init_sqlite
+from app.middleware.request_log import RequestLogMiddleware
+from app.middleware.request_id import RequestIdMiddleware
+from app.api.v1 import health, screener, instruments, alerts, history, settings
+from app.api.errors import (
+    on_validation_error,
+    on_http_exception,
+    on_unhandled_exception,
+)
+from app.core import db
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup
-    await db.init_sqlite("./data/local.db")
+    # init_sqlite is synchronous; do NOT await
+    db.init_sqlite("./data/local.db")
     app.state.ready = True
-    logging.getLogger(__name__).info("app_ready")
-    yield
-    # shutdown (optional): close pools, flush logs, etc.
+    try:
+        yield
+    finally:
+        # release SQLite handle for Windows so tests can unlink files
+        db.dispose_engine()
+
+def setup_logging() -> None:
+    # (keep your logging wiring if you had it elsewhere)
+    pass
 
 def create_app() -> FastAPI:
     # Load config, then setup logging so boot logs go to console+file
@@ -40,10 +53,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Request logging
+    # Middlewares
     app.add_middleware(RequestLogMiddleware)
+    app.add_middleware(RequestIdMiddleware)
 
-    # Exception handlers → Problem+JSON
+    # Exception handlers → Problem+JSON (with proper media type set in app/api/errors.py)
     app.add_exception_handler(RequestValidationError, on_validation_error)
     app.add_exception_handler(StarletteHTTPException, on_http_exception)
     app.add_exception_handler(Exception, on_unhandled_exception)

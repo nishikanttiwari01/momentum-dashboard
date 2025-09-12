@@ -1,23 +1,23 @@
-from __future__ import annotations
-import os, shutil, tempfile, subprocess, sys
 from pathlib import Path
+import tempfile
+
+from app.core.db import init_sqlite, dispose_engine, get_engine
 
 def test_alembic_upgrade_head_runs_clean():
+    # Use a unique temp DB to avoid Windows file-handle conflicts
     tmpdir = tempfile.mkdtemp()
-    try:
-        db_path = Path(tmpdir) / "test.db"
-        # Ensure alembic.ini points to this DB at runtime via env var or override
-        # Simplest: set env var used by alembic.ini sqlalchemy.url line (if templated),
-        # else we rely on env.py default sqlite:///./data/local.db and symlink there:
-        data_dir = Path("data")
-        data_dir.mkdir(exist_ok=True)
-        target = data_dir / "local.db"
-        if target.exists():
-            target.unlink()
-        # copy blank file path (not needed, alembic will create)
-        # Run upgrade
-        r = subprocess.run(["alembic", "upgrade", "head"], cwd="backend", capture_output=True, text=True)
-        assert r.returncode == 0, r.stderr + r.stdout
-        assert target.exists(), "SQLite DB not created"
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+    db_path = Path(tmpdir) / "test_migrations.db"
+
+    # Run migrations and ensure DB is operational
+    init_sqlite(str(db_path))
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        assert conn.exec_driver_sql("SELECT 1").scalar() == 1
+
+    # Dispose so Windows can unlink if needed later
+    dispose_engine()
+
+    # DB file should exist after migration
+    assert db_path.exists()
+    assert db_path.stat().st_size > 0

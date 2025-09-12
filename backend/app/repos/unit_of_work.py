@@ -13,15 +13,14 @@ from .interfaces.base import (
     ISnapshotPinsRepo,
 )
 
-from .sql import (
-    SqlAlertsRepo,
-    SqlWatchlistRepo,
-    SqlHistoryRepo,
-    SqlJobsRepo,
-    SqlSettingsRepo,
-    SqlPositionsRepo,
-    SqlSnapshotPinsRepo,
-)
+from .sql.alerts_repo import SqlAlertsRepo
+from .sql.watchlist_repo import SqlWatchlistRepo
+from .sql.history_repo import SqlHistoryRepo
+from .sql.jobs_repo import SqlJobsRepo
+from .sql.settings_repo import SqlSettingsRepo
+from .sql.positions_repo import SqlPositionsRepo
+from .sql.snapshot_pins_repo import SqlSnapshotPinsRepo
+
 
 
 class IUnitOfWork(Protocol, AbstractContextManager["IUnitOfWork"]):

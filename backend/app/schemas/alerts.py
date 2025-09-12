@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class AlertRuleCreate(BaseModel):
@@ -19,5 +19,7 @@ class AlertRuleOut(BaseModel):
     channels: List[str]
     enabled: bool
 
-    class Config:
-        orm_mode = True
+
+    model_config = ConfigDict(from_attributes=True)
+
+

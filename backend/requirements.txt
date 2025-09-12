@@ -63,3 +63,6 @@ freezegun==1.5.1
 coverage==7.6.1
 respx==0.21.1
 requests-mock==1.12.1
+# Testing helpers for ASGI apps
+asgi-lifespan==2.1.0
+python-multipart==0.0.9

@@ -53,20 +53,23 @@ class SqlPositionsRepo(IPositionsRepo):
                     note=None,
                 )
             )
+        self.s.flush()  # make visible to immediate reads (tests)
 
     def update_stop(self, symbol: str, stop_now: float) -> None:
         symbol = symbol.upper()
         row = self.s.query(Position).filter(Position.symbol == symbol).one_or_none()
         if row is None:
-            row = Position(symbol=symbol, entry_price_locked=0.0, qty=None)
-            self.s.add(row)
+            # Do NOT create a dummy position here; invariant tests expect it to pre-exist
+            return
         # Trailing behavior: never lower the stop
         if row.stop_now is None or float(stop_now) > float(row.stop_now):
             row.stop_now = float(stop_now)
             row.updated_at = datetime.utcnow()
+        self.s.flush()  # ensure visibility in same session/test
 
     def close_position(self, symbol: str, reason: str) -> None:
         symbol = symbol.upper()
         row = self.s.query(Position).filter(Position.symbol == symbol).one_or_none()
         if row:
             self.s.delete(row)
+            self.s.flush()
