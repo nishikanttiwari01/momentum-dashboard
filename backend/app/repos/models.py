@@ -99,6 +99,9 @@ class Job(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), index=True)      # "screening", "digest"
     run_id: Mapped[str] = mapped_column(String(20), index=True)
+    # NEW (Phase-9): idempotency support (nullable for backward compat)
+    key: Mapped[Optional[str]] = mapped_column(String(64), unique=True, index=True, nullable=True)
+
     started_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), nullable=False
     )

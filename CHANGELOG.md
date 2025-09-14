@@ -4,7 +4,66 @@ All notable changes to this project will be documented here.
 We follow a **phase-based versioning** (v0.x.0) where each phase corresponds to a locked milestone.
 
 ---
-## [0.8.0] - 2025-09-12
+## phase-9 - Manual scan but returning stubbed rows and write in data parquet folder (2025-09-13)
+**Status:** Complete  
+**Tag:** `phase-9`
+
+### Added
+- **Runs API**
+  - `POST /api/v1/scan` — idempotent trigger using `Idempotency-Key` (`[A-Za-z0-9_-]{1,64}`).
+  - `GET /api/v1/runs` — list recent runs.
+  - `GET /api/v1/runs/{run_id}` — get a run by id (accepts `YYYYMMDDHHMMSS`; handler can normalize `YYYYMMDDTHHMMSSZ` if patch applied).
+- **Job lifecycle (SQL)**
+  - `jobs` table extended with `key` for idempotency.
+  - Repo: `SqlJobsRepo.create_or_get_by_key(...)`, `complete_run(...)`, `fail_run(...)`, `list_recent(...)`.
+- **Snapshot plumbing (Parquet)**
+  - Atomic writer flow for `scores/` table partitions: `run_id=<id>/` with `_SUCCESS` and `rowcount.txt`.
+  - Minimal writer path used by Phase 9 (writes an **empty** snapshot by design).
+- **Service**
+  - `screening_service.run_screening(...)` orchestrates idempotency → compute (stub) → snapshot → job complete.
+- **Adapters scaffold**
+  - `adapters/` package & NSE stub (`nse_adapter.py`) returning deterministic rows (kept disabled for tests).
+- **Tests**
+  - API + service tests for `/scan`, `/runs*`, idempotency semantics, and snapshot markers.
+
+### Changed
+- **Routers**
+  - `api/v1/scan.py` and `api/v1/runs.py` mounted **once** by `main.py` using global API prefix (no duplicate `/api/v1` in routers).
+- **DB session behavior**
+  - Repos now **commit** after create/complete to make runs visible cross-request (fixes idempotent replays).
+- **History repo**
+  - Added `insert_run_summary(...)` as a no-op stub to satisfy service call sites.
+
+### Fixed
+- OpenAPI header component references for rate-limit headers (`Retry-After`, `X-RateLimit-*`).
+- Idempotency response codes: **201** (first) / **200** (replay).
+- Normalization pitfalls around `run_id` shape (API can accept both `YYYYMMDDHHMMSS` and `YYYYMMDDTHHMMSSZ` when normalization is enabled).
+
+### Migrations
+- `alembic/versions/20250912_0002_add_jobs_key.py` — adds `jobs.key` and indexes for lookup by `(name,key)` and by `run_id`.
+
+### Notes / How to use
+- **Trigger a run (Swagger):**
+  - `POST /api/v1/scan` with header `Idempotency-Key: <your-key>`, empty body ok.
+  - First call → **201** and snapshot path; same key → **200** (idempotent).
+- **Verify snapshot on disk:**
+  - `PARQUET_ROOT` (default `./backend/parquet`) → `scores/run_id=<id>/`
+  - Expect `_SUCCESS` and `rowcount.txt` (Phase 9 writes `0` rows by design).
+- **List & inspect runs:**
+  - `GET /api/v1/runs?limit=20`
+  - `GET /api/v1/runs/{run_id}`
+
+### Breaking changes
+- None (public APIs were introduced, not altered).
+
+### Next (Phase 10 — Universe + Yahoo)
+- CSV-driven **NSE universes** (`nifty50/100/500/all`) under `backend/data/universe/v1/`.
+- `services/universe.py` to load/normalize symbols (→ `.NS`), precedence: request → config.
+- `adapters/yahoo_adapter.py` with batching; `MARKET_SOURCE=yahoo` toggle in config.
+- Update service to fetch real quotes and write **non-zero** snapshots; extend tests to mock Yahoo.
+
+
+## 0.8.0 - Right Drawer Details (2025-09-12)
 ### Added
 - **Endpoint:** `GET /api/v1/instruments/{symbol}/detail` returns the Drawer Detail payload.
 - **Service layer:** `app/services/detail_service.py` to compose scores + indicators + positions + pins.

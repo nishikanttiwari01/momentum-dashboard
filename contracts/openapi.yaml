@@ -145,30 +145,49 @@ paths:
     post:
       tags: [Screener]
       operationId: postScan
-      summary: Trigger on-demand scan (idempotent)
+      summary: Start a manual screening run (idempotent)
+      description: |
+        Triggers a new scores snapshot with a fresh run_id. If the same
+        Idempotency-Key (or ScanRequest.key) is reused, returns the existing run.
+        On first creation: 201 Created. On idempotent replay: 200 OK.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScanRequest' }
       responses:
-        '202':
-          description: Accepted
+        '201':
+          description: New run created
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  run_id: { $ref: '#/components/schemas/RunId' }
+              schema: { $ref: '#/components/schemas/RunDetail' }
               examples:
                 example:
-                  value: { run_id: "20250101153000" }
+                  value:
+                    run_id: "20250101153000"
+                    job_name: "manual_scan"
+                    started_at: "2025-01-01T15:30:00Z"
+                    status: "RUNNING"
+        '200':
+          description: Idempotent replay (existing run returned)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunDetail' }
+        '422':
+          description: Invalid Idempotency-Key or request
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429':
           description: Rate limited
           headers:
             Retry-After: { $ref: '#/components/headers/RetryAfter' }
             X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
             X-RateLimit-Remaining: { $ref: '#/components/headers/XRateLimitRemaining' }
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
+            X-RateLimit-Reset: { $ref: '#/components/headers/XRateLimitReset' }
+
 
   /runs:
     get:
@@ -178,6 +197,13 @@ paths:
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/PerPage'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+          description: Optional status filter
       responses:
         '200':
           description: Runs
@@ -192,6 +218,7 @@ paths:
                   pagination: { $ref: '#/components/schemas/Pagination' }
               examples:
                 example: { $ref: '#/components/examples/Runs' }
+
 
   /runs/{run_id}:
     get:
@@ -741,6 +768,11 @@ components:
     XRateLimitRemaining:
       description: Remaining requests in window
       schema: { type: integer }
+    XRateLimitReset:
+      description: Unix epoch seconds when the current rate-limit window resets.
+      schema:
+        type: integer
+        minimum: 0    
 
   schemas:
     Symbol:
@@ -1113,6 +1145,26 @@ components:
           type: object
           properties:
             enabled: { type: boolean, example: false }
+    ScanRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+          description: Optional client-generated idempotency key (1–64 chars, [A-Za-z0-9_-])
+        as_of:
+          type: string
+          format: date
+          nullable: true
+          description: Optional date to backfill / label the snapshot
+        universe:
+          type: string
+          nullable: true
+          description: Optional universe preset (e.g., NIFTY500)
+        notes:
+          type: string
+          nullable: true
+          description: Free-text note for this run
 
 
   examples:

@@ -57,7 +57,6 @@ def _is_valid_run_id(run_id: str) -> bool:
     """
     return bool(_RUN_ID_RE.match(run_id))
 
-
 # -----------------------------
 # Simple file lock (directory-based)
 # -----------------------------
@@ -98,7 +97,6 @@ class FileLock:
 
     def __exit__(self, exc_type, exc, tb):
         self.release()
-
 
 # -----------------------------
 # Atomic writer
@@ -217,12 +215,10 @@ class AtomicWriter:
             # Move tmp to final (atomic on same filesystem)
             os.replace(self.tmp_dir, self.final_dir)
 
-
 def begin_atomic_write(table: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter:
     assert table in TABLES, f"Unknown table {table}"
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
     return AtomicWriter(table, run_id, cfg or WriterConfig())
-
 
 # -----------------------------
 # Schema version helpers (meta/)
@@ -245,7 +241,6 @@ def read_schema_version(table: str) -> Optional[int]:
 def write_schema_version(table: str, version: int) -> None:
     p = _meta_path(f"{table}_schema_version.json")
     p.write_text(json.dumps({"version": int(version)}, indent=2))
-
 
 # -----------------------------
 # Snapshot discovery & scanning
@@ -311,3 +306,62 @@ def scan(
     if as_polars and pl is not None:
         return pl.from_arrow(tab)
     return tab
+
+# -----------------------------
+# Phase-9 compatibility helper
+# -----------------------------
+def write_atomic_snapshot(
+    *,
+    root_dir: Optional[str] = None,
+    table: str,
+    run_id: str,
+    rows: Iterable[dict] | pa.Table | "pl.DataFrame" = (),
+    schema_version: str | int = "1",
+    as_of: str | None = None,  # accepted for parity; not persisted separately here
+) -> Path:
+    """
+    Thin wrapper so services can do a one-shot snapshot write without knowing
+    about AtomicWriter lifecycle. Creates ≥1 part-*.parquet, rowcount.txt, _SUCCESS.
+
+    - If root_dir is provided, it temporarily overrides PARQUET_ROOT for this call.
+    - rows may be: list[dict], pyarrow.Table, or polars.DataFrame.
+    - schema_version is recorded in meta/<table>_schema_version.json and mirrored into file metadata.
+
+    Returns the final snapshot directory path: {PARQUET_ROOT}/{table}/run_id={run_id}
+    """
+    prev_env = os.environ.get("PARQUET_ROOT")
+    try:
+        if root_dir:
+            os.environ["PARQUET_ROOT"] = root_dir
+
+        # Persist/refresh schema version used by writer metadata
+        try:
+            write_schema_version(table, int(schema_version))
+        except Exception:
+            # Non-fatal: keep going with whatever meta exists
+            pass
+
+        w = begin_atomic_write(table, run_id)
+
+        # Normalize rows -> pa.Table and write at least one part
+        if isinstance(rows, pa.Table) or (pl is not None and "polars" in str(type(rows)).lower()):
+            w.write_df(rows)  # _ensure_pa_table will convert polars
+        else:
+            # Assume iterable of dicts (possibly empty)
+            try:
+                # from_pylist handles empty list → 0-row table (valid parquet)
+                tab = pa.Table.from_pylist(list(rows))
+            except Exception:
+                # Fallback: guaranteed-empty schema
+                tab = pa.table({"_rows": pa.array([], type=pa.int32())})
+            w.write_df(tab)
+
+        w.commit()
+        return _run_partition(table, run_id)
+    finally:
+        # Restore env override if we changed it
+        if root_dir is not None:
+            if prev_env is None:
+                os.environ.pop("PARQUET_ROOT", None)
+            else:
+                os.environ["PARQUET_ROOT"] = prev_env

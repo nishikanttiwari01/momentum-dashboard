@@ -12,14 +12,22 @@ from app.core import config as config
 from app.core.db import init_sqlite
 from app.middleware.request_log import RequestLogMiddleware
 from app.middleware.request_id import RequestIdMiddleware
-from app.api.v1 import health, screener, instruments, alerts, history, settings
+from app.api.v1 import (
+    health,
+    screener,
+    instruments,
+    alerts,
+    history,
+    settings,
+    runs,   # NEW: Phase 9
+    scan,   # NEW: Phase 9
+)
 from app.api.errors import (
     on_validation_error,
     on_http_exception,
     on_unhandled_exception,
 )
 from app.core import db
-from app.api.v1 import instruments
 
 
 @asynccontextmanager
@@ -33,9 +41,11 @@ async def lifespan(app: FastAPI):
         # release SQLite handle for Windows so tests can unlink files
         db.dispose_engine()
 
+
 def setup_logging() -> None:
     # (keep your logging wiring if you had it elsewhere)
     pass
+
 
 def create_app() -> FastAPI:
     # Load config, then setup logging so boot logs go to console+file
@@ -72,8 +82,10 @@ def create_app() -> FastAPI:
     app.include_router(alerts.router,      prefix=prefix, tags=["Alerts"])
     app.include_router(history.router,     prefix=prefix, tags=["History"])
     app.include_router(settings.router,    prefix=prefix, tags=["Settings"])
-    app.include_router(instruments.router, prefix="/api/v1")
+    app.include_router(runs.router,        prefix=prefix, tags=["Runs"])       # NEW
+    app.include_router(scan.router,        prefix=prefix, tags=["Screener"])   # NEW
 
     return app
+
 
 app = create_app()
