@@ -1,3 +1,4 @@
+# backend/app/core/config.py
 from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
@@ -12,6 +13,7 @@ def loaded_files() -> list[str]:
     return [str(p) for p in _LOADED_FILES]
 
 def _find_repo_root(start: Path) -> Path:
+    # unchanged: discover monorepo root by presence of backend+frontend folders
     for p in [start] + list(start.parents):
         if (p / "backend").exists() and (p / "frontend").exists():
             return p
@@ -21,7 +23,7 @@ REPO_ROOT = _find_repo_root(Path(__file__).resolve())
 CONFIG_DIR = REPO_ROOT / "configs"
 
 
-# ----------------- Sections -----------------
+# ----------------- Sections (existing) -----------------
 class LoggingCfg(BaseModel):
     level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
     file: str = "./logs/app.log"
@@ -39,17 +41,42 @@ class AppCfg(BaseModel):
     api_prefix: str = "/api/v1"
 
 class StorageCfg(BaseModel):
-    # default works out-of-the-box; test can override via env APP_SQLITE_PATH
+    # default works out-of-the-box; tests can override via env APP_SQLITE_PATH
     sqlite_path: str = "./data/local.db"
 
+
+# ----------------- NEW sections (Phase 10) -----------------
+# Minimal, focused config blocks to avoid "magic strings" in code and keep YAML-first design.
+class ScreenerCfg(BaseModel):
+    # Universe preset used when none is supplied at runtime (e.g., GET /screener, POST /scan).
+    default_universe: str = "NIFTY500"  # e.g., NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL
+
+class SchedulerCfg(BaseModel):
+    # Whether background scans are enabled; if False, app runs without APScheduler.
+    enabled: bool = False
+    # Minutes between scans; keep small & predictable for local use.
+    interval_minutes: int = 15
+    # Universe to use for scheduled scans; if None, fall back to screener.default_universe.
+    universe: str | None = None
+
+class DataCfg(BaseModel):
+    # Data adapter toggle: "stub" (deterministic tests) or "yahoo" (live).
+    adapter: str = "stub"
+
+
 class Settings(BaseModel):
+    # Existing sections
     app: AppCfg = AppCfg()
     logging: LoggingCfg = LoggingCfg()
     server: ServerCfg = ServerCfg()
     storage: StorageCfg = StorageCfg()
+    # NEW sections (Phase 10)
+    screener: ScreenerCfg = ScreenerCfg()
+    scheduler: SchedulerCfg = SchedulerCfg()
+    data: DataCfg = DataCfg()
 
 
-# ----------------- YAML helpers -----------------
+# ----------------- YAML helpers (unchanged) -----------------
 def _read_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
@@ -79,7 +106,7 @@ def load() -> Settings:
     # 1) default.yaml (optional)
     data = _maybe_merge(data, CONFIG_DIR / "default.yaml")
 
-    # 2) pick env
+    # 2) pick env (APP_ENV > default.yaml:app.env > "development")
     env = os.getenv("APP_ENV") or data.get("app", {}).get("env") or "development"
 
     # 3) env + env-local (optional)
@@ -94,15 +121,32 @@ def load() -> Settings:
     # Ensure effective env is set
     data = _deep_merge(data, {"app": {"env": env}})
 
-    # 5) Env var overrides for nested keys (keep it simple)
-    #    APP_SQLITE_PATH => storage.sqlite_path
-    sqlite_path_env = os.getenv("APP_SQLITE_PATH")
-    if sqlite_path_env:
-        data = _deep_merge(data, {"storage": {"sqlite_path": sqlite_path_env}})
+    # 5) Environment variable shims for common nested keys (kept simple & explicit)
+    #    This complements, not replaces, YAML files.
+    if os.getenv("APP_SQLITE_PATH"):
+        data = _deep_merge(data, {"storage": {"sqlite_path": os.getenv("APP_SQLITE_PATH")}})
+
+    # --- Phase 10 env shims (NEW) ---
+    # Screener
+    if os.getenv("APP_DEFAULT_UNIVERSE"):
+        data = _deep_merge(data, {"screener": {"default_universe": os.getenv("APP_DEFAULT_UNIVERSE")}})
+    # Scheduler
+    if os.getenv("APP_SCHED_ENABLED") is not None:
+        # Accept "1/0", "true/false" (case-insensitive)
+        v = os.getenv("APP_SCHED_ENABLED", "").strip().lower()
+        data = _deep_merge(data, {"scheduler": {"enabled": v in {"1", "true", "yes", "on"}}})
+    if os.getenv("APP_SCHED_INTERVAL"):
+        data = _deep_merge(data, {"scheduler": {"interval_minutes": int(os.getenv("APP_SCHED_INTERVAL"))}})
+    if os.getenv("APP_SCHED_UNIVERSE"):
+        data = _deep_merge(data, {"scheduler": {"universe": os.getenv("APP_SCHED_UNIVERSE")}})
+    # Data adapter
+    if os.getenv("APP_DATA_ADAPTER"):
+        data = _deep_merge(data, {"data": {"adapter": os.getenv("APP_DATA_ADAPTER")}})
 
     try:
         return Settings(**data)
     except ValidationError as e:
+        # Make config errors explicit rather than failing later at usage sites
         raise RuntimeError(f"Invalid configuration: {e}") from e
 
 

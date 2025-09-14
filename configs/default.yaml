@@ -168,3 +168,14 @@ logging:
 
 validation:
   config_schema_enforced: true      # reject unknown keys; validate on boot
+
+screener:
+  default_universe: "NIFTY500"
+
+scheduler:
+  enabled: false
+  interval_minutes: 15
+  universe: null
+
+data:
+  adapter: "yahoo"   # change to "yahoo" for live scans

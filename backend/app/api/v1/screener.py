@@ -9,7 +9,8 @@ from app.repos.parquet.scores_repo import ScoresRepo
 router = APIRouter()
 repo = ScoresRepo()
 
-KNOWN_KEYS = {"run_id", "as_of", "sort", "page", "per_page"}
+# Added "universe" so it's treated as a known, non-filter query param
+KNOWN_KEYS = {"run_id", "as_of", "sort", "page", "per_page", "universe"}
 
 
 def _parse_filters(params) -> Dict[tuple[str, str], Any]:
@@ -90,6 +91,11 @@ def list_screener(
     sort: str = Query("score.desc,last.desc", description="Comma list, e.g. score.desc,last.desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=500),
+    # NEW: accept universe but don't use it yet (service/repo wiring comes next)
+    universe: Optional[str] = Query(
+        None,
+        description="Optional universe preset (e.g., NIFTY500, NIFTY50, ALL). Currently ignored by this endpoint."
+    ),
 ):
     params = dict(request.query_params)
     filters = _parse_filters(params)
@@ -125,6 +131,12 @@ def list_screener(
         r["badges"] = [_badge(b) for b in badges if isinstance(b, dict)]
         r.setdefault("symbol", "")
         r.pop("ret_1w", None)        # <-- Phase7: ensure internal helper is not returned
+        s = r.get("score")
+        if isinstance(s, float):
+            # If score was a 0..1 float, round to 0..100; otherwise, just round to nearest int.
+            r["score"] = int(round(s * 100 if 0.0 <= s <= 1.0 else s))
+        elif s is None:
+            r["score"] = 0
         norm_items.append(ScreenerRow(**r))
 
     return {

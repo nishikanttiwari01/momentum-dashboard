@@ -4,6 +4,39 @@ All notable changes to this project will be documented here.
 We follow a **phase-based versioning** (v0.x.0) where each phase corresponds to a locked milestone.
 
 ---
+## v0.10.0 Phase 10: Runs API, Idempotency & Hardening (2025-09-14)
+
+### Added
+- **Runs API**
+  - `POST /api/v1/scan`: Start a manual screening run (idempotent). Returns `201 Created` on first run, `200 OK` on replay.
+  - `GET /api/v1/runs`: List recent runs with optional status filter.
+  - `GET /api/v1/runs/{run_id}`: Fetch details of a specific run.
+- **Idempotency support**: `Idempotency-Key` header validation (1–64 chars, `[A-Za-z0-9_-]`).
+- **SQLite Jobs Repo**: Store and retrieve run metadata (status, timings, counts).
+- **Schema models**: Pydantic `RunSummary`, `RunDetail`, and `RunsList` for consistent API output.
+
+### Changed
+- **Alembic env**: Now respects `DB_URL` for test overrides; safer SQLite engine pooling for Windows.
+- **Engine config**: Switched to `NullPool` to avoid file-lock issues in tests and migrations.
+- **Screener contract**: Kept stable ahead of Indicators & Score work; default sorting remains unchanged.
+
+### Fixed
+- **Positions invariant**: Stop-loss updates are monotone non-decreasing and None-safe.
+- **Idempotency tests**: POST routes now return `422` on bad key, `200` on replay (no duplicate jobs created).
+
+### Tests
+- Added coverage for:
+  - Idempotency header validation.
+  - Alembic migrations on temp DB.
+  - Positions invariant enforcement.
+  - Run list & detail API responses.
+
+### Notes for Next Phase
+- Phase 11 will implement **Indicators & Full Momentum Score**:
+  - RSI/ADX/EMA, 12-1M/6M/3M/1M returns, relative volume, 52-week proximity, and badges.
+  - Implement 0–100 scoring model.
+  - Persist per-run outputs; Screener to show final computed columns.
+
 ## phase-9 - Manual scan but returning stubbed rows and write in data parquet folder (2025-09-13)
 **Status:** Complete  
 **Tag:** `phase-9`
