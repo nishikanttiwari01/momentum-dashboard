@@ -14,5 +14,5 @@ def test_service_writes_minimal_snapshot(tmp_parquet_root):
         # Check snapshot directory (Phase-9 minimal—_SUCCESS + rowcount.txt)
         snap = Path(detail.snapshot_path)
         assert (snap / "_SUCCESS").exists()
-        rc = (snap / "rowcount.txt").read_text().strip()
+        rc = int((snap / "rowcount.txt").read_text().strip() or "0")
         assert rc >= 0

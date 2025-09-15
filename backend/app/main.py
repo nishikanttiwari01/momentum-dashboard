@@ -30,7 +30,12 @@ from app.api.errors import (
 )
 from app.core import db
 from app.workers import scheduler as sched
+import logging
+from app.core.logging_config import setup_logging
 
+setup_logging()
+logger = logging.getLogger("app.main")
+logger.info("App boot: logging configured")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,8 +62,8 @@ async def lifespan(app: FastAPI):
         db.dispose_engine()
 
 
-def setup_logging() -> None:
-    pass
+#
+  #  pass
 
 
 def create_app() -> FastAPI:

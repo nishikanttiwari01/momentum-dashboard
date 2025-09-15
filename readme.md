@@ -32,3 +32,8 @@ pytest -q tests\integration\test_live_scan.py
 python -m app.cli.backfill
 # or explicitly
 python -m app.cli.backfill --days 252 --universe NIFTY500
+
+# FGenerate pydantic models. These will be used in front communication.
+
+(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend> datamodel-codegen --input ..\contracts/openapi.yaml --input-file-type openapi --output app/schemas/generated/models.py --output-model-type pydantic_v2.BaseModel --target-python-version 3.11 --use-double-quotes --use-standard-collections --enum-field-as-literal all --collapse-root-models
+
