@@ -6,14 +6,28 @@ from fastapi import APIRouter, Request, Query
 from app.schemas.screener import ScreenerList, ScreenerRow
 from app.repos.parquet.scores_repo import ScoresRepo
 
-router = APIRouter()
+router = APIRouter(tags=["Screener"])
 repo = ScoresRepo()
 
-# Added "universe" so it's treated as a known, non-filter query param
+# Treat these query params as non-filter controls. Everything else maps into filter ops.
 KNOWN_KEYS = {"run_id", "as_of", "sort", "page", "per_page", "universe"}
 
 
 def _parse_filters(params) -> Dict[tuple[str, str], Any]:
+    """
+    Convert query params (k=v) into a normalized filter dict usable by the repo.
+
+    Suffix operators supported:
+      .in   → IN set (comma separated)
+      .gte  → >=
+      .gt   → >
+      .lte  → <=
+      .lt   → <
+      .like → prefix-match if value endswith '%', else equality
+      .eq   → equality
+
+    Anything not listed in KNOWN_KEYS is treated as a potential filter.
+    """
     out: Dict[tuple[str, str], Any] = {}
     for k, v in params.items():
         if k in KNOWN_KEYS:
@@ -21,17 +35,25 @@ def _parse_filters(params) -> Dict[tuple[str, str], Any]:
         if k.endswith(".in"):
             out[(k[:-3], "in")] = [x.strip() for x in v.split(",") if x.strip()]
         elif k.endswith(".gte"):
-            try: out[(k[:-4], "gte")] = float(v)
-            except Exception: pass
+            try:
+                out[(k[:-4], "gte")] = float(v)
+            except Exception:
+                pass
         elif k.endswith(".gt"):
-            try: out[(k[:-3], "gt")] = float(v)
-            except Exception: pass
+            try:
+                out[(k[:-3], "gt")] = float(v)
+            except Exception:
+                pass
         elif k.endswith(".lte"):
-            try: out[(k[:-4], "lte")] = float(v)
-            except Exception: pass
+            try:
+                out[(k[:-4], "lte")] = float(v)
+            except Exception:
+                pass
         elif k.endswith(".lt"):
-            try: out[(k[:-3], "lt")] = float(v)
-            except Exception: pass
+            try:
+                out[(k[:-3], "lt")] = float(v)
+            except Exception:
+                pass
         elif k.endswith(".like"):
             out[(k[:-5], "like")] = v
         elif k.endswith(".eq"):
@@ -39,31 +61,36 @@ def _parse_filters(params) -> Dict[tuple[str, str], Any]:
     return out
 
 
-def _badge(b: dict) -> dict:
-    """Normalize a badge dict into the expected shape.
-    Phase7: keep key/label/color, also expose code/text for the new compact schema.
+def _badge_contract_safe(b: dict) -> dict:
     """
-    return {
-        "key": b.get("key", ""),
-        "label": b.get("label", ""),
-        "color": b.get("color", "grey"),
-        # Phase7 additions:
-        "code": b.get("code") or b.get("key") or "",
-        "text": b.get("text") or b.get("label") or "",
-    }
+    Normalize a badge into the compact contract shape ONLY:
+      { code: str, text: str, color: str }
+
+    Rationale:
+    - Generated Pydantic models may forbid extra fields; keep it minimal/safe.
+    - We still map legacy inputs (key/label/color) → code/text/color.
+    """
+    code = b.get("code") or b.get("key") or ""
+    text = b.get("text") or b.get("label") or ""
+    color = b.get("color") or "grey"
+    return {"code": code, "text": text, "color": color}
 
 
 def _derive_week_fields(row: Dict[str, Any]) -> None:
-    """Phase7: ensure wk_change and wk_change_pct exist.
-    If parquet supplies ret_1w (percent), we compute:
+    """
+    Ensure wk_change and wk_change_pct exist.
+
+    If parquet supplies a helper 'ret_1w' (percent), we compute:
       base = last / (1 + ret_1w/100)
-      wk_change = last - base
+      wk_change     = last - base
       wk_change_pct = ret_1w
+
+    If not present, we leave them as None (the UI can hide/null-format).
     """
     if row.get("wk_change") is not None and row.get("wk_change_pct") is not None:
         return
     last = row.get("last")
-    ret_1w = row.get("ret_1w")  # percent, e.g. 1.35
+    ret_1w = row.get("ret_1w")  # legacy helper if present
     if last is None or ret_1w is None:
         row.setdefault("wk_change", None)
         row.setdefault("wk_change_pct", None)
@@ -88,18 +115,18 @@ def list_screener(
     request: Request,
     run_id: Optional[str] = Query(None, description="Exact snapshot run id, e.g. 20250912T093000Z"),
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD; pick last run on/before this date"),
-    sort: str = Query("score.desc,last.desc", description="Comma list, e.g. score.desc,last.desc"),
+    sort: str = Query("score.desc,last.desc", description="Comma list e.g. score.desc,last.desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=500),
-    # NEW: accept universe but don't use it yet (service/repo wiring comes next)
-    universe: Optional[str] = Query(
-        None,
-        description="Optional universe preset (e.g., NIFTY500, NIFTY50, ALL). Currently ignored by this endpoint."
-    ),
+    # Note: universe is accepted for future server-side filtering; currently ignored by repo.read().
+    universe: Optional[str] = Query(None, description="Universe preset (e.g., NIFTY500, NIFTY50, ALL)"),
 ):
+    # Parse filters from the raw query string
     params = dict(request.query_params)
     filters = _parse_filters(params)
 
+    # Ask the repo for the requested projection. It gracefully handles Phase-9 (minimal)
+    # and Phase-11 (rich) parquet schemas and aliases. See ScoresRepo.read().  :contentReference[oaicite:2]{index=2}
     try:
         items, total, resolved_run_id, resolved_as_of = repo.read(
             run_id=run_id,
@@ -109,39 +136,57 @@ def list_screener(
             page=page,
             per_page=per_page,
             columns=[
-                "symbol","name","sector","last","change_pct",
-                "score","strength","rsi","adx","ret_12_1m","ret_6m","ret_3m","ret_1m",
-                "ret_1w","pct_from_52w_high","atr_pct","liquidity","vol_spike","pct_today",
-                "buy","reason","source","stale","badges",
-                "run_id","as_of","last_index",
-                # Phase7: if parquet already has these, include them directly:
-                "wk_change","wk_change_pct",
+                # Core quote & identity
+                "symbol", "name", "sector", "last", "change_pct",
+                # Score & strength
+                "score", "strength",
+                # Indicators & returns
+                "rsi", "adx", "ret_12_1m", "ret_6m", "ret_3m", "ret_1m",
+                "pct_from_52w_high", "atr_pct", "liquidity", "vol_spike", "pct_today",
+                # Decisioning
+                "buy", "reason",
+                # Meta
+                "source", "stale", "badges",
+                "run_id", "as_of", "last_index",
+                # Legacy helper; if present we’ll derive 1W fields
+                "ret_1w",
+                # If parquet already contains these, we’ll pass them through
+                "wk_change", "wk_change_pct",
             ],
         )
     except Exception:
         items, total, resolved_run_id, resolved_as_of = [], 0, None, None
 
-    # Normalize rows
+    # Normalize each row into the contract-safe shape
     norm_items: List[ScreenerRow] = []
     for r in items:
-        # Phase7: derive week fields when not present
+        # Derive 1W fields if not present
         _derive_week_fields(r)
-        # Phase7: normalize badges (keep old fields, add code/text)
+
+        # Normalize badges → only code/text/color (contract-safe)
         badges = r.get("badges") or []
-        r["badges"] = [_badge(b) for b in badges if isinstance(b, dict)]
-        r.setdefault("symbol", "")
-        r.pop("ret_1w", None)        # <-- Phase7: ensure internal helper is not returned
+        r["badges"] = [_badge_contract_safe(b) for b in badges if isinstance(b, dict)]
+
+        # Clean up legacy helper no matter what
+        r.pop("ret_1w", None)
+
+        # Normalize score as int 0..100 (in case upstream stores float)
         s = r.get("score")
         if isinstance(s, float):
-            # If score was a 0..1 float, round to 0..100; otherwise, just round to nearest int.
             r["score"] = int(round(s * 100 if 0.0 <= s <= 1.0 else s))
         elif s is None:
             r["score"] = 0
+
+        # Ensure symbol exists (model often requires it)
+        r.setdefault("symbol", "")
+
+        # Build the Pydantic row; model handles datetime parsing for 'as_of' if it's an ISO string
         norm_items.append(ScreenerRow(**r))
 
-    return {
-        "items": norm_items,
-        "pagination": {"page": page, "per_page": per_page, "total": total, "next_cursor": None},
-        "as_of": resolved_as_of,
-        "run_id": resolved_run_id,
-    }
+    # Return a ScreenerList model (not a raw dict) so FastAPI enforces/serializes via Pydantic
+    return ScreenerList(
+        items=norm_items,
+        pagination={"page": page, "per_page": per_page, "total": total, "next_cursor": None},
+        as_of=resolved_as_of,
+        run_id=resolved_run_id,
+    )

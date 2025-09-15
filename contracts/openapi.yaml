@@ -324,27 +324,6 @@ paths:
                     items: { $ref: '#/components/schemas/UniverseInstrument' }
                   pagination: { $ref: '#/components/schemas/Pagination' }
 
-  /instruments/{symbol}/detail:
-    get:
-      tags: [Instruments]
-      operationId: getInstrumentDetail
-      summary: Drawer detail for a symbol
-      parameters:
-        - $ref: '#/components/parameters/Symbol'
-      responses:
-        '200':
-          description: Drawer detail
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/DrawerDetail' }
-              examples:
-                example: { $ref: '#/components/examples/Detail' }
-        '404':
-          description: Not found
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-
   /instruments/{symbol}/prices:
     get:
       tags: [Instruments]
@@ -785,27 +764,49 @@ components:
       pattern: '^[0-9]{14}$'
       example: "20250101153000"
 
-    RunSummary:
+    RunSummaryBase:
       type: object
       properties:
-        run_id: { $ref: '#/components/schemas/RunId' }
-        job_name: { type: string }
+        run_id:
+          type: string
+          pattern: '^[0-9]{14}$'
+          description: "UTC timestamp yyyymmddHHMMss"
+        job_name:   { type: string }
         started_at: { type: string, format: date-time }
-        ended_at: { type: string, format: date-time, nullable: true }
-        status: { type: string, enum: [PENDING, RUNNING, SUCCEEDED, FAILED] }
-      required: [run_id, job_name, started_at, status]
+        ended_at:   { type: string, format: date-time, nullable: true }
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+
+    RunSummary:
+      allOf:
+        - $ref: '#/components/schemas/RunSummaryBase'
+        - type: object
+          properties:
+            duration_ms:  { type: integer, nullable: true }
+            key:          { type: string,  nullable: true }
+            snapshot_path: { type: string,  nullable: true }
+    Counts:
+      type: object
+      properties:
+        symbols_processed: { type: integer, nullable: true }
+        rows_written:     { type: integer, nullable: true }
 
     RunDetail:
       allOf:
         - $ref: '#/components/schemas/RunSummary'
         - type: object
           properties:
-            counts:
+            counts:     { $ref: '#/components/schemas/Counts' }
+            error:
+              type: string
+              nullable: true
+            error_json:
               type: object
-              properties:
-                symbols_processed: { type: integer }
-                rows_written: { type: integer }
-            error: { type: string, nullable: true }
+              additionalProperties: true
+              nullable: true
+              description: Raw error payload (for troubleshooting)
+
     Pagination:
       type: object
       properties:
@@ -873,8 +874,11 @@ components:
     Badge:
       type: object
       properties:
-        code: { type: string, example: "very_high_breakout" }
-        text: { type: string, example: "Very High Breakout" }
+        code:  { type: string, nullable: true, example: ["very_high_breakout"] }
+        text:  { type: string, nullable: true, example: ["Very High Breakout"] }
+        key:   { type: string, nullable: true }
+        label: { type: string, nullable: true }
+        color: { type: string, nullable: true }
 
     ScreenerRow:
       type: object
@@ -924,9 +928,11 @@ components:
       properties:
         items:
           type: array
-          items: { $ref: "#/components/schemas/ScreenerRow" }
-        pagination:
-          $ref: "#/components/schemas/Pagination"
+          items: { $ref: '#/components/schemas/ScreenerRow' }
+        pagination: { $ref: '#/components/schemas/Pagination' }
+        # banner fields you were returning from code
+        as_of:  { type: string, format: date-time, nullable: true, description: "Snapshot timestamp (UTC)" }
+        run_id: { type: string, nullable: true, description: "Run identifier used for this list" }
 
     NextAction:
       type: object

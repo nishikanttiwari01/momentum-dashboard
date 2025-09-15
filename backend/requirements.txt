@@ -70,3 +70,6 @@ python-multipart==0.0.9
 pytest-cov
 
 yfinance>=0.2.40
+
+# to generate pydantic models from OpenAPI specs, these pydantic files are used by frontend
+datamodel-code-generator>=0.25

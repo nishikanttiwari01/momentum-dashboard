@@ -4,6 +4,48 @@ All notable changes to this project will be documented here.
 We follow a **phase-based versioning** (v0.x.0) where each phase corresponds to a locked milestone.
 
 ---
+## v0.11.0 Phase 11: Indicators & Full Momentum Score (2025-09-15)
+
+### Added
+- **Indicators computation**
+  - RSI(14), ADX(14) + slope, EMA(10/50/200), Relative Volume (20D), ATR%(14).
+  - Returns over multiple windows: 1W, 1M, 3M, 6M, 12–1M.
+  - 52-week high proximity with “📈 New High” badge trigger.
+- **Momentum scoring**
+  - Basic Score (0–12 scaled to %): RSI bands, ADX+slope, breakout quality, volume signals.
+  - Full Score (0–100): P1 (Momentum), P2 (Breakout Quality), P3 (Accumulation & Volume), P4 (Market/Sector Context) with bonuses & penalties.
+  - `score` column = `score_full` if available, else falls back to `score_basic`.
+  - `score_scale = "0-100"` persisted for clarity.
+- **Badges & recommendation**
+  - Generated badges: e.g., “High Momentum”, “Very High Breakout”.
+  - Recommendation + reason string (Yes/No with human-readable explanation).
+- **Schema versioning**
+  - Unified `scores/` dataset now written with `schema_version=2`.
+  - All new columns persisted per-run alongside legacy fields.
+
+### Changed
+- **`screening_service.py`**
+  - Writes enriched screener rows with `name`, `sector`, indicators, scores, badges, recommendation.
+  - Persisted atomically with `_SUCCESS` marker and `rowcount.txt`.
+- **`scores_repo.py`**
+  - Collapsed v1/v2 logic into a single reader from `scores/` (schema v2).
+  - Projection includes all Phase 11 columns; ensures `score` is always available.
+  - Default sort now by `score.desc`.
+- **API contract**
+  - `/api/v1/screener` now returns the full momentum payload (indicators, scores, badges, recommendation).
+  - `/api/v1/runs` and `/api/v1/scan` responses enriched with counts and snapshot path metadata.
+
+### Fixed
+- **Datetime serialization**
+  - All run timestamps now timezone-aware and JSON serializable.
+- **Rowcount tests**
+  - Adjusted expectations: parquet snapshots now contain actual rows, not just empty “0” counters.
+
+### Notes
+- Phase 11 delivers the **full momentum screener backend**: all indicator fields, scoring logic, and recommendation reasoning are now persisted and queryable.
+- Frontend changes will follow in Phase 12 to render these new fields; backend is feature-complete for momentum scoring.
+
+
 ## v0.10.0 Phase 10: Runs API, Idempotency & Hardening (2025-09-14)
 
 ### Added

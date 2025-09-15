@@ -30,7 +30,9 @@ def get_parquet_root() -> Path:
     # Allow override via env; default to ./parquet
     return Path(os.getenv("PARQUET_ROOT", "./parquet")).resolve()
 
-TABLES = {"universe", "prices", "indicators", "scores", "meta"}
+# CHANGED: Register Phase-11 enriched dataset "scores_v2" alongside existing tables.
+# Using a set keeps lookups/validation simple.
+TABLES = {"universe", "prices", "indicators", "scores", "scores_v2", "meta"}  # <-- added "scores_v2"
 
 def _table_root(table: str) -> Path:
     assert table in TABLES or table == "meta", f"Unknown table: {table}"

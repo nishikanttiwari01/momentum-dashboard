@@ -26,3 +26,9 @@ set APP_DATA_ADAPTER=yahoo
 set APP_DEFAULT_UNIVERSE=NIFTY50
 set LIVE_TEST=1
 pytest -q tests\integration\test_live_scan.py
+
+
+# backfill 1y (252 TD) for your default universe
+python -m app.cli.backfill
+# or explicitly
+python -m app.cli.backfill --days 252 --universe NIFTY500

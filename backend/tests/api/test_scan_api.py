@@ -19,7 +19,7 @@ def test_scan_201_first_time_and_snapshot_written(client, tmp_parquet_root):
         assert RUN_PART_RE.match(p.name), f"bad partition name: {p.name}"
         assert (p / "_SUCCESS").exists()
         assert (p / "rowcount.txt").exists()
-        assert (p / "rowcount.txt").read_text().strip() in ("0", "0\n")
+        assert int((p / "rowcount.txt").read_text().strip()) >= 0
 
 def test_scan_200_on_idempotent_replay(client):
     # Replay with same key should return 200 (not 201)
