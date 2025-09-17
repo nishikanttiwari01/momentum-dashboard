@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type GetScreenerSortBy = typeof GetScreenerSortBy[keyof typeof GetScreenerSortBy];
+export type GetApiV1ScreenerSortBy = typeof GetApiV1ScreenerSortBy[keyof typeof GetApiV1ScreenerSortBy];
 
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
-export const GetScreenerSortBy = {
+export const GetApiV1ScreenerSortBy = {
   score: 'score',
   pct_today: 'pct_today',
   rsi: 'rsi',

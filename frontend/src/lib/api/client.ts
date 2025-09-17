@@ -29,11 +29,11 @@ import type {
   AlertRule,
   AlertState,
   DrawerDetail,
+  GetApiV1InstrumentsSymbolDetailParams,
+  GetApiV1ScreenerParams,
   GetInstrumentIndicatorsParams,
   GetInstrumentPricesParams,
-  GetInstrumentsSymbolDetailParams,
   GetLearning200,
-  GetScreenerParams,
   GetWatchlist200,
   HealthState,
   HistoryRow,
@@ -75,13 +75,13 @@ export const health = (
  ): Promise<AxiosResponse<HealthState>> => {
     
     return axios.default.get(
-      `/health`,options
+      `/api/v1/health`,options
     );
   }
 
 
 export const getHealthQueryKey = () => {
-    return [`/health`] as const;
+    return [`/api/v1/health`] as const;
     }
 
     
@@ -134,13 +134,13 @@ export const healthLive = (
  ): Promise<AxiosResponse<void>> => {
     
     return axios.default.get(
-      `/health/live`,options
+      `/api/v1/health/live`,options
     );
   }
 
 
 export const getHealthLiveQueryKey = () => {
-    return [`/health/live`] as const;
+    return [`/api/v1/health/live`] as const;
     }
 
     
@@ -193,13 +193,13 @@ export const healthReady = (
  ): Promise<AxiosResponse<void>> => {
     
     return axios.default.get(
-      `/health/ready`,options
+      `/api/v1/health/ready`,options
     );
   }
 
 
 export const getHealthReadyQueryKey = () => {
-    return [`/health/ready`] as const;
+    return [`/api/v1/health/ready`] as const;
     }
 
     
@@ -252,13 +252,13 @@ export const metrics = (
  ): Promise<AxiosResponse<string>> => {
     
     return axios.default.get(
-      `/health/metrics`,options
+      `/api/v1/health/metrics`,options
     );
   }
 
 
 export const getMetricsQueryKey = () => {
-    return [`/health/metrics`] as const;
+    return [`/api/v1/health/metrics`] as const;
     }
 
     
@@ -306,53 +306,53 @@ export const useMetrics = <TData = Awaited<ReturnType<typeof metrics>>, TError =
 /**
  * @summary List screener rows (filtered, sorted, paginated)
  */
-export const getScreener = (
-    params?: GetScreenerParams, options?: AxiosRequestConfig
+export const getApiV1Screener = (
+    params?: GetApiV1ScreenerParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<ScreenerList>> => {
     
     return axios.default.get(
-      `/screener`,{
+      `/api/v1/screener`,{
     ...options,
         params: {...params, ...options?.params},}
     );
   }
 
 
-export const getGetScreenerQueryKey = (params?: GetScreenerParams,) => {
-    return [`/screener`, ...(params ? [params]: [])] as const;
+export const getGetApiV1ScreenerQueryKey = (params?: GetApiV1ScreenerParams,) => {
+    return [`/api/v1/screener`, ...(params ? [params]: [])] as const;
     }
 
     
-export const getGetScreenerQueryOptions = <TData = Awaited<ReturnType<typeof getScreener>>, TError = AxiosError<unknown>>(params?: GetScreenerParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScreener>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetApiV1ScreenerQueryOptions = <TData = Awaited<ReturnType<typeof getApiV1Screener>>, TError = AxiosError<unknown>>(params?: GetApiV1ScreenerParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1Screener>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetScreenerQueryKey(params);
+  const queryKey =  queryOptions?.queryKey ?? getGetApiV1ScreenerQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScreener>>> = ({ signal }) => getScreener(params, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApiV1Screener>>> = ({ signal }) => getApiV1Screener(params, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScreener>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApiV1Screener>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type GetScreenerQueryResult = NonNullable<Awaited<ReturnType<typeof getScreener>>>
-export type GetScreenerQueryError = AxiosError<unknown>
+export type GetApiV1ScreenerQueryResult = NonNullable<Awaited<ReturnType<typeof getApiV1Screener>>>
+export type GetApiV1ScreenerQueryError = AxiosError<unknown>
 
 /**
  * @summary List screener rows (filtered, sorted, paginated)
  */
-export const useGetScreener = <TData = Awaited<ReturnType<typeof getScreener>>, TError = AxiosError<unknown>>(
- params?: GetScreenerParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScreener>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const useGetApiV1Screener = <TData = Awaited<ReturnType<typeof getApiV1Screener>>, TError = AxiosError<unknown>>(
+ params?: GetApiV1ScreenerParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1Screener>>, TError, TData>>, axios?: AxiosRequestConfig}
 
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
-  const queryOptions = getGetScreenerQueryOptions(params,options)
+  const queryOptions = getGetApiV1ScreenerQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -376,7 +376,7 @@ export const postScan = (
  ): Promise<AxiosResponse<RunDetail>> => {
     
     return axios.default.post(
-      `/scan`,
+      `/api/v1/scan`,
       scanRequest,options
     );
   }
@@ -431,7 +431,7 @@ export const listRuns = (
  ): Promise<AxiosResponse<ListRuns200>> => {
     
     return axios.default.get(
-      `/runs`,{
+      `/api/v1/runs`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -439,7 +439,7 @@ export const listRuns = (
 
 
 export const getListRunsQueryKey = (params?: ListRunsParams,) => {
-    return [`/runs`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/runs`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -492,13 +492,13 @@ export const getRun = (
  ): Promise<AxiosResponse<RunDetail>> => {
     
     return axios.default.get(
-      `/runs/${runId}`,options
+      `/api/v1/runs/${runId}`,options
     );
   }
 
 
 export const getGetRunQueryKey = (runId: RunId,) => {
-    return [`/runs/${runId}`] as const;
+    return [`/api/v1/runs/${runId}`] as const;
     }
 
     
@@ -551,7 +551,7 @@ export const listUniverse = (
  ): Promise<AxiosResponse<ListUniverse200>> => {
     
     return axios.default.get(
-      `/universe`,{
+      `/api/v1/universe`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -559,7 +559,7 @@ export const listUniverse = (
 
 
 export const getListUniverseQueryKey = (params?: ListUniverseParams,) => {
-    return [`/universe`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/universe`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -612,13 +612,13 @@ export const listSectors = (
  ): Promise<AxiosResponse<SectorFacet[]>> => {
     
     return axios.default.get(
-      `/universe/sectors`,options
+      `/api/v1/universe/sectors`,options
     );
   }
 
 
 export const getListSectorsQueryKey = () => {
-    return [`/universe/sectors`] as const;
+    return [`/api/v1/universe/sectors`] as const;
     }
 
     
@@ -671,7 +671,7 @@ export const listInstruments = (
  ): Promise<AxiosResponse<ListInstruments200>> => {
     
     return axios.default.get(
-      `/instruments`,{
+      `/api/v1/instruments`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -679,7 +679,7 @@ export const listInstruments = (
 
 
 export const getListInstrumentsQueryKey = (params?: ListInstrumentsParams,) => {
-    return [`/instruments`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/instruments`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -733,7 +733,7 @@ export const getInstrumentPrices = (
  ): Promise<AxiosResponse<PriceCandle[]>> => {
     
     return axios.default.get(
-      `/instruments/${symbol}/prices`,{
+      `/api/v1/instruments/${symbol}/prices`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -742,7 +742,7 @@ export const getInstrumentPrices = (
 
 export const getGetInstrumentPricesQueryKey = (symbol: string,
     params?: GetInstrumentPricesParams,) => {
-    return [`/instruments/${symbol}/prices`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/instruments/${symbol}/prices`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -798,7 +798,7 @@ export const getInstrumentIndicators = (
  ): Promise<AxiosResponse<IndicatorPoint[]>> => {
     
     return axios.default.get(
-      `/instruments/${symbol}/indicators`,{
+      `/api/v1/instruments/${symbol}/indicators`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -807,7 +807,7 @@ export const getInstrumentIndicators = (
 
 export const getGetInstrumentIndicatorsQueryKey = (symbol: string,
     params?: GetInstrumentIndicatorsParams,) => {
-    return [`/instruments/${symbol}/indicators`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/instruments/${symbol}/indicators`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -862,7 +862,7 @@ export const listPositions = (
  ): Promise<AxiosResponse<PositionOut[]>> => {
     
     return axios.default.get(
-      `/positions`,{
+      `/api/v1/positions`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -870,7 +870,7 @@ export const listPositions = (
 
 
 export const getListPositionsQueryKey = (params?: ListPositionsParams,) => {
-    return [`/positions`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/positions`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -923,7 +923,7 @@ export const createPosition = (
  ): Promise<AxiosResponse<PositionOut>> => {
     
     return axios.default.post(
-      `/positions`,
+      `/api/v1/positions`,
       positionIn,options
     );
   }
@@ -979,7 +979,7 @@ export const updatePosition = (
  ): Promise<AxiosResponse<PositionOut>> => {
     
     return axios.default.put(
-      `/positions/${id}`,
+      `/api/v1/positions/${id}`,
       positionIn,options
     );
   }
@@ -1088,7 +1088,7 @@ export const pinSnapshot = (
  ): Promise<AxiosResponse<SnapshotPinOut>> => {
     
     return axios.default.post(
-      `/snapshots/pin`,
+      `/api/v1/snapshots/pin`,
       snapshotPinIn,options
     );
   }
@@ -1143,7 +1143,7 @@ export const listSnapshotPins = (
  ): Promise<AxiosResponse<SnapshotPinOut[]>> => {
     
     return axios.default.get(
-      `/snapshots/pins`,{
+      `/api/v1/snapshots/pins`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -1151,7 +1151,7 @@ export const listSnapshotPins = (
 
 
 export const getListSnapshotPinsQueryKey = (params?: ListSnapshotPinsParams,) => {
-    return [`/snapshots/pins`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/snapshots/pins`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -1204,7 +1204,7 @@ export const unpinSnapshot = (
  ): Promise<AxiosResponse<void>> => {
     
     return axios.default.delete(
-      `/snapshots/pin/${id}`,options
+      `/api/v1/snapshots/pin/${id}`,options
     );
   }
 
@@ -1258,13 +1258,13 @@ export const listAlerts = (
  ): Promise<AxiosResponse<AlertState[]>> => {
     
     return axios.default.get(
-      `/alerts`,options
+      `/api/v1/alerts`,options
     );
   }
 
 
 export const getListAlertsQueryKey = () => {
-    return [`/alerts`] as const;
+    return [`/api/v1/alerts`] as const;
     }
 
     
@@ -1317,7 +1317,7 @@ export const createAlert = (
  ): Promise<AxiosResponse<AlertState>> => {
     
     return axios.default.post(
-      `/alerts`,
+      `/api/v1/alerts`,
       alertRule,options
     );
   }
@@ -1373,7 +1373,7 @@ export const updateAlert = (
  ): Promise<AxiosResponse<AlertState>> => {
     
     return axios.default.put(
-      `/alerts/${id}`,
+      `/api/v1/alerts/${id}`,
       alertRule,options
     );
   }
@@ -1428,7 +1428,7 @@ export const deleteAlert = (
  ): Promise<AxiosResponse<void>> => {
     
     return axios.default.delete(
-      `/alerts/${id}`,options
+      `/api/v1/alerts/${id}`,options
     );
   }
 
@@ -1482,13 +1482,13 @@ export const previewAlertDigest = (
  ): Promise<AxiosResponse<PreviewAlertDigest200>> => {
     
     return axios.default.get(
-      `/alerts/digest`,options
+      `/api/v1/alerts/digest`,options
     );
   }
 
 
 export const getPreviewAlertDigestQueryKey = () => {
-    return [`/alerts/digest`] as const;
+    return [`/api/v1/alerts/digest`] as const;
     }
 
     
@@ -1536,57 +1536,57 @@ export const usePreviewAlertDigest = <TData = Awaited<ReturnType<typeof previewA
 /**
  * @summary Get instrument drawer detail (backend-only)
  */
-export const getInstrumentsSymbolDetail = (
+export const getApiV1InstrumentsSymbolDetail = (
     symbol: string,
-    params?: GetInstrumentsSymbolDetailParams, options?: AxiosRequestConfig
+    params?: GetApiV1InstrumentsSymbolDetailParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<DrawerDetail>> => {
     
     return axios.default.get(
-      `/instruments/${symbol}/detail`,{
+      `/api/v1/instruments/${symbol}/detail`,{
     ...options,
         params: {...params, ...options?.params},}
     );
   }
 
 
-export const getGetInstrumentsSymbolDetailQueryKey = (symbol: string,
-    params?: GetInstrumentsSymbolDetailParams,) => {
-    return [`/instruments/${symbol}/detail`, ...(params ? [params]: [])] as const;
+export const getGetApiV1InstrumentsSymbolDetailQueryKey = (symbol: string,
+    params?: GetApiV1InstrumentsSymbolDetailParams,) => {
+    return [`/api/v1/instruments/${symbol}/detail`, ...(params ? [params]: [])] as const;
     }
 
     
-export const getGetInstrumentsSymbolDetailQueryOptions = <TData = Awaited<ReturnType<typeof getInstrumentsSymbolDetail>>, TError = AxiosError<unknown>>(symbol: string,
-    params?: GetInstrumentsSymbolDetailParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInstrumentsSymbolDetail>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetApiV1InstrumentsSymbolDetailQueryOptions = <TData = Awaited<ReturnType<typeof getApiV1InstrumentsSymbolDetail>>, TError = AxiosError<unknown>>(symbol: string,
+    params?: GetApiV1InstrumentsSymbolDetailParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1InstrumentsSymbolDetail>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetInstrumentsSymbolDetailQueryKey(symbol,params);
+  const queryKey =  queryOptions?.queryKey ?? getGetApiV1InstrumentsSymbolDetailQueryKey(symbol,params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getInstrumentsSymbolDetail>>> = ({ signal }) => getInstrumentsSymbolDetail(symbol,params, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApiV1InstrumentsSymbolDetail>>> = ({ signal }) => getApiV1InstrumentsSymbolDetail(symbol,params, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, enabled: !!(symbol), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getInstrumentsSymbolDetail>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, enabled: !!(symbol), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApiV1InstrumentsSymbolDetail>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type GetInstrumentsSymbolDetailQueryResult = NonNullable<Awaited<ReturnType<typeof getInstrumentsSymbolDetail>>>
-export type GetInstrumentsSymbolDetailQueryError = AxiosError<unknown>
+export type GetApiV1InstrumentsSymbolDetailQueryResult = NonNullable<Awaited<ReturnType<typeof getApiV1InstrumentsSymbolDetail>>>
+export type GetApiV1InstrumentsSymbolDetailQueryError = AxiosError<unknown>
 
 /**
  * @summary Get instrument drawer detail (backend-only)
  */
-export const useGetInstrumentsSymbolDetail = <TData = Awaited<ReturnType<typeof getInstrumentsSymbolDetail>>, TError = AxiosError<unknown>>(
+export const useGetApiV1InstrumentsSymbolDetail = <TData = Awaited<ReturnType<typeof getApiV1InstrumentsSymbolDetail>>, TError = AxiosError<unknown>>(
  symbol: string,
-    params?: GetInstrumentsSymbolDetailParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getInstrumentsSymbolDetail>>, TError, TData>>, axios?: AxiosRequestConfig}
+    params?: GetApiV1InstrumentsSymbolDetailParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1InstrumentsSymbolDetail>>, TError, TData>>, axios?: AxiosRequestConfig}
 
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
-  const queryOptions = getGetInstrumentsSymbolDetailQueryOptions(symbol,params,options)
+  const queryOptions = getGetApiV1InstrumentsSymbolDetailQueryOptions(symbol,params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1723,13 +1723,13 @@ export const getWatchlist = (
  ): Promise<AxiosResponse<GetWatchlist200>> => {
     
     return axios.default.get(
-      `/watchlist`,options
+      `/api/v1/watchlist`,options
     );
   }
 
 
 export const getGetWatchlistQueryKey = () => {
-    return [`/watchlist`] as const;
+    return [`/api/v1/watchlist`] as const;
     }
 
     
@@ -1782,7 +1782,7 @@ export const addToWatchlist = (
  ): Promise<AxiosResponse<void>> => {
     
     return axios.default.post(
-      `/watchlist`,
+      `/api/v1/watchlist`,
       addToWatchlistBody,options
     );
   }
@@ -1838,7 +1838,7 @@ export const removeFromWatchlist = (
  ): Promise<AxiosResponse<void>> => {
     
     return axios.default.delete(
-      `/watchlist/${symbol}`,{
+      `/api/v1/watchlist/${symbol}`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -1894,7 +1894,7 @@ export const listHistory = (
  ): Promise<AxiosResponse<HistoryRow[]>> => {
     
     return axios.default.get(
-      `/history`,{
+      `/api/v1/history`,{
     ...options,
         params: {...params, ...options?.params},}
     );
@@ -1902,7 +1902,7 @@ export const listHistory = (
 
 
 export const getListHistoryQueryKey = (params?: ListHistoryParams,) => {
-    return [`/history`, ...(params ? [params]: [])] as const;
+    return [`/api/v1/history`, ...(params ? [params]: [])] as const;
     }
 
     
@@ -1955,13 +1955,13 @@ export const getSettings = (
  ): Promise<AxiosResponse<Settings>> => {
     
     return axios.default.get(
-      `/settings`,options
+      `/api/v1/settings`,options
     );
   }
 
 
 export const getGetSettingsQueryKey = () => {
-    return [`/settings`] as const;
+    return [`/api/v1/settings`] as const;
     }
 
     
@@ -2014,7 +2014,7 @@ export const putSettings = (
  ): Promise<AxiosResponse<Settings>> => {
     
     return axios.default.put(
-      `/settings`,
+      `/api/v1/settings`,
       settings,options
     );
   }
@@ -2069,13 +2069,13 @@ export const getLearning = (
  ): Promise<AxiosResponse<GetLearning200>> => {
     
     return axios.default.get(
-      `/learning`,options
+      `/api/v1/learning`,options
     );
   }
 
 
 export const getGetLearningQueryKey = () => {
-    return [`/learning`] as const;
+    return [`/api/v1/learning`] as const;
     }
 
     

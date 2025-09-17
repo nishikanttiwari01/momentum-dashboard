@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { DataGrid, GridColDef, GridPaginationModel, GridSortModel } from '@mui/x-data-grid';
-import { Box, Alert, LinearProgress } from '@mui/material';
-import { useGetScreener } from '@/lib/api/client';
-import type { GetScreenerParams } from '@/lib/api/types';
+import { Box, Alert, LinearProgress, Chip } from '@mui/material'; // ADDED Chip
+import { useGetApiV1Screener } from '@/lib/api/client';
+import type { GetApiV1ScreenerParams } from '@/lib/api/types';
 
 type Props = { onSelectSymbol?: (symbol: string) => void; refetchIntervalMs?: number | false; };
-const nf2 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+//const nf2 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 const normalizeNumber = (v: unknown): number | null => {
   if (v === null || v === undefined) return null;
   // convert to string, trim, strip commas, currency, percent signs
@@ -15,19 +15,27 @@ const normalizeNumber = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-const fmtNum = (v: unknown) => {
+const fmtNum = (v: unknown): string => {
   const n = normalizeNumber(v);
-  if (n === null) return v === 0 ? '0' : (v ?? '') as string;
+  if (n === null) {
+    // Always return a safe string
+    return v === 0 ? '0' : '';
+  }
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(n);
 };
 
-const fmtPct = (v: unknown) => {
+const fmtPct = (v: unknown): string => {
   const n0 = normalizeNumber(v);
-  if (n0 === null) return (v ?? '') as string;
-  // tolerate 0.12 *or* 12 coming from API
+  if (n0 === null) return '';
   const n = Math.abs(n0) <= 1 ? n0 * 100 : n0;
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(n)}%`;
 };
+
+const fmtDateTime = (v: unknown) => {            // ADDED for 'as_of' column
+  if (!v) return '';
+  const d = new Date(String(v));
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleString();
+  };
 
 const strengthColor = (s?: string | null): 'success' | 'default' | 'error' | 'info' => {
   const t = (s || '').toLowerCase();
@@ -58,7 +66,7 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
   const [pagination, setPagination] = React.useState<GridPaginationModel>({ page: 0, pageSize: 25 });
   const [sortModel, setSortModel] = React.useState<GridSortModel>([]); // start with no sort
 
-  const apiParams: GetScreenerParams = {
+  const apiParams: GetApiV1ScreenerParams = {
     page: pagination.page + 1,
     page_size: pagination.pageSize,
   };
@@ -69,8 +77,8 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
     (apiParams as any).sort_dir = s0.sort ?? 'asc';
   }
 
-  const query = useGetScreener(apiParams, {
-    axios: { baseURL: '/api/v1' },              // ← key line: call /api/v1/...
+  const query = useGetApiV1Screener(apiParams, {
+    axios: { baseURL: '' },              // ← key line: call /api/v1/...
     query: {
       keepPreviousData: true,
       refetchInterval: refetchIntervalMs || false,
@@ -89,18 +97,46 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
       { field: 'symbol', headerName: 'Symbol', minWidth: 110 },
       { field: 'name', headerName: 'Name', flex: 1, minWidth: 160 },
       { field: 'sector', headerName: 'Sector', minWidth: 140 },
-      { field: 'score', headerName: 'Score', type: 'number', width: 100 },
-      { field: 'price', headerName: 'Price', type: 'number', width: 110 },
+
+      { field: 'score', headerName: 'Score', type: 'number', width: 90, valueFormatter: ({ value }) => fmtNum(value) },
+      { field: 'last', headerName: 'Price', type: 'number' },
+      { field: 'change_pct', headerName: '% Chg', type: 'number' },
+
       // add remaining fields once we confirm shape
       // week change
-      { field: 'wk_change', headerName: 'Δ 1W', width: 110, type: 'number', valueFormatter: ({ value }) => fmtNum(value) },
-      { field: 'wk_change_pct', headerName: '% 1W', width: 100, type: 'number', valueFormatter: ({ value }) => fmtPct(value) },
+      { field: 'wk_change', headerName: 'Δ 1W', width: 110, type: 'number' },
+      { field: 'wk_change_pct', headerName: '% 1W', width: 100, type: 'number' },
 
-      // returns
-      { field: 'ret_1m', headerName: '% 1M', width: 90, type: 'number', valueFormatter: ({ value }) => fmtPct(value) },
-      { field: 'ret_3m', headerName: '% 3M', width: 90, type: 'number', valueFormatter: ({ value }) => fmtPct(value) },
-      { field: 'ret_6m', headerName: '% 6M', width: 90, type: 'number', valueFormatter: ({ value }) => fmtPct(value) },
-      //{ field: 'ret_12_1m', headerName: '% 12-1M', width: 110, type: 'number', valueFormatter: ({ value }) => fmtPct(value) },
+      // Indicators
+      { field: 'rsi', headerName: 'RSI', width: 80, type: 'number' },
+      { field: 'adx', headerName: 'ADX', width: 80, type: 'number' },
+
+
+      // Returns
+      { field: 'ret_1m', headerName: '% 1M', width: 90, type: 'number' },
+      { field: 'ret_3m', headerName: '% 3M', width: 90, type: 'number' },
+      { field: 'ret_6m', headerName: '% 6M', width: 90, type: 'number' },
+      { field: 'ret_12_1m', headerName: '% 12–1M', width: 110, type: 'number' },
+
+      // Other metrics
+      { field: 'pct_from_52w_high', headerName: '% from 52W H', width: 130, type: 'number' },
+      { field: 'atr_pct', headerName: 'ATR %', width: 90, type: 'number' },
+      { field: 'liquidity', headerName: 'Liquidity', width: 110, type: 'number' },
+      { field: 'vol_spike', headerName: 'Rel Vol', width: 90, type: 'number' },
+      { field: 'pct_today', headerName: '% Today', width: 100, type: 'number' },
+
+      // Decisioning
+      { field: 'buy', headerName: 'Buy', width: 80, renderCell: ({ value }) => yesNoChip(value) },
+      { field: 'reason', headerName: 'Reason', flex: 1.2 , minWidth: 210},
+
+      // Meta
+      { field: 'source', headerName: 'Source', minWidth: 100,  },
+      { field: 'stale', headerName: 'Stale', width: 80, renderCell: ({ value }) => yesNoChip(value) },
+      { field: 'run_id', headerName: 'Run ID', minWidth: 120 },
+      { field: 'as_of', headerName: 'As Of', minWidth: 160 },
+      { field: 'last_index', headerName: 'Last Idx', width: 100, type: 'number' },
+
+
     ],
     []
   );

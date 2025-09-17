@@ -2,23 +2,23 @@
 // They normalize AxiosResponse -> data and give us one import point.
 
 import {
-  useGetScreener,
-  useGetInstrumentsSymbolDetail,
+  useGetApiV1Screener,
+  useGetApiV1InstrumentsSymbolDetail,
   useListRuns,
 } from './api/client';
 
 import type {
   ScreenerList,
   DrawerDetail,
-  GetScreenerParams,
-  GetInstrumentsSymbolDetailParams,
+  GetApiV1ScreenerParams,
+  GetApiV1InstrumentsSymbolDetailParams,
   ListRunsParams,
   ListRuns200,
 } from './api/types';
 
 // --- Screener (table) ---
 export function useScreener(
-  params?: GetScreenerParams,
+  params?: GetApiV1ScreenerParams,
   opts?: {
     // react-query overrides if you need them on a call-site (optional)
     staleTimeMs?: number;
@@ -27,14 +27,14 @@ export function useScreener(
 ) {
   const { staleTimeMs = 30_000, refetchIntervalMs = false } = opts ?? {};
 
-  return useGetScreener(params, {
+  return useGetApiV1Screener(params, {
     // Always return .data (ScreenerList), not AxiosResponse
     query: {
       select: (res) => res.data as ScreenerList,
       staleTime: staleTimeMs,
       refetchInterval: refetchIntervalMs,
       refetchOnWindowFocus: true,
-      keepPreviousData: true,
+      //keepPreviousData: true,
     },
   });
 }
@@ -42,7 +42,7 @@ export function useScreener(
 // --- Instrument Detail (Right Drawer) ---
 export function useInstrumentDetail(
   symbol: string,
-  params?: GetInstrumentsSymbolDetailParams,
+  params?: GetApiV1InstrumentsSymbolDetailParams,
   opts?: {
     staleTimeMs?: number;
     enabled?: boolean; // let the caller decide when to fetch (e.g., only if a symbol is selected)
@@ -50,7 +50,7 @@ export function useInstrumentDetail(
 ) {
   const { staleTimeMs = 60_000, enabled = true } = opts ?? {};
 
-  return useGetInstrumentsSymbolDetail(symbol, params, {
+  return useGetApiV1InstrumentsSymbolDetail(symbol, params, {
     query: {
       enabled,
       select: (res) => res.data as DrawerDetail,

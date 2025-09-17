@@ -21,7 +21,7 @@ tags:
 - name: Settings
 - name: Learning
 paths:
-  /health:
+  /api/v1/health:
     get:
       tags:
       - Health
@@ -37,7 +37,7 @@ paths:
               examples:
                 example:
                   $ref: '#/components/examples/Health'
-  /health/live:
+  /api/v1/health/live:
     get:
       tags:
       - Health
@@ -46,7 +46,7 @@ paths:
       responses:
         '200':
           description: Live
-  /health/ready:
+  /api/v1/health/ready:
     get:
       tags:
       - Health
@@ -64,7 +64,7 @@ paths:
               examples:
                 example:
                   $ref: '#/components/examples/Problem503'
-  /health/metrics:
+  /api/v1/health/metrics:
     get:
       tags:
       - Health
@@ -77,7 +77,7 @@ paths:
             text/plain:
               schema:
                 type: string
-  /screener:
+  /api/v1/screener:
     get:
       tags:
       - Screener
@@ -195,7 +195,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScreenerList'
-  /scan:
+  /api/v1/scan:
     post:
       tags:
       - Screener
@@ -253,7 +253,7 @@ paths:
               $ref: '#/components/headers/XRateLimitRemaining'
             X-RateLimit-Reset:
               $ref: '#/components/headers/XRateLimitReset'
-  /runs:
+  /api/v1/runs:
     get:
       tags:
       - Runs
@@ -290,7 +290,7 @@ paths:
               examples:
                 example:
                   $ref: '#/components/examples/Runs'
-  /runs/{run_id}:
+  /api/v1/runs/{run_id}:
     get:
       tags:
       - Runs
@@ -326,7 +326,7 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
-  /universe:
+  /api/v1/universe:
     get:
       tags:
       - Universe
@@ -366,7 +366,7 @@ paths:
                   $ref: '#/components/examples/UniverseList'
         '304':
           description: Not Modified
-  /universe/sectors:
+  /api/v1/universe/sectors:
     get:
       tags:
       - Universe
@@ -384,7 +384,7 @@ paths:
               examples:
                 example:
                   $ref: '#/components/examples/Sectors'
-  /instruments:
+  /api/v1/instruments:
     get:
       tags:
       - Instruments
@@ -411,7 +411,7 @@ paths:
                       $ref: '#/components/schemas/UniverseInstrument'
                   pagination:
                     $ref: '#/components/schemas/Pagination'
-  /instruments/{symbol}/prices:
+  /api/v1/instruments/{symbol}/prices:
     get:
       tags:
       - Instruments
@@ -433,7 +433,7 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/PriceCandle'
-  /instruments/{symbol}/indicators:
+  /api/v1/instruments/{symbol}/indicators:
     get:
       tags:
       - Instruments
@@ -454,7 +454,7 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/IndicatorPoint'
-  /positions:
+  /api/v1/positions:
     get:
       tags:
       - Positions
@@ -495,7 +495,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PositionOut'
-  /positions/{id}:
+  /api/v1/positions/{id}:
     put:
       tags:
       - Positions
@@ -534,7 +534,7 @@ paths:
       responses:
         '204':
           description: Deleted
-  /snapshots/pin:
+  /api/v1/snapshots/pin:
     post:
       tags:
       - Snapshots
@@ -553,7 +553,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SnapshotPinOut'
-  /snapshots/pins:
+  /api/v1/snapshots/pins:
     get:
       tags:
       - Snapshots
@@ -576,7 +576,7 @@ paths:
               examples:
                 example:
                   $ref: '#/components/examples/Pins'
-  /snapshots/pin/{id}:
+  /api/v1/snapshots/pin/{id}:
     delete:
       tags:
       - Snapshots
@@ -591,7 +591,7 @@ paths:
       responses:
         '204':
           description: Unpinned
-  /alerts:
+  /api/v1/alerts:
     get:
       tags:
       - Alerts
@@ -627,7 +627,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AlertState'
-  /alerts/{id}:
+  /api/v1/alerts/{id}:
     put:
       tags:
       - Alerts
@@ -666,7 +666,7 @@ paths:
       responses:
         '204':
           description: Deleted
-  /alerts/digest:
+  /api/v1/alerts/digest:
     get:
       tags:
       - Alerts
@@ -680,7 +680,7 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-  /instruments/{symbol}/detail:
+  /api/v1/instruments/{symbol}/detail:
     get:
       tags:
       - Instruments
@@ -825,7 +825,7 @@ paths:
                 title: "Not Found"
                 detail: "Position not found"
                 code: "POSITION_NOT_FOUND"
-  /watchlist:
+  /api/v1/watchlist:
     get:
       tags:
       - Watchlist
@@ -876,7 +876,7 @@ paths:
       responses:
         '201':
           description: Added
-  /watchlist/{symbol}:
+  /api/v1/watchlist/{symbol}:
     delete:
       tags:
       - Watchlist
@@ -891,7 +891,7 @@ paths:
       responses:
         '204':
           description: Removed
-  /history:
+  /api/v1/history:
     get:
       tags:
       - History
@@ -915,7 +915,7 @@ paths:
               examples:
                 example:
                   $ref: '#/components/examples/History'
-  /settings:
+  /api/v1/settings:
     get:
       tags:
       - Settings
@@ -949,7 +949,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Settings'
-  /learning:
+  /api/v1/learning:
     get:
       tags:
       - Learning

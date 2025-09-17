@@ -50,3 +50,7 @@ python -m app.cli.backfill --days 252 --universe NIFTY500
 
 (.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend> datamodel-codegen --input ..\contracts/openapi.yaml --input-file-type openapi --output app/schemas/generated/models.py --output-model-type pydantic_v2.BaseModel --target-python-version 3.11 --use-double-quotes --use-standard-collections --enum-field-as-literal all --collapse-root-models --encoding utf-8
 
+# This is to auto generate code from open API frontend. 
+D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\frontend>npx orval --config .\orval.config.ts
+
+

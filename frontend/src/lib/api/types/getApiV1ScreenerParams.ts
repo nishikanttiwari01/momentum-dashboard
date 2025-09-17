@@ -5,16 +5,16 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
-import type { GetScreenerSortBy } from './getScreenerSortBy';
-import type { GetScreenerSortDir } from './getScreenerSortDir';
-import type { GetScreenerUniverse } from './getScreenerUniverse';
+import type { GetApiV1ScreenerSortBy } from './getApiV1ScreenerSortBy';
+import type { GetApiV1ScreenerSortDir } from './getApiV1ScreenerSortDir';
+import type { GetApiV1ScreenerUniverse } from './getApiV1ScreenerUniverse';
 
-export type GetScreenerParams = {
+export type GetApiV1ScreenerParams = {
 page?: number;
 per_page?: number;
-sort_by?: GetScreenerSortBy;
-sort_dir?: GetScreenerSortDir;
-universe?: GetScreenerUniverse;
+sort_by?: GetApiV1ScreenerSortBy;
+sort_dir?: GetApiV1ScreenerSortDir;
+universe?: GetApiV1ScreenerUniverse;
 sector_in?: string[];
 score_min?: number;
 rsi_min?: number;

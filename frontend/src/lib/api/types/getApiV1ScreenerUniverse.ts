@@ -6,11 +6,15 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type GetScreenerSortDir = typeof GetScreenerSortDir[keyof typeof GetScreenerSortDir];
+export type GetApiV1ScreenerUniverse = typeof GetApiV1ScreenerUniverse[keyof typeof GetApiV1ScreenerUniverse];
 
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
-export const GetScreenerSortDir = {
-  asc: 'asc',
-  desc: 'desc',
+export const GetApiV1ScreenerUniverse = {
+  NIFTY50: 'NIFTY50',
+  NIFTY100: 'NIFTY100',
+  NIFTY500: 'NIFTY500',
+  MIDCAP: 'MIDCAP',
+  SMALLCAP: 'SMALLCAP',
+  ALL: 'ALL',
 } as const;
