@@ -173,7 +173,7 @@ screener:
   default_universe: "NIFTY500"
 
 scheduler:
-  enabled: false
+  enabled: true
   interval_minutes: 15
   universe: null
 

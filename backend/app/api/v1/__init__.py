@@ -12,6 +12,7 @@ from . import settings
 # Phase 9 additions
 from . import runs
 from . import scan
+from . import positions
 
 __all__: list[str] = [
     "health",
@@ -22,4 +23,5 @@ __all__: list[str] = [
     "settings",
     "runs",
     "scan",
+    "positions",
 ]

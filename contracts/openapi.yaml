@@ -708,6 +708,123 @@ paths:
               examples:
                 default:
                   $ref: '#/components/examples/DrawerDetailExample'
+# -------------------------
+# POSITIONS (drawer state)
+# -------------------------
+  /api/v1/positions/{symbol}:
+    parameters:
+      - name: symbol
+        in: path
+        required: true
+        description: >
+          Ticker symbol (case-insensitive). Accepts "XYZ" or "XYZ.NS". The server canonicalizes internally
+          and will match common variants (e.g., with/without ".NS").
+        schema:
+          type: string
+    get:
+      tags: [positions]
+      summary: Get saved position (locked drawer state) for a symbol
+      operationId: getPosition
+      responses:
+        '200':
+          description: Saved position found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionOut'   # <-- REUSE existing
+              example:
+                symbol: "360ONE.NS"
+                entry_price_locked: 1040.0
+                qty: 100
+                trade_on: true
+                stop_now: 1010.0
+                exit_close_threshold: 1001.5
+                breakeven_active: true
+                euphoria_on: false
+                note: "Locked from drawer"
+                id: 42
+                created_at: "2025-09-15T10:10:00Z"
+                updated_at: "2025-09-15T10:12:05Z"
+        '404':
+          description: No saved position for this symbol
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                status: 404
+                title: "Not Found"
+                detail: "Position not found"
+                code: "POSITION_NOT_FOUND"
+    put:
+      tags: [positions]
+      summary: Create or update (upsert) locked drawer state for a symbol
+      description: >
+        Upsert endpoint. Send only fields you want to set/update.
+        Typical flow: when user clicks **Lock Entry**, send `entry_price_locked` using the drawer’s suggested
+        entry (`next_action.refs.entry_suggested`) with `qty` and `trade_on=true`.
+      operationId: upsertPosition
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PositionUpsert'  # <-- NEW schema with all-optional fields
+            example:
+              entry_price_locked: 1040.0
+              qty: 100
+              trade_on: true
+              stop_now: 1010.0
+              exit_close_threshold: 1001.5
+              breakeven_active: true
+              euphoria_on: false
+              note: "Locked from drawer"
+      responses:
+        '201':
+          description: Created new position
+          headers:
+            Location:
+              description: Resource URL of the created/updated position
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionOut'   # <-- REUSE existing
+        '200':
+          description: Updated existing position
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionOut'   # <-- REUSE existing
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                status: 400
+                title: "Invalid payload"
+                detail: "qty must be >= 0"
+                code: "VALIDATION_ERROR"
+    delete:
+      tags: [positions]
+      summary: Delete saved position for a symbol
+      operationId: deletePosition
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: No saved position to delete
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                status: 404
+                title: "Not Found"
+                detail: "Position not found"
+                code: "POSITION_NOT_FOUND"
   /watchlist:
     get:
       tags:
@@ -1378,6 +1495,43 @@ components:
           updated_at:
             type: string
             format: date-time
+    PositionUpsert:
+      type: object
+      description: >
+        Partial update used by PUT /api/v1/positions/{symbol}. All fields are optional; only send the fields
+        you want to set/update. Server canonicalizes the symbol from the path and returns a PositionOut.
+      additionalProperties: false
+      properties:
+        entry_price_locked:
+          type: number
+          minimum: 0
+          description: Locked entry chosen by user (₹).
+        qty:
+          type: integer
+          minimum: 0
+          description: Position size (shares/units).
+        trade_on:
+          type: boolean
+          description: Whether trade/position is active for this symbol.
+        stop_now:
+          type: number
+          minimum: 0
+          description: Current trailing/soft stop level (₹).
+        exit_close_threshold:
+          type: number
+          minimum: 0
+          description: Close-below threshold to trigger exit (₹).
+        breakeven_active:
+          type: boolean
+          description: Whether breakeven rule is active.
+        euphoria_on:
+          type: boolean
+          description: Whether “euphoria” guardrail is active.
+        note:
+          type: string
+          maxLength: 2000
+          description: Free-form note saved with the position.
+
     SnapshotPinIn:
       type: object
       properties:

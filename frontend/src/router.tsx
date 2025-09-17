@@ -1,18 +1,28 @@
-import { createBrowserRouter } from 'react-router-dom'
-import Dashboard from './pages/Dashboard'
-import Screener from './pages/Screener'
-import Watchlist from './pages/Watchlist'
-import History from './pages/History'
-import Alerts from './pages/Alerts'
-import Learning from './pages/Learning'
-import Settings from './pages/Settings'
+import { Routes, Route, Navigate } from 'react-router-dom';
+import AppShell from './layouts/AppShell';
+import Dashboard from './pages/Dashboard';
+import Screener from './pages/Screener';
+import DetailRightDrawer from './pages/DetailRightDrawer';
+import Watchlist from './pages/Watchlist';
+import History from './pages/History';
+import Alerts from './pages/Alerts';
+import Settings from './pages/Settings';
+import Learning from './pages/Learning'; // create stub if you don’t have it yet
 
-export const router = createBrowserRouter([
-  { path: '/', element: <Dashboard /> },
-  { path: '/screener', element: <Screener /> },
-  { path: '/watchlist', element: <Watchlist /> },
-  { path: '/history', element: <History /> },
-  { path: '/alerts', element: <Alerts /> },
-  { path: '/learning', element: <Learning /> },
-  { path: '/settings', element: <Settings /> },
-])
+export default function AppRouter() {
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route index element={<Dashboard />} />
+        <Route path="/screener" element={<Screener />} />
+        <Route path="/detail" element={<DetailRightDrawer />} />
+        <Route path="/watchlist" element={<Watchlist />} />
+        <Route path="/history" element={<History />} />
+        <Route path="/alerts" element={<Alerts />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/learning" element={<Learning />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}

@@ -25,6 +25,7 @@ from app.api.v1 import (
     runs,
     scan,
     universe,
+    positions,
 )
 from app.api.errors import (
     on_validation_error,
@@ -66,17 +67,25 @@ def _wrap_unhandled(logger: logging.Logger):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger = logging.getLogger("app.main")
+    logger.info("lifespan: begin")
+
     # Ensure test-time env vars (e.g. APP_SQLITE_PATH) take effect
     if hasattr(config.load, "cache_clear"):
         config.load.cache_clear()
 
     cfg = config.load()
+    logger.info("lifespan: config loaded env=%s", getattr(cfg.app, "env", "unknown"))
 
     # Initialize DB from configured path (tests point this at a tmp file)
-    db.init_sqlite(cfg.storage.sqlite_path)
+    try:
+        db.init_sqlite(cfg.storage.sqlite_path)
+        logger.info("lifespan: db.init_sqlite ok path=%s", cfg.storage.sqlite_path)
+    except Exception:
+        logger.exception("lifespan: db.init_sqlite failed")
+        raise
 
     # CHANGED: log DB path + positions table row count (best effort)
-    logger = logging.getLogger("app.main")
     logger.info("DB: sqlite_path=%s", cfg.storage.sqlite_path)
     try:
         # use the same sessionmaker as the app
@@ -95,18 +104,38 @@ async def lifespan(app: FastAPI):
     app.state.idem_salt = uuid4().hex
 
     app.state.ready = True
-    sched.start_if_enabled()
 
+    # Start scheduler in a guarded way so startup never hangs silently
+    try:
+        sched.start_if_enabled()
+        logger.info("lifespan: scheduler started (if enabled)")
+    except Exception:
+        logger.exception("lifespan: scheduler start failed (continuing)")
+
+    logger.info("lifespan: yield to serve")
     try:
         yield
     finally:
-        sched.shutdown()
-        db.dispose_engine()
+        logger.info("lifespan: shutdown begin")
+        try:
+            sched.shutdown()
+            logger.info("lifespan: scheduler shutdown ok")
+        except Exception:
+            logger.exception("lifespan: scheduler shutdown error (continuing)")
+        try:
+            db.dispose_engine()
+            logger.info("lifespan: db disposed")
+        except Exception:
+            logger.exception("lifespan: db dispose error")
+        logger.info("lifespan: end")
 
 
 def create_app() -> FastAPI:
     # CHANGED: initialize logging here so it's active for the real app instance
     logger = _wire_logging()
+    logging.getLogger("app.main").setLevel(logging.INFO)
+    logging.getLogger("app.api.v1.instruments").setLevel(logging.INFO)
+    logging.getLogger("app.services.detail").setLevel(logging.INFO)
 
     cfg = config.load()
     logger.info("boot env=%s", getattr(cfg.app, "env", "unknown"))
@@ -136,7 +165,7 @@ def create_app() -> FastAPI:
             logger.exception("REQ EXC %s %s", method, path)
             raise
         logger.info("REQ %s %s -> %s", method, path, response.status_code)
-        return response
+        return response   # <— IMPORTANT: ensure this is 'response'
 
     # Exception handlers — keep your shapes, but ensure we log
     app.add_exception_handler(RequestValidationError, on_validation_error)
@@ -154,10 +183,7 @@ def create_app() -> FastAPI:
     app.include_router(runs.router,        prefix=prefix, tags=["Runs"])
     app.include_router(scan.router,        prefix=prefix, tags=["Screener"])
     app.include_router(universe.router,    prefix=prefix, tags=["Universe"])
-
-    # CHANGED: bump our two hot loggers to INFO explicitly
-    logging.getLogger("app.api.v1.instruments").setLevel(logging.INFO)
-    logging.getLogger("app.services.detail").setLevel(logging.INFO)
+    app.include_router(positions.router,   prefix=prefix, tags=["Positions"])
 
     return app
 
