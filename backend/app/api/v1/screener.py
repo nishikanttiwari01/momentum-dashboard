@@ -6,6 +6,10 @@ from fastapi import APIRouter, Request, Query
 from app.schemas.screener import ScreenerList, ScreenerRow
 from app.repos.parquet.scores_repo import ScoresRepo
 
+# ADDED: minimal imports to clean NaN/Inf payloads
+import math
+import numbers
+
 router = APIRouter(tags=["Screener"])
 repo = ScoresRepo()
 
@@ -65,10 +69,6 @@ def _badge_contract_safe(b: dict) -> dict:
     """
     Normalize a badge into the compact contract shape ONLY:
       { code: str, text: str, color: str }
-
-    Rationale:
-    - Generated Pydantic models may forbid extra fields; keep it minimal/safe.
-    - We still map legacy inputs (key/label/color) → code/text/color.
     """
     code = b.get("code") or b.get("key") or ""
     text = b.get("text") or b.get("label") or ""
@@ -77,16 +77,7 @@ def _badge_contract_safe(b: dict) -> dict:
 
 
 def _derive_week_fields(row: Dict[str, Any]) -> None:
-    """
-    Ensure wk_change and wk_change_pct exist.
-
-    If parquet supplies a helper 'ret_1w' (percent), we compute:
-      base = last / (1 + ret_1w/100)
-      wk_change     = last - base
-      wk_change_pct = ret_1w
-
-    If not present, we leave them as None (the UI can hide/null-format).
-    """
+    """Ensure wk_change and wk_change_pct exist (derive from ret_1w if needed)."""
     if row.get("wk_change") is not None and row.get("wk_change_pct") is not None:
         return
     last = row.get("last")
@@ -110,6 +101,25 @@ def _derive_week_fields(row: Dict[str, Any]) -> None:
         row["wk_change_pct"] = None
 
 
+# ADDED: minimal cleaner so JSONResponse won't 500 on NaN/Inf
+def _clean_nonfinite_inplace(d: Dict[str, Any]) -> None:
+    for k, v in list(d.items()):
+        if isinstance(v, numbers.Real):
+            x = float(v)
+            if not math.isfinite(x):
+                d[k] = None
+        elif isinstance(v, list):
+            cleaned = []
+            for x in v:
+                if isinstance(x, numbers.Real):
+                    xf = float(x)
+                    cleaned.append(xf if math.isfinite(xf) else None)
+                else:
+                    cleaned.append(x)
+            d[k] = cleaned
+        # nested dicts (e.g., badges already normalized) left as-is
+
+
 @router.get("/screener", response_model=ScreenerList)
 def list_screener(
     request: Request,
@@ -118,15 +128,12 @@ def list_screener(
     sort: str = Query("score.desc,last.desc", description="Comma list e.g. score.desc,last.desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=500),
-    # Note: universe is accepted for future server-side filtering; currently ignored by repo.read().
     universe: Optional[str] = Query(None, description="Universe preset (e.g., NIFTY500, NIFTY50, ALL)"),
 ):
     # Parse filters from the raw query string
     params = dict(request.query_params)
     filters = _parse_filters(params)
 
-    # Ask the repo for the requested projection. It gracefully handles Phase-9 (minimal)
-    # and Phase-11 (rich) parquet schemas and aliases. See ScoresRepo.read().  :contentReference[oaicite:2]{index=2}
     try:
         items, total, resolved_run_id, resolved_as_of = repo.read(
             run_id=run_id,
@@ -160,30 +167,35 @@ def list_screener(
     # Normalize each row into the contract-safe shape
     norm_items: List[ScreenerRow] = []
     for r in items:
-        # Derive 1W fields if not present
         _derive_week_fields(r)
 
-        # Normalize badges → only code/text/color (contract-safe)
+        # Normalize badges → only code/text/color
         badges = r.get("badges") or []
         r["badges"] = [_badge_contract_safe(b) for b in badges if isinstance(b, dict)]
 
-        # Clean up legacy helper no matter what
+        # Clean up legacy helper
         r.pop("ret_1w", None)
 
-        # Normalize score as int 0..100 (in case upstream stores float)
+        # Normalize score as int 0..100
         s = r.get("score")
         if isinstance(s, float):
             r["score"] = int(round(s * 100 if 0.0 <= s <= 1.0 else s))
         elif s is None:
             r["score"] = 0
 
-        # Ensure symbol exists (model often requires it)
+        # Ensure symbol exists
         r.setdefault("symbol", "")
 
-        # Build the Pydantic row; model handles datetime parsing for 'as_of' if it's an ISO string
+        # Sanitize non-finite numerics
+        _clean_nonfinite_inplace(r)
+
+        # MINIMAL FIX: ScreenerRow.change_pct requires a float; default to 0.0 if missing/None
+        if r.get("change_pct") is None:
+            r["change_pct"] = 0.0
+
+        # Build the Pydantic row
         norm_items.append(ScreenerRow(**r))
 
-    # Return a ScreenerList model (not a raw dict) so FastAPI enforces/serializes via Pydantic
     return ScreenerList(
         items=norm_items,
         pagination={"page": page, "per_page": per_page, "total": total, "next_cursor": None},
