@@ -170,7 +170,7 @@ validation:
   config_schema_enforced: true      # reject unknown keys; validate on boot
 
 screener:
-  default_universe: "NIFTY500"
+  default_universe: "ALL"
 
 scheduler:
   enabled: true

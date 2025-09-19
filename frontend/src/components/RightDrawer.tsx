@@ -1,3 +1,4 @@
+// src/features/detail/RightDrawer.tsx
 import * as React from 'react';
 import {
   Drawer,
@@ -18,6 +19,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
 import SpeedIcon from '@mui/icons-material/Speed';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type { DrawerDetail } from '../lib/api/types';
 import { useInstrumentDetail } from '../lib/hooks';
 
@@ -27,9 +29,11 @@ type Props = {
   onClose: () => void;
 };
 
-/** Simple formatters */
+/* ---------- formatters ---------- */
 const pct = (v?: number, digits = 2) =>
   typeof v === 'number' && isFinite(v) ? `${v.toFixed(digits)}%` : '—';
+const rup = (v?: number, digits = 2) =>
+  typeof v === 'number' && isFinite(v) ? `₹${v.toFixed(digits)}` : '—';
 const num = (v?: number, digits = 2) =>
   typeof v === 'number' && isFinite(v) ? v.toFixed(digits) : '—';
 const relvol = (v?: number) =>
@@ -39,10 +43,29 @@ const prox52w = (p?: number) => {
   if (p === 0) return 'At 52W high';
   return p > 0 ? `${pct(p)} above` : `${pct(Math.abs(p))} below`;
 };
+const levelColor = (level?: string) => {
+  switch ((level || '').toLowerCase()) {
+    case 'low':
+      return 'success';
+    case 'medium':
+      return 'warning';
+    case 'high':
+      return 'error';
+    default:
+      return 'default';
+  }
+};
 
-/** Tiny bar with number on the right */
-const BarRow: React.FC<{ label: string; value?: number; max?: number }> = ({ label, value, max = 100 }) => {
-  const v = typeof value === 'number' && isFinite(value) ? Math.max(0, Math.min(max, value)) : undefined;
+/* ---------- tiny bar row ---------- */
+const BarRow: React.FC<{ label: string; value?: number; max?: number }> = ({
+  label,
+  value,
+  max = 100,
+}) => {
+  const v =
+    typeof value === 'number' && isFinite(value)
+      ? Math.max(0, Math.min(max, value))
+      : undefined;
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1} mb={0.5}>
@@ -56,7 +79,10 @@ const BarRow: React.FC<{ label: string; value?: number; max?: number }> = ({ lab
             <Box sx={{ height: 8, bgcolor: 'action.hover', borderRadius: 1 }} />
           )}
         </Box>
-        <Typography variant="body2" sx={{ width: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+        <Typography
+          variant="body2"
+          sx={{ width: 44, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+        >
           {typeof v === 'number' ? Math.round(v) : '—'}
         </Typography>
       </Stack>
@@ -64,59 +90,124 @@ const BarRow: React.FC<{ label: string; value?: number; max?: number }> = ({ lab
   );
 };
 
-/** Meter 0–100 with semantic color */
-const Meter: React.FC<{ label: string; value?: number }> = ({ label, value }) => {
-  const v = typeof value === 'number' && isFinite(value) ? Math.max(0, Math.min(100, value)) : undefined;
-  const color =
-    typeof v !== 'number'
-      ? 'action.disabledBackground'
-      : v < 34
-      ? 'success.main'
-      : v < 67
-      ? 'warning.main'
-      : 'error.main';
+/* ---------- level chip (Risk/Euphoria) ---------- */
+const LevelChip: React.FC<{ label: string; level?: string; basis?: Record<string, number> }> = ({
+  label,
+  level,
+  basis,
+}) => {
+  const color = levelColor(level);
+  const kbasis =
+    basis && Object.keys(basis).length
+      ? Object.entries(basis)
+          .map(([k, v]) => `${k}: ${typeof v === 'number' ? v.toFixed(2) : String(v)}`)
+          .join(' · ')
+      : undefined;
   return (
-    <Box>
-      <Typography variant="body2" sx={{ mb: 0.5, color: 'text.secondary' }}>
-        {label}
-      </Typography>
-      <Box sx={{ height: 8, bgcolor: 'action.hover', borderRadius: 999, overflow: 'hidden' }}>
-        <Box sx={{ width: `${v ?? 0}%`, height: '100%', bgcolor: color, transition: 'width .3s' }} />
-      </Box>
-      <Typography variant="caption" sx={{ mt: 0.5, display: 'inline-block', fontVariantNumeric: 'tabular-nums' }}>
-        {typeof v === 'number' ? `${v}` : '—'}
-      </Typography>
-    </Box>
+    <Stack direction="row" spacing={1} alignItems="center">
+      {label === 'Risk' ? <SpeedIcon fontSize="small" /> : <WhatshotIcon fontSize="small" />}
+      <Tooltip title={kbasis || ''} disableHoverListener={!kbasis}>
+        <Chip size="small" color={color as any} label={`${label}: ${level ?? '—'}`} />
+      </Tooltip>
+    </Stack>
   );
 };
 
+/* ---------- simple field rows ---------- */
+const KV: React.FC<{ label: string; value: React.ReactNode; help?: string }> = ({
+  label,
+  value,
+  help,
+}) => (
+  <Stack direction="row" spacing={1} alignItems="baseline">
+    <Typography variant="body2" sx={{ width: 160, color: 'text.secondary' }}>
+      {label}:
+    </Typography>
+    <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+      {value}
+    </Typography>
+    {help ? (
+      <Typography variant="caption" color="text.secondary">
+        — {help}
+      </Typography>
+    ) : null}
+  </Stack>
+);
+
+const Field: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+  <Stack direction="row" spacing={1} alignItems="baseline">
+    <Typography variant="body2" sx={{ width: 160, color: 'text.secondary' }}>
+      {label}:
+    </Typography>
+    <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+      {value}
+    </Typography>
+  </Stack>
+);
+
 export default function RightDrawer({ symbol, open, onClose }: Props) {
   const enabled = Boolean(open && symbol);
-  const { data, isLoading, isFetching, error } = useInstrumentDetail(symbol || '', undefined, {
+  const { data, isFetching, error } = useInstrumentDetail(symbol || '', undefined, {
     enabled,
     staleTimeMs: 60_000,
   });
 
-  // Using `any` on read protects us if schema field names differ slightly
+  // Read defensively; backend evolved to nested structures.
   const d = (data as DrawerDetail | undefined) as any;
+  const ind = d?.indicators || {};
+  const meters = d?.meters || {};
+  const pos = d?.position || {};
+  const na = d?.next_action || {};
+  const refs = na?.refs || {};
 
-  // Header chips (badges)
-  const badges: string[] = Array.isArray(d?.badges) ? d.badges : [];
+  /* Effective entry rule:
+     - if entry_price_locked>0 use that
+     - else if entry_price>0 use that
+     - else fall back to suggested entry (if present) or current price
+  */
+  const locked = typeof pos?.entry_price_locked === 'number' && pos.entry_price_locked > 0;
+  const effectiveEntry =
+    (locked ? pos.entry_price_locked : pos?.entry_price) ??
+    refs?.entry_suggested ??
+    d?.price;
 
-  // Entry module local UI (toggle + inputs)
-  const [tradeOn, setTradeOn] = React.useState<boolean>(Boolean(d?.entry_block?.locked));
-  const [entryPrice, setEntryPrice] = React.useState<string>(d?.entry_block?.entry ? String(d.entry_block.entry) : '');
-  const [qty, setQty] = React.useState<string>('');
+  // Trade toggle local UI (no network POST here yet)
+  const [tradeOn, setTradeOn] = React.useState<boolean>(Boolean(pos?.trade_on));
+  const [entryPrice, setEntryPrice] = React.useState<string>(
+    typeof effectiveEntry === 'number' ? String(effectiveEntry) : ''
+  );
+  const [qty, setQty] = React.useState<string>(pos?.qty ? String(pos.qty) : '');
 
   React.useEffect(() => {
-    setTradeOn(Boolean(d?.entry_block?.locked));
-    setEntryPrice(d?.entry_block?.entry ? String(d.entry_block.entry) : '');
-  }, [d?.entry_block?.locked, d?.entry_block?.entry]);
+    setTradeOn(Boolean(pos?.trade_on));
+    const eff =
+      (typeof pos?.entry_price_locked === 'number' && pos.entry_price_locked > 0
+        ? pos.entry_price_locked
+        : pos?.entry_price) ?? refs?.entry_suggested ?? d?.price;
+    setEntryPrice(typeof eff === 'number' ? String(eff) : '');
+    setQty(pos?.qty ? String(pos.qty) : '');
+  }, [
+    d?.price,
+    pos?.trade_on,
+    pos?.entry_price,
+    pos?.entry_price_locked,
+    pos?.qty,
+    refs?.entry_suggested,
+  ]);
 
-  const lockDisabled = !tradeOn || !entryPrice || Number(entryPrice) <= 0;
+  const lockDisabled =
+    !tradeOn || !entryPrice || Number(entryPrice) <= 0 || (qty && Number(qty) <= 0);
+
+  // Header helpers
+  const pct1d = d?.pct_today ?? d?.change_pct_1d ?? d?.change_pct;
+  const pctColor =
+    typeof pct1d === 'number' ? (pct1d >= 0 ? 'success.main' : 'error.main') : 'text.secondary';
+
+  // Badges row
+  const badges: string[] = Array.isArray(d?.badges) ? d.badges : [];
 
   return (
-    <Drawer anchor="right" open={open} onClose={onClose} PaperProps={{ sx: { width: 480, p: 2 } }}>
+    <Drawer anchor="right" open={open} onClose={onClose} PaperProps={{ sx: { width: 520, p: 2 } }}>
       {/* Header */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
         <Box>
@@ -124,23 +215,23 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
             {d?.name || symbol || '—'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {d?.sector ? d.sector : '—'}
-            {d?.resolved_run_id ? ` · Run ${d.resolved_run_id}` : ''}
+            {d?.sector || '—'}
+            {d?.run_id ? ` · Run ${d.run_id}` : d?.resolved_run_id ? ` · Run ${d.resolved_run_id}` : ''}
           </Typography>
         </Box>
         <Box textAlign="right">
           <Typography variant="h6" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-            {num(d?.price)}
+            {rup(d?.price)}
           </Typography>
           <Typography
             variant="body2"
             sx={{
-              color: typeof d?.change_pct_1d === 'number' ? (d.change_pct_1d >= 0 ? 'success.main' : 'error.main') : 'text.secondary',
+              color: pctColor,
               fontWeight: 700,
               fontVariantNumeric: 'tabular-nums',
             }}
           >
-            {pct(d?.change_pct_1d ?? d?.change_pct)}
+            {pct(pct1d)}
           </Typography>
         </Box>
         <IconButton onClick={onClose} aria-label="close">
@@ -157,32 +248,47 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
         </Stack>
       )}
 
-      {/* Sparkline placeholder (slot for later chart) */}
-      <Box sx={{ height: 80, bgcolor: 'action.hover', borderRadius: 1, mb: 2 }} title="30D sparkline (coming soon)" />
+      {/* Sparkline (30D) placeholder */}
+      <Box
+        sx={{
+          height: 84,
+          bgcolor: 'action.hover',
+          borderRadius: 1,
+          mb: 2,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 12,
+          color: 'text.secondary',
+        }}
+        title="30D sparkline (wire to data later)"
+      >
+        Sparkline (30D)
+      </Box>
 
-      {/* Indicators grid */}
+      {/* Indicators */}
       <Box sx={{ mb: 2 }}>
         <Grid container spacing={1.5}>
           <Grid item xs={6}>
-            <Field label="RSI(14)" value={num(d?.rsi14, 1)} />
+            <Field label="RSI(14)" value={num(ind?.rsi14, 1)} />
           </Grid>
           <Grid item xs={6}>
-            <Field label="ADX(14)" value={num(d?.adx14, 1)} />
+            <Field label="ADX(14)" value={num(ind?.adx14, 1)} />
           </Grid>
           <Grid item xs={6}>
-            <Field label="EMA Fast" value={num(d?.ema_fast, 2)} />
+            <Field label={`EMA Fast${ind?.ema_fast ? ` (${ind.ema_fast})` : ''}`} value={num(ind?.ema_fast_value, 2)} />
           </Grid>
           <Grid item xs={6}>
-            <Field label="EMA Slow" value={num(d?.ema_slow, 2)} />
+            <Field label={`EMA Slow${ind?.ema_slow ? ` (${ind.ema_slow})` : ''}`} value={num(ind?.ema_slow_value, 2)} />
           </Grid>
           <Grid item xs={6}>
-            <Field label="ATR %" value={pct(d?.atr_pct)} />
+            <Field label="ATR %" value={pct(ind?.atr_pct)} />
           </Grid>
           <Grid item xs={6}>
-            <Field label="RelVol(20)" value={relvol(d?.relvol20)} />
+            <Field label="RelVol(20)" value={relvol(ind?.relvol20)} />
           </Grid>
           <Grid item xs={12}>
-            <Field label="vs 52W High" value={prox52w(d?.proximity_52w_high_pct)} />
+            <Field label="vs 52W High" value={prox52w(ind?.proximity_52w_high_pct)} />
           </Grid>
         </Grid>
       </Box>
@@ -193,14 +299,9 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
           Score Breakdown
         </Typography>
         <BarRow label="Total Score" value={d?.score} />
-        {/* Optional sub-pillars if present */}
-        {'trend_rank' in (d || {}) || 'breakout_quality' in (d || {}) || 'relvol' in (d || {}) ? (
-          <>
-            {'trend_rank' in (d || {}) && <BarRow label="Trend" value={d?.trend_rank} />}
-            {'breakout_quality' in (d || {}) && <BarRow label="Breakout Quality" value={d?.breakout_quality} />}
-            {'relvol' in (d || {}) && <BarRow label="Accumulation / RelVol" value={d?.relvol} />}
-          </>
-        ) : null}
+        {'trend_rank' in (d || {}) && <BarRow label="Trend" value={d?.trend_rank} />}
+        {'breakout_quality' in (d || {}) && <BarRow label="Breakout Quality" value={d?.breakout_quality} />}
+        {'relvol' in (d || {}) && <BarRow label="Accumulation / RelVol" value={d?.relvol} />}
       </Box>
 
       {/* Meters */}
@@ -210,16 +311,10 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
         </Typography>
         <Grid container spacing={1.5}>
           <Grid item xs={6}>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <SpeedIcon fontSize="small" />
-              <Meter label="Risk" value={d?.meters?.risk?.value} />
-            </Stack>
+            <LevelChip label="Risk" level={meters?.risk?.level} basis={meters?.risk?.basis} />
           </Grid>
           <Grid item xs={6}>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <WhatshotIcon fontSize="small" />
-              <Meter label="Euphoria" value={d?.meters?.euphoria?.value} />
-            </Stack>
+            <LevelChip label="Euphoria" level={meters?.euphoria?.level} basis={meters?.euphoria?.basis} />
           </Grid>
         </Grid>
       </Box>
@@ -229,12 +324,19 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
         <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
           Next Action
         </Typography>
-        <Typography variant="body2">
-          {d?.next_action?.text ||
-            d?.next_action?.reason ||
-            d?.next_action?.state ||
-            '—'}
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          {na?.text || na?.reason || na?.state || '—'}
         </Typography>
+        {/* Inline refs: compact numeric hints when available */}
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5, color: 'text.secondary' }}>
+          {typeof refs?.ema_n === 'number' && typeof refs?.ema_value === 'number' ? (
+            <Chip size="small" variant="outlined" label={`EMA${refs.ema_n}=${num(refs.ema_value, 2)}`} />
+          ) : null}
+          {typeof refs?.entry_suggested === 'number' ? (
+            <Chip size="small" variant="outlined" label={`Suggested Entry ${rup(refs.entry_suggested)}`} />
+          ) : null}
+          {d?.method_pill ? <Chip size="small" color="default" label={d.method_pill} /> : null}
+        </Stack>
       </Box>
 
       {/* Entry module */}
@@ -242,17 +344,29 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
         <Typography variant="subtitle2" sx={{ mb: 1 }}>
           Entry
         </Typography>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+
+        <KV
+          label="Entry price"
+          value={rup(effectiveEntry)}
+          help={locked ? 'Locked' : 'Suggested (can lock when Trade ON)'}
+        />
+
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1, mb: 1 }}>
           <Switch
             checked={tradeOn}
             onChange={(e) => setTradeOn(e.target.checked)}
             inputProps={{ 'aria-label': 'Trade toggle' }}
           />
           <Typography variant="body2">Trade</Typography>
+          {locked && (
+            <Tooltip title="Entry is locked; adjust via dedicated flow">
+              <InfoOutlinedIcon fontSize="small" />
+            </Tooltip>
+          )}
         </Stack>
 
         {tradeOn && (
-          <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+          <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
             <TextField
               size="small"
               label="Entry price (₹)"
@@ -260,6 +374,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
               onChange={(e) => setEntryPrice(e.target.value)}
               sx={{ width: 180 }}
               inputProps={{ inputMode: 'decimal' }}
+              disabled={locked}
             />
             <TextField
               size="small"
@@ -268,43 +383,62 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
               onChange={(e) => setQty(e.target.value)}
               sx={{ width: 120 }}
               inputProps={{ inputMode: 'numeric' }}
+              disabled={locked}
             />
-            <Button variant="contained" disabled={lockDisabled}>
+            <Button variant="contained" disabled={lockDisabled || locked}>
               Lock entry
             </Button>
           </Stack>
         )}
 
-        <Stack spacing={0.5}>
-          <KV label="Stop-loss (now)" value={d?.entry_block?.stop_loss ? `₹${num(d?.entry_block?.stop_loss)}` : '—'} help="sell if touched" />
-          <KV label="Exit at close if" value={d?.entry_block?.exit_if ? `Close < ₹${num(d?.entry_block?.exit_if)}` : '—'} help="sell next day if true" />
-          <KV label="Breakeven" value={d?.entry_block?.breakeven_at ? `Active at ₹${num(d?.entry_block?.breakeven_at)}` : 'Pending'} help="stop won’t go below entry" />
-          <KV label="Euphoria" value={d?.entry_block?.euphoria_on ? 'On' : 'Off'} help="tighter stop & faster EMA" />
+        {/* Action block (computed on backend using effective entry) */}
+        <Stack spacing={0.5} sx={{ mt: 1 }}>
+          <KV label="Stop-loss (now)" value={typeof pos?.stop_now === 'number' ? rup(pos?.stop_now) : '—'} help="sell if touched" />
+          <KV
+            label="Exit at close if"
+            value={typeof pos?.exit_close_threshold === 'number' ? `Close < ${rup(pos?.exit_close_threshold)}` : '—'}
+            help="sell next day if true"
+          />
+          <KV
+            label="Breakeven"
+            value={pos?.breakeven_active ? 'Active' : 'Pending'}
+            help="stop won’t go below entry"
+          />
+          <KV label="Euphoria" value={pos?.euphoria_on ? 'On' : 'Off'} help="tighter stop & faster EMA" />
         </Stack>
       </Box>
 
-      {/* Alerts row */}
+      {/* Alerts */}
       <Box sx={{ mb: 2 }}>
         <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
           Alerts
         </Typography>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-          <Chip icon={<NotificationsActiveIcon />} label="Price crosses ₹X" variant="outlined" />
-          <Chip icon={<NotificationsActiveIcon />} label="Enters breakout" variant="outlined" />
-          <Chip icon={<NotificationsActiveIcon />} label="Close < EMAₙ" variant="outlined" />
-          <Chip icon={<NotificationsActiveIcon />} label="Breakeven active" variant="outlined" />
-          <Chip icon={<NotificationsActiveIcon />} label="Stop hit" variant="outlined" />
+          {/* Render templates if present, else show common presets */}
+          {Array.isArray(d?.alert_templates) && d.alert_templates.length > 0
+            ? d.alert_templates.map((t: any, i: number) => (
+                <Chip key={`alert-${i}`} icon={<NotificationsActiveIcon />} label={String(t?.label ?? 'Alert')} variant="outlined" />
+              ))
+            : [
+                'Price crosses ₹X',
+                'Enters breakout',
+                'Close < EMAₙ',
+                'Breakeven active',
+                'Stop hit',
+              ].map((lbl) => (
+                <Chip key={lbl} icon={<NotificationsActiveIcon />} label={lbl} variant="outlined" />
+              ))}
         </Stack>
       </Box>
 
-      {/* Footer info */}
+      {/* Footer */}
       <Divider sx={{ my: 1.5 }} />
-      <Typography variant="caption" color="text.secondary">
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
         {d?.as_of ? `As of ${new Date(d.as_of).toLocaleString()}` : ''}
         {isFetching ? ' · refreshing…' : ''}
+        {d?.symbol_canon ? ` · ${d.symbol_canon}` : ''}
       </Typography>
 
-      {/* Error */}
       {error ? (
         <Typography variant="body2" color="error" sx={{ mt: 1 }}>
           {(error as any)?.message || 'Failed to load details.'}
@@ -313,32 +447,3 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
     </Drawer>
   );
 }
-
-/** Small label:value inline row */
-const KV: React.FC<{ label: string; value: React.ReactNode; help?: string }> = ({ label, value, help }) => (
-  <Stack direction="row" spacing={1} alignItems="baseline">
-    <Typography variant="body2" sx={{ width: 140, color: 'text.secondary' }}>
-      {label}:
-    </Typography>
-    <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-      {value}
-    </Typography>
-    {help ? (
-      <Typography variant="caption" color="text.secondary">
-        — {help}
-      </Typography>
-    ) : null}
-  </Stack>
-);
-
-/** Small label:value simple field */
-const Field: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
-  <Stack direction="row" spacing={1} alignItems="baseline">
-    <Typography variant="body2" sx={{ width: 140, color: 'text.secondary' }}>
-      {label}:
-    </Typography>
-    <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-      {value}
-    </Typography>
-  </Stack>
-);

@@ -12,6 +12,11 @@ python run_uvicorn.py  # temporarily change reload=True -> False in the file
 set APP_DISABLE_ALEMBIC=0
 alembic upgrade head
 set APP_DISABLE_ALEMBIC=1
+
+### New way to start application backend
+cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
+.venv\Scripts\activate
+set APP_DISABLE_ALEMBIC=1
 python run_uvicorn.py
 - **Swagger docs:** http://localhost:8000/docs
 

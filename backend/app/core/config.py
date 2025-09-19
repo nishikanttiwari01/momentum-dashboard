@@ -49,7 +49,7 @@ class StorageCfg(BaseModel):
 # Minimal, focused config blocks to avoid "magic strings" in code and keep YAML-first design.
 class ScreenerCfg(BaseModel):
     # Universe preset used when none is supplied at runtime (e.g., GET /screener, POST /scan).
-    default_universe: str = "NIFTY500"  # e.g., NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL
+    default_universe: str = "ALL"  # e.g., NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL
 
 class SchedulerCfg(BaseModel):
     # Whether background scans are enabled; if False, app runs without APScheduler.

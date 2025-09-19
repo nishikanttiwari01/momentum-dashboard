@@ -1,8 +1,11 @@
+// src/components/MomentumTable.tsx
 import * as React from 'react';
 import { DataGrid, GridColDef, GridPaginationModel, GridSortModel } from '@mui/x-data-grid';
 import { Box, Alert, LinearProgress, Chip } from '@mui/material'; // ADDED Chip
 import { useGetApiV1Screener } from '@/lib/api/client';
 import type { GetApiV1ScreenerParams } from '@/lib/api/types';
+// ✅ NEW: import the new drawer
+import RightDrawer from '@/features/detail/RightDrawer';
 
 type Props = { onSelectSymbol?: (symbol: string) => void; refetchIntervalMs?: number | false; };
 //const nf2 = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
@@ -66,6 +69,18 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
   const [pagination, setPagination] = React.useState<GridPaginationModel>({ page: 0, pageSize: 25 });
   const [sortModel, setSortModel] = React.useState<GridSortModel>([]); // start with no sort
 
+  // ✅ NEW: local state to control the new Right Drawer
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+  const [drawerSymbol, setDrawerSymbol] = React.useState<string | null>(null);
+  const openDrawerFor = React.useCallback((symbol: string) => {
+    setDrawerSymbol(symbol);
+    setDrawerOpen(true);
+  }, []);
+  const closeDrawer = React.useCallback(() => {
+    setDrawerOpen(false);
+    setDrawerSymbol(null);
+  }, []);
+
   const apiParams: GetApiV1ScreenerParams = {
     page: pagination.page + 1,
     page_size: pagination.pageSize,
@@ -98,32 +113,30 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
       { field: 'name', headerName: 'Name', flex: 1, minWidth: 160 },
       { field: 'sector', headerName: 'Sector', minWidth: 140 },
 
-      { field: 'score', headerName: 'Score', type: 'number', width: 90, valueFormatter: ({ value }) => fmtNum(value) },
+      { field: 'score', headerName: 'Score', type: 'number', width: 90 },
       { field: 'last', headerName: 'Price', type: 'number' },
       { field: 'change_pct', headerName: '% Chg', type: 'number' },
+      { field: 'pct_today', headerName: '% Today', width: 100, type: 'number' },
 
       // add remaining fields once we confirm shape
       // week change
       { field: 'wk_change', headerName: 'Δ 1W', width: 110, type: 'number' },
       { field: 'wk_change_pct', headerName: '% 1W', width: 100, type: 'number' },
-
-      // Indicators
-      { field: 'rsi', headerName: 'RSI', width: 80, type: 'number' },
-      { field: 'adx', headerName: 'ADX', width: 80, type: 'number' },
-
-
-      // Returns
+            // Returns
       { field: 'ret_1m', headerName: '% 1M', width: 90, type: 'number' },
       { field: 'ret_3m', headerName: '% 3M', width: 90, type: 'number' },
       { field: 'ret_6m', headerName: '% 6M', width: 90, type: 'number' },
       { field: 'ret_12_1m', headerName: '% 12–1M', width: 110, type: 'number' },
+
+      // Indicators
+      { field: 'rsi', headerName: 'RSI', width: 80, type: 'number' },
+      { field: 'adx', headerName: 'ADX', width: 80, type: 'number' },
 
       // Other metrics
       { field: 'pct_from_52w_high', headerName: '% from 52W H', width: 130, type: 'number' },
       { field: 'atr_pct', headerName: 'ATR %', width: 90, type: 'number' },
       { field: 'liquidity', headerName: 'Liquidity', width: 110, type: 'number' },
       { field: 'vol_spike', headerName: 'Rel Vol', width: 90, type: 'number' },
-      { field: 'pct_today', headerName: '% Today', width: 100, type: 'number' },
 
       // Decisioning
       { field: 'buy', headerName: 'Buy', width: 80, renderCell: ({ value }) => yesNoChip(value) },
@@ -133,10 +146,8 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
       { field: 'source', headerName: 'Source', minWidth: 100,  },
       { field: 'stale', headerName: 'Stale', width: 80, renderCell: ({ value }) => yesNoChip(value) },
       { field: 'run_id', headerName: 'Run ID', minWidth: 120 },
-      { field: 'as_of', headerName: 'As Of', minWidth: 160 },
+      { field: 'as_of', headerName: 'As Of', minWidth: 160, valueFormatter: ({ value }) => fmtDateTime(value) },
       { field: 'last_index', headerName: 'Last Idx', width: 100, type: 'number' },
-
-
     ],
     []
   );
@@ -165,8 +176,16 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
         onSortModelChange={setSortModel}
         disableColumnMenu
         density="compact"
-        onRowClick={(p) => onSelectSymbol?.(p.row.symbol)}
+        disableRowSelectionOnClick
+        // 👉 Open ONLY the new drawer (do not call parent anymore)
+        onRowClick={(p) => {
+          const sym = p?.row?.symbol;
+          if (sym) openDrawerFor(sym);
+        }}
       />
+
+      {/* New Right Drawer controlled here */}
+      <RightDrawer symbol={drawerSymbol} open={drawerOpen} onClose={closeDrawer} />
     </Box>
   );
 }

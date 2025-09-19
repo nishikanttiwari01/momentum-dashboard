@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 import uuid
 import logging
+import time  # <-- added
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -37,6 +38,9 @@ def _run_once(universe: Optional[str]) -> None:
     - Calls the same service used by /scan, preserving Phase-9 semantics (empty snapshot).
     - Softly passes 'universe' in payload (Phase-10-ready, non-breaking).
     """
+    start_ts = time.perf_counter()
+    log.info("scheduled scan starting", extra={"universe": universe or "default"})
+
     # Acquire a SQLAlchemy session from the existing dependency
     gen = get_session()            # generator that yields a Session and closes in finally
     s = next(gen)                  # borrow a session from the dependency
@@ -51,7 +55,7 @@ def _run_once(universe: Optional[str]) -> None:
             "scheduled scan completed",
             extra={
                 "run_id": result.run_id,
-                "created": created,
+                "was_created": created,  # renamed from 'created'
                 "status": result.status,
                 "universe": universe or "default",
             },
@@ -59,11 +63,19 @@ def _run_once(universe: Optional[str]) -> None:
     except Exception as exc:
         log.exception("scheduled scan failed: %s", exc)
     finally:
-        # Close the generator to trigger the dependency's 'finally: session.close()'
         try:
             gen.close()
         except Exception:
             pass
+
+        duration = time.perf_counter() - start_ts
+        log.info(
+            "scheduled scan finished",
+            extra={
+                "universe": universe or "default",
+                "duration_sec": round(duration, 2),
+            },
+        )
 
 
 def start_if_enabled() -> Optional[BackgroundScheduler]:
@@ -90,7 +102,7 @@ def start_if_enabled() -> Optional[BackgroundScheduler]:
     # Add a single, coalesced job that fires every N minutes
     # - coalesce=True: if the app was paused, don't replay all missed fires
     # - max_instances=1: do not run two scans at once
-    # - misfire_grace_time=60: allow a small delay tolerance
+    # - misfire_grace_time=900: allow up to 15 min delay tolerance
     sch.add_job(
         func=_run_once,
         trigger="interval",
@@ -100,7 +112,7 @@ def start_if_enabled() -> Optional[BackgroundScheduler]:
         replace_existing=True,
         coalesce=True,
         max_instances=1,
-        misfire_grace_time=60,
+        misfire_grace_time=900,
     )
 
     sch.start()
