@@ -5,9 +5,8 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
-import type { BadgeCategory } from './badgeCategory';
 
-export interface Badge {
-  category: BadgeCategory;
-  label: string;
-}
+/**
+ * @nullable
+ */
+export type LegacyBadgeKey = unknown | null;

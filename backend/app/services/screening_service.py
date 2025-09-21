@@ -99,8 +99,40 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     ind["adx_slope_5"] = adx_df["adx_slope_5"]
 
     ind["atr14_pct"] = (atr(df["high"], df["low"], df["close"], 14) / df["close"]) * 100.0
+    # NEW: ATR10% (tighter volatility proxy used by entry/exit heuristics)
+    ind["atr10_pct"] = (atr(df["high"], df["low"], df["close"], 10) / df["close"]) * 100.0
     ind["relvol20"] = relvol(df["volume"], 20)
     ind["proximity_52w_high_pct"] = proximity_52w_high(df["close"], df["high"], 252)
+
+    # NEW: Volume Z-score (20d)
+    vol_ma20 = df["volume"].rolling(20, min_periods=20).mean()
+    vol_sd20 = df["volume"].rolling(20, min_periods=20).std(ddof=0)
+    ind["vol_z20"] = (df["volume"] - vol_ma20) / vol_sd20.replace(0.0, np.nan)
+
+    # NEW: OBV block (level, MA, slope, above/under flag)
+    _delta = df["close"].diff()
+    _sgn = np.sign(_delta.fillna(0.0))
+    obv = (df["volume"] * _sgn).fillna(0.0).cumsum()
+    ind["obv"] = obv
+    ind["obv_ma30"] = obv.rolling(30, min_periods=30).mean()
+    ind["obv_slope_10"] = obv - obv.shift(10)
+    ind["obv_above_ma"] = ind["obv"] > ind["obv_ma30"]
+
+    # NEW: Pivot (prior 20d high), pivot clearance %, base length bars
+    pivot_20d = df["high"].rolling(20, min_periods=20).max().shift(1)
+    ind["pivot_20d"] = pivot_20d
+    ind["pivot_clear_pct"] = (df["close"] / pivot_20d - 1.0) * 100.0
+    # Base length: bars since last 20d high (tolerant to float noise)
+    hh20 = df["high"].rolling(20, min_periods=20).max()
+    is_new_high = df["high"] >= (hh20 * 0.999)
+    _idx = np.arange(len(df))
+    last_nh_idx = pd.Series(np.where(is_new_high, _idx, np.nan), index=df.index).ffill()
+    ind["base_len_bars"] = (_idx - last_nh_idx).astype(float)
+
+    # NEW: Behavior fields
+    ind["gap_up_pct"] = (df["open"] / df["close"].shift(1) - 1.0) * 100.0
+    rng = (df["high"] - df["low"])
+    ind["close_pos_in_bar"] = np.where(rng > 0, (df["close"] - df["low"]) / rng, np.nan)
 
     rets = returns_block(df["adj_close"])
     ind = ind.join(rets, how="left")
@@ -144,6 +176,17 @@ def _make_scores_row(
     minus_di = _maybe_float(r.get("minus_di"))
     relvol20 = _maybe_float(r.get("relvol20"))
     prox_52w = _maybe_float(r.get("proximity_52w_high_pct"))
+    vol_z20 = _maybe_float(r.get("vol_z20"))
+    atr10_pct = _maybe_float(r.get("atr10_pct"))
+    obv_val = _maybe_float(r.get("obv"))
+    obv_ma30 = _maybe_float(r.get("obv_ma30"))
+    obv_slope_10 = _maybe_float(r.get("obv_slope_10"))
+    obv_above_ma = (bool(r.get("obv_above_ma")) if r.get("obv_above_ma") is not None else None)
+    pivot_20d = _maybe_float(r.get("pivot_20d"))
+    pivot_clear_pct = _maybe_float(r.get("pivot_clear_pct"))
+    base_len_bars = _maybe_float(r.get("base_len_bars"))
+    gap_up_pct = _maybe_float(r.get("gap_up_pct"))
+    close_pos_in_bar = _maybe_float(r.get("close_pos_in_bar"))
     ret_1w = _maybe_float(r.get("ret_1w"))
     ret_1m = _maybe_float(r.get("ret_1m"))
     ret_3m = _maybe_float(r.get("ret_3m"))
@@ -154,35 +197,82 @@ def _make_scores_row(
     ema200 = _maybe_float(r.get("ema200"))
     atr14_pct = _maybe_float(r.get("atr14_pct"))
 
-    # Minimal breakout/pivot placeholders (can be replaced with real pivot logic)
+    # Derivations formerly placeholders → now from computed indicators
     is_new_52w_high = (prox_52w or -1) >= 0.0
-    pivot_clear_pct = 0.0
-    base_len_bars = 10
-    vol_z = None
-    obv_above_ma = None
-    obv_slope_pos = None
+    vol_z = vol_z20
+    obv_slope_pos = (obv_slope_10 is not None and obv_slope_10 > 0)
 
     # Scores
     basic_raw, basic_pct, basic_badges = basic_score(
         rsi14, adx14, adx_s5, is_new_52w_high, pivot_clear_pct, base_len_bars,
         relvol20, vol_z, bool(obv_above_ma) if obv_above_ma is not None else False
     )
+    # full_score may return None if inputs are incomplete (as per updated scoring.py)
     full_100, full_badges = full_score(
         rsi14, adx14, adx_s5, plus_di, minus_di,
         prox_52w, pivot_clear_pct, base_len_bars, 0,
         relvol20, vol_z, obv_above_ma or False, obv_slope_pos or False,
         None,  # delivery lift unknown
         6 if (ema50 or 0) > (ema200 or 0) else 3 if (ema200 or 0) < (last or 0) else 0,  # rough regime proxy
-        2   # sector RS placeholder
+        2,  # sector RS placeholder
+        atr10_pct=atr10_pct,
+        gap_up_pct=gap_up_pct,
+        close_pos_in_bar=close_pos_in_bar
     )
 
-    # Canonical score = Full or Basic%; also persist both
-    score_basic = int(round(basic_pct)) if basic_pct is not None else None
+    # ---------- NEW: canonical scoring + fallback metadata ----------
+    # Align basic score fields: raw (0–12) and normalized (0–100)
+    score_basic = basic_raw if basic_raw is not None else None
+    score_basic_normalized = int(round(basic_pct)) if basic_pct is not None else None
     score_full = int(round(full_100)) if full_100 is not None else None
-    score = score_full if score_full is not None else score_basic if score_basic is not None else 0
 
-    badges = (full_badges or []) + (basic_badges or [])
-    recommendation, reason = recommendation_and_reason(score, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct)
+    # Required keys for full trust
+    full_required_keys = [
+        "relvol20", "vol_z20", "obv", "obv_ma30", "obv_slope_10", "obv_above_ma",
+        "pivot_20d", "pivot_clear_pct", "base_len_bars",
+        "proximity_52w_high_pct", "atr14_pct", "ema10", "ema50", "ema200", "rsi14", "adx14"
+    ]
+    data_gaps: List[str] = []
+    for k in full_required_keys:
+        v = r.get(k)
+        missing = False
+        try:
+            missing = (v is None) or (isinstance(v, (float, np.floating)) and (np.isnan(v) or np.isinf(v)))
+        except Exception:
+            missing = v is None
+        if missing:
+            data_gaps.append(k)
+
+    score_source = "full"
+    stale = False
+    if score_full is not None and not data_gaps:
+        score = int(score_full)
+        score_source = "full"
+        # badges: combine full + basic
+        badges = (full_badges or [])
+        # reason: use full
+        recommendation, reason = recommendation_and_reason(
+            score, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct,
+            atr14_pct=atr14_pct, atr10_pct=atr10_pct, gap_up_pct=gap_up_pct,
+            close_pos_in_bar=close_pos_in_bar
+        )
+
+    else:
+        # Fallback to normalized basic
+        score = score_basic_normalized if score_basic_normalized is not None else 0
+        score_source = "basic_fallback"
+        stale = True
+        # badges: restrict to safe Watch (data incomplete)
+        badges = (basic_badges or [])
+        if not badges:
+            badges = [{"code": "WATCH", "text": "⏳ Watch (data incomplete)"}]
+
+        # reason: explicit fallback line
+        recommendation, reason = recommendation_and_reason(
+            None, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct
+        )
+        if data_gaps:
+            reason = f"{reason} · missing: {', '.join(sorted(set(data_gaps)))}"
 
     row: Dict[str, Any] = {
         "symbol": symbol,
@@ -198,14 +288,32 @@ def _make_scores_row(
         "relvol20": relvol20,
         "proximity_52w_high_pct": prox_52w,  # CHANGED: use canonical field name
         "atr14_pct": atr14_pct,
+        # NEW indicator fields persisted to parquet:
+        "atr10_pct": atr10_pct,
+        "vol_z20": vol_z20,
+        "obv": obv_val,
+        "obv_ma30": obv_ma30,
+        "obv_slope_10": obv_slope_10,
+        "obv_above_ma": obv_above_ma,
+        "pivot_20d": pivot_20d,
+        "pivot_clear_pct": pivot_clear_pct,
+        "base_len_bars": (int(round(base_len_bars)) if base_len_bars is not None else None),
+        "gap_up_pct": gap_up_pct,
+        "close_pos_in_bar": close_pos_in_bar,
         "ret_1w": ret_1w,
         "ret_1m": ret_1m,
         "ret_3m": ret_3m,
         "ret_6m": ret_6m,
         "ret_12_1m": ret_12_1m,
-        "score": score,                 # canonical, used for default sort
-        "score_full": score_full,       # CHANGED: persist both
-        "score_basic": score_basic,     # CHANGED: persist both
+        # ---------- NEW: canonical scoring fields ----------
+        "score": score,                         # canonical 0–100 used for sort
+        "score_full": score_full,               # may be None
+        "score_basic": score_basic,             # 0–12 raw
+        "score_basic_normalized": score_basic_normalized,  # 0–100 or None
+        "score_source": score_source,           # "full" | "basic_fallback"
+        "data_gaps": data_gaps,                 # [] when full available
+        "stale": stale,                         # True if fallback due to gaps
+        "rules_version": "scores_v2",
         "score_scale": "0-100",
         "badges": badges,
         "recommendation": recommendation,
@@ -290,8 +398,16 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                     "last": None, "change_pct": None,
                     "rsi14": None, "adx14": None, "ema10": None, "ema50": None, "ema200": None,
                     "relvol20": None, "proximity_52w_high_pct": None, "atr14_pct": None,
+                    # NEW fields kept in schema even when empty:
+                    "atr10_pct": None, "vol_z20": None,
+                    "obv": None, "obv_ma30": None, "obv_slope_10": None, "obv_above_ma": None,
+                    "pivot_20d": None, "pivot_clear_pct": None, "base_len_bars": None,
+                    "gap_up_pct": None, "close_pos_in_bar": None,
                     "ret_1w": None, "ret_1m": None, "ret_3m": None, "ret_6m": None, "ret_12_1m": None,
-                    "score": 0, "score_full": None, "score_basic": None, "score_scale": "0-100",
+                    # canonical/metadata defaults:
+                    "score": 0, "score_full": None, "score_basic": None, "score_basic_normalized": None,
+                    "score_source": "basic_fallback", "data_gaps": ["no_prices"], "stale": True,
+                    "rules_version": "scores_v2", "score_scale": "0-100",
                     "badges": [], "recommendation": "No", "reason": "",
                     "as_of": as_of_iso, "run_id": job.run_id,
                 })

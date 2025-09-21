@@ -109,24 +109,24 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
 
   const columns = React.useMemo<GridColDef[]>(
     () => [
-      { field: 'symbol', headerName: 'Symbol', minWidth: 110 },
-      { field: 'name', headerName: 'Name', flex: 1, minWidth: 160 },
-      { field: 'sector', headerName: 'Sector', minWidth: 140 },
+      { field: 'symbol', headerName: 'Symbol', minWidth: 150 },
+      { field: 'name', headerName: 'Name', flex: 1, minWidth: 50 },
+      { field: 'sector', headerName: 'Sector', minWidth: 50 },
 
-      { field: 'score', headerName: 'Score', type: 'number', width: 90 },
+      { field: 'score', headerName: 'Score', type: 'number', width: 70 },
       { field: 'last', headerName: 'Price', type: 'number' },
-      { field: 'change_pct', headerName: '% Chg', type: 'number' },
+      //{ field: 'change_pct', headerName: '% Chg', type: 'number' },
       { field: 'pct_today', headerName: '% Today', width: 100, type: 'number' },
 
       // add remaining fields once we confirm shape
       // week change
-      { field: 'wk_change', headerName: 'Δ 1W', width: 110, type: 'number' },
-      { field: 'wk_change_pct', headerName: '% 1W', width: 100, type: 'number' },
+      { field: 'wk_change', headerName: 'Δ 1W', width: 80, type: 'number' },
+      { field: 'wk_change_pct', headerName: '% 1W', width: 80, type: 'number' },
             // Returns
-      { field: 'ret_1m', headerName: '% 1M', width: 90, type: 'number' },
-      { field: 'ret_3m', headerName: '% 3M', width: 90, type: 'number' },
-      { field: 'ret_6m', headerName: '% 6M', width: 90, type: 'number' },
-      { field: 'ret_12_1m', headerName: '% 12–1M', width: 110, type: 'number' },
+      { field: 'ret_1m', headerName: '% 1M', width: 80, type: 'number' },
+      { field: 'ret_3m', headerName: '% 3M', width: 80, type: 'number' },
+      { field: 'ret_6m', headerName: '% 6M', width: 80, type: 'number' },
+      { field: 'ret_12_1m', headerName: '% 12–1M', width: 80, type: 'number' },
 
       // Indicators
       { field: 'rsi', headerName: 'RSI', width: 80, type: 'number' },
@@ -139,15 +139,14 @@ export default function MomentumTable({ onSelectSymbol, refetchIntervalMs = fals
       { field: 'vol_spike', headerName: 'Rel Vol', width: 90, type: 'number' },
 
       // Decisioning
-      { field: 'buy', headerName: 'Buy', width: 80, renderCell: ({ value }) => yesNoChip(value) },
+      { field: 'buy', headerName: 'Buy', width: 80},
       { field: 'reason', headerName: 'Reason', flex: 1.2 , minWidth: 210},
 
       // Meta
       { field: 'source', headerName: 'Source', minWidth: 100,  },
-      { field: 'stale', headerName: 'Stale', width: 80, renderCell: ({ value }) => yesNoChip(value) },
-      { field: 'run_id', headerName: 'Run ID', minWidth: 120 },
-      { field: 'as_of', headerName: 'As Of', minWidth: 160, valueFormatter: ({ value }) => fmtDateTime(value) },
-      { field: 'last_index', headerName: 'Last Idx', width: 100, type: 'number' },
+      { field: 'stale', headerName: 'Stale', width: 80},
+      { field: 'as_of', headerName: 'As Of', minWidth: 160 },
+      //{ field: 'last_index', headerName: 'Last Idx', width: 100, type: 'number' },
     ],
     []
   );

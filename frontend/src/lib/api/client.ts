@@ -1027,31 +1027,31 @@ export const useUpdatePosition = <TError = AxiosError<unknown>,
     }
     
 /**
- * @summary Delete saved position for a symbol
+ * @summary Remove locked position
  */
 export const deletePosition = (
-    symbol: string, options?: AxiosRequestConfig
+    id: number, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<void>> => {
     
     return axios.default.delete(
-      `/api/v1/positions/${symbol}`,options
+      `/api/v1/positions/${id}`,options
     );
   }
 
 
 
-export const getDeletePositionMutationOptions = <TError = AxiosError<Problem>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{symbol: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{symbol: string}, TContext> => {
+export const getDeletePositionMutationOptions = <TError = AxiosError<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{id: number}, TContext> => {
 const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePosition>>, {symbol: string}> = (props) => {
-          const {symbol} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePosition>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
 
-          return  deletePosition(symbol,axiosOptions)
+          return  deletePosition(id,axiosOptions)
         }
 
         
@@ -1061,17 +1061,17 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
     export type DeletePositionMutationResult = NonNullable<Awaited<ReturnType<typeof deletePosition>>>
     
-    export type DeletePositionMutationError = AxiosError<Problem>
+    export type DeletePositionMutationError = AxiosError<unknown>
 
     /**
- * @summary Delete saved position for a symbol
+ * @summary Remove locked position
  */
-export const useDeletePosition = <TError = AxiosError<Problem>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{symbol: string}, TContext>, axios?: AxiosRequestConfig}
+export const useDeletePosition = <TError = AxiosError<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
 ): UseMutationResult<
         Awaited<ReturnType<typeof deletePosition>>,
         TError,
-        {symbol: string},
+        {id: number},
         TContext
       > => {
 
@@ -1711,6 +1711,60 @@ export const useUpsertPosition = <TError = AxiosError<Problem>,
       > => {
 
       const mutationOptions = getUpsertPositionMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary Delete saved position for a symbol
+ */
+export const deleteDrawerPosition = (
+    symbol: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<void>> => {
+    
+    return axios.default.delete(
+      `/api/v1/positions/${symbol}`,options
+    );
+  }
+
+
+
+export const getDeleteDrawerPositionMutationOptions = <TError = AxiosError<Problem>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDrawerPosition>>, TError,{symbol: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteDrawerPosition>>, TError,{symbol: string}, TContext> => {
+const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteDrawerPosition>>, {symbol: string}> = (props) => {
+          const {symbol} = props ?? {};
+
+          return  deleteDrawerPosition(symbol,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteDrawerPositionMutationResult = NonNullable<Awaited<ReturnType<typeof deleteDrawerPosition>>>
+    
+    export type DeleteDrawerPositionMutationError = AxiosError<Problem>
+
+    /**
+ * @summary Delete saved position for a symbol
+ */
+export const useDeleteDrawerPosition = <TError = AxiosError<Problem>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDrawerPosition>>, TError,{symbol: string}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationResult<
+        Awaited<ReturnType<typeof deleteDrawerPosition>>,
+        TError,
+        {symbol: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteDrawerPositionMutationOptions(options);
 
       return useMutation(mutationOptions);
     }

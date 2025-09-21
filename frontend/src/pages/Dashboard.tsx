@@ -4,7 +4,7 @@ import { useOutletContext } from 'react-router-dom';
 import type { OutletCtx } from '../layouts/AppShell';
 import { Paper, Stack, Typography, Divider } from '@mui/material';
 import MomentumTable from '../components/MomentumTable';
-import RightDrawer from '../components/RightDrawer';
+
 
 export default function Dashboard() {
   const { refetchIntervalMs } = useOutletContext<OutletCtx>();
@@ -28,7 +28,7 @@ export default function Dashboard() {
         />
       </Paper>
 
-      <RightDrawer symbol={symbol} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      
     </>
   );
 }

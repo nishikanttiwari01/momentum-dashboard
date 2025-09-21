@@ -81,7 +81,20 @@ def full_score(rsi: Optional[float],
                obv_slope_pos: Optional[bool],
                delivery_lift: Optional[float],
                regime_points: Optional[int],
-               sector_rank_1to10: Optional[int]) -> Tuple[int, List[Dict[str,str]]]:
+               sector_rank_1to10: Optional[int],
+               # ---- NEW optional context inputs (kept optional for backward compatibility)
+               atr10_pct: Optional[float] = None,
+               gap_up_pct: Optional[float] = None,
+               close_pos_in_bar: Optional[float] = None
+               ) -> Tuple[Optional[int], List[Dict[str,str]]]:
+
+    # ---- NEW: minimal completeness check for Full model
+    full_required = [
+        rsi, adx, proximity_52w_high_pct, pivot_clear_pct, base_len_bars,
+        relvol20, vol_z, obv_above_ma, obv_slope_pos
+    ]
+    if any(v is None for v in full_required):
+        return None, []
 
     # P1: Momentum (0–35)
     rsi_sub = 0
@@ -147,13 +160,19 @@ def full_score(rsi: Optional[float],
 
     score = P1 + P2 + P3 + P4
 
-    # Bonuses / penalties
+    # Bonuses / penalties (existing + NEW contextual adjustments)
     if (adx_slope_5 or 0) >= 5: score += 2
     if (rsi or 0) > 80 or ((adx or 0) > 45 and (adx_slope_5 or 0) > 0):
         score -= 5
     if pivot_clear_pct is not None:
         ext = max(0.0, pivot_clear_pct - 5.0)
         score -= min(10, round(ext * 1.5))
+
+    # NEW: volatility & gap-fade risk
+    if atr10_pct is not None and atr10_pct > 8.0:
+        score -= 5
+    if (gap_up_pct or 0) > 6.0 and (close_pos_in_bar is not None and close_pos_in_bar < 0.5):
+        score -= 3
 
     score = int(_clamp(score, 0, 100))
     badges: List[Dict[str,str]] = []
@@ -163,13 +182,109 @@ def full_score(rsi: Optional[float],
         badges.append({"code":"VERY_HIGH_BREAKOUT","text":"💥 Very High Breakout"})
     return score, badges
 
-def recommendation_and_reason(score_0_100: int, rsi: float|None, adx: float|None,
-                              prox_52w: float|None, relvol20: float|None, pivot_clear_pct: float|None) -> tuple[str,str]:
+
+# -------------------------
+# Reason builder (concise)
+# -------------------------
+def _reason_phrases(score_0_100: Optional[int],
+                    rsi: float|None,
+                    adx: float|None,
+                    prox_52w: float|None,
+                    relvol20: float|None,
+                    pivot_clear_pct: float|None,
+                    atr14_pct: float|None = None,
+                    atr10_pct: float|None = None,
+                    gap_up_pct: float|None = None,
+                    close_pos_in_bar: float|None = None) -> List[str]:
+    phrases: List[str] = []
+
+    # Negative / cautionary
+    if rsi is not None and rsi < 55:
+        phrases.append("momentum weak")
+    if adx is not None and adx < 20:
+        phrases.append("trend weak")
+    if prox_52w is not None and prox_52w <= -10:
+        phrases.append("far from highs")
+    if pivot_clear_pct is not None and pivot_clear_pct <= 0:
+        phrases.append("below pivot")
+    if relvol20 is not None and relvol20 < 1.0:
+        phrases.append("low volume")
+    vol_pct = atr14_pct if atr14_pct is not None else atr10_pct
+    if vol_pct is not None and vol_pct > 8.0:
+        phrases.append("too volatile")
+    if gap_up_pct is not None and gap_up_pct > 6.0 and (close_pos_in_bar is not None and close_pos_in_bar < 0.5):
+        phrases.append("gap & fade")
+
+    # Positive hints (for Yes cases)
+    if rsi is not None and rsi >= 65:
+        phrases.append("strong momentum")
+    if adx is not None and adx >= 25:
+        phrases.append("trend strong")
+    if pivot_clear_pct is not None and pivot_clear_pct >= 2.0:
+        phrases.append("pivot cleared")
+    if relvol20 is not None and relvol20 >= 1.5:
+        phrases.append("volume strong")
+
+    # Deduplicate while preserving order
+    seen = set()
+    out: List[str] = []
+    for p in phrases:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def recommendation_and_reason(score_0_100: Optional[int],
+                              rsi: float|None,
+                              adx: float|None,
+                              prox_52w: float|None,
+                              relvol20: float|None,
+                              pivot_clear_pct: float|None,
+                              # optional context for phrasing
+                              atr14_pct: float|None = None,
+                              atr10_pct: float|None = None,
+                              gap_up_pct: float|None = None,
+                              close_pos_in_bar: float|None = None,
+                              *,
+                              include_numbers: bool = False) -> tuple[str,str]:
+    """
+    Returns a (recommendation, reason) tuple.
+    - If score is None (Full unavailable), we return a clear fallback message.
+    - Otherwise we produce a concise English reason using phrases rather than a long numeric string.
+    - Set include_numbers=True if you want the old numeric detail appended after the phrases.
+    """
+    if score_0_100 is None:
+        rec = "No"
+        return rec, "Watch — basic fallback (missing indicators for full score)"
+
     yes = score_0_100 >= 60
     rec = "Yes" if yes else "No"
-    reason = (f"{rec} — {score_0_100}/100. "
-              f"RSI {round(rsi,1) if rsi is not None else '—'}, ADX {round(adx,1) if adx is not None else '—'}; "
-              f"{'new 52W high' if (prox_52w or -1) >= 0 else f'{round(prox_52w,2)}% vs 52W high' if prox_52w is not None else '—'}, "
-              f"RelVol {round(relvol20,2) if relvol20 is not None else '—'}, "
-              f"pivot clear {round(pivot_clear_pct,2)}%" if pivot_clear_pct is not None else "")
+
+    phrases = _reason_phrases(
+        score_0_100, rsi, adx, prox_52w, relvol20, pivot_clear_pct,
+        atr14_pct=atr14_pct, atr10_pct=atr10_pct,
+        gap_up_pct=gap_up_pct, close_pos_in_bar=close_pos_in_bar
+    )
+    if not phrases:
+        # Safety: keep something meaningful
+        phrases = ["meets minimum criteria"] if yes else ["setup weak"]
+
+    reason = f"{rec} — {score_0_100}/100. " + ", ".join(phrases)
+
+    if include_numbers:
+        # Optional numeric tail for debugging (off by default)
+        rsi_txt = (f"RSI {round(rsi,1)}" if rsi is not None else None)
+        adx_txt = (f"ADX {round(adx,1)}" if adx is not None else None)
+        prox_txt = (("new 52W high" if prox_52w is not None and prox_52w >= 0
+                     else f"{round(prox_52w,2)}% vs 52W high") if prox_52w is not None else None)
+        relv_txt = (f"RelVol {round(relvol20,2)}" if relvol20 is not None else None)
+        pivot_txt = (f"pivot {round(pivot_clear_pct,2)}%" if pivot_clear_pct is not None else None)
+        tail_bits: List[str] = [x for x in [rsi_txt, adx_txt, prox_txt, relv_txt, pivot_txt] if x]
+        vol_txt = (f"ATR% {round(atr14_pct,2)}" if atr14_pct is not None else (f"ATR10% {round(atr10_pct,2)}" if atr10_pct is not None else None))
+        if vol_txt: tail_bits.append(vol_txt)
+        if gap_up_pct is not None: tail_bits.append(f"gap {round(gap_up_pct,2)}%")
+        if tail_bits:
+            reason += " · " + ", ".join(tail_bits)
+
     return rec, reason

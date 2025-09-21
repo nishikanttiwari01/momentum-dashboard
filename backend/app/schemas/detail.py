@@ -9,24 +9,49 @@ While the actual class definitions are generated from OpenAPI in:
     app.schemas.generated.models
 """
 
-# CHANGED: centralize all DrawerDetail-facing models here via re-exports.
-#          We also normalize the "Channels vs ChannelsModel" mismatch so the
-#          rest of the code can import `Channels` per the contract text.
+from __future__ import annotations
+from typing import Any, Optional
 
 from app.schemas.generated import models as gen
 
-# Core detail models
-DrawerDetail   = gen.DrawerDetail
-Indicators     = gen.Indicators
-Position       = gen.Position
-Meter          = gen.Meter
-NextAction     = gen.NextAction
-AlertTemplate  = gen.AlertTemplate
+
+def _resolve(gen_mod: Any, *candidates: str, required: bool = False) -> Optional[type]:
+    """
+    Return the first attribute found in gen_mod matching any of the candidate names.
+    If required and none found, raise a clear ImportError listing available attributes.
+    """
+    for name in candidates:
+        obj = getattr(gen_mod, name, None)
+        if obj is not None:
+            return obj
+    if required:
+        available = ", ".join(sorted(n for n in dir(gen_mod) if not n.startswith("_")))
+        raise ImportError(
+            f"Could not resolve any of {candidates} in app.schemas.generated.models. "
+            f"Available: {available}"
+        )
+    return None
+
+
+# -------- Core detail models (required) --------
+DrawerDetail = _resolve(gen, "DrawerDetail", required=True)
+
+# Some generators name these differently across versions; resolve flexibly.
+Indicators = _resolve(
+    gen,
+    # common candidates
+    "Indicators", "DrawerIndicators", "IndicatorsModel", "IndicatorsBlock",
+    # looser fallbacks
+    "IndicatorSet", "IndicatorsSchema"
+)
+Position = _resolve(gen, "Position", "DrawerPosition", "PositionModel")
+Meter = _resolve(gen, "Meter", "DrawerMeter", "MeterModel")
+NextAction = _resolve(gen, "NextAction", "DrawerNextAction", "NextActionModel")
+AlertTemplate = _resolve(gen, "AlertTemplate", "DrawerAlertTemplate", "AlertTemplateModel")
 
 # Contract says "Channels" (object with email/desktop/whatsapp).
-# Codegen named a similar structure `ChannelsModel` in some versions.
-# Provide a stable alias so the rest of our app can always import `Channels`.
-Channels       = getattr(gen, "Channels", None) or getattr(gen, "ChannelsModel")
+# Codegen sometimes emits ChannelsModel or similar. Keep the alias.
+Channels = _resolve(gen, "Channels", "ChannelsModel", "DrawerChannels")
 
 __all__ = [
     "DrawerDetail",

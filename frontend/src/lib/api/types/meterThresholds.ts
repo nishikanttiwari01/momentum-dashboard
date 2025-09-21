@@ -6,14 +6,8 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export interface Indicators {
-  adx_slope?: number;
-  adx14?: number;
-  ema_fast?: number;
-  ema_fast_value?: number;
-  ema_slow?: number;
-  ema_slow_value?: number;
-  proximity_52w_high_pct?: number;
-  relvol20?: number;
-  rsi14?: number;
-}
+export type MeterThresholds = {
+  high_gte: number;
+  low_lt: number;
+  medium_gte: number;
+};

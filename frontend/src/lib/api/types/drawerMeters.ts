@@ -5,8 +5,9 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
+import type { Meter } from './meter';
 
-export interface AlertTemplate {
-  code?: string;
-  example?: string;
+export interface DrawerMeters {
+  euphoria: Meter;
+  risk: Meter;
 }

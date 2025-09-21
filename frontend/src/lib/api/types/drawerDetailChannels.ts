@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type ChannelsWhatsapp = {
-  enabled?: boolean;
-};
+/**
+ * @deprecated
+ * @nullable
+ */
+export type DrawerDetailChannels = unknown | null;

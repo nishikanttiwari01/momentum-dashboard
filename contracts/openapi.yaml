@@ -810,7 +810,7 @@ paths:
     delete:
       tags: [positions]
       summary: Delete saved position for a symbol
-      operationId: deletePosition
+      operationId: deleteDrawerPosition
       responses:
         '204':
           description: Deleted
@@ -1190,28 +1190,6 @@ components:
           type: number
         volatility_penalty:
           type: number
-    Badge:
-      type: object
-      properties:
-        code:
-          type: string
-          nullable: true
-          example:
-          - very_high_breakout
-        text:
-          type: string
-          nullable: true
-          example:
-          - Very High Breakout
-        key:
-          type: string
-          nullable: true
-        label:
-          type: string
-          nullable: true
-        color:
-          type: string
-          nullable: true
     ScreenerRow:
       type: object
       required:
@@ -1554,194 +1532,351 @@ components:
             format: date-time
     DrawerDetail:
       type: object
+      required:
+        - drawer_contract_version
+        - symbol
+        - trading_day
+        - header
+        - sparkline
+        - score_breakdown
+        - action_block
+        - meters
+        - next_action
+        - diagnostics
       properties:
+        drawer_contract_version:
+          type: string
+          example: "1.0.0"
+          description: Semantic version for the drawer contract.
+        scoring_rules_version:
+          type: string
+          example: "scores_v2"
+          description: Version tag emitted by scoring layer.
+        symbol:
+          type: string
+          example: "RELIANCE.NS"
+        trading_day:
+          type: string
+          format: date
+          example: "2025-09-19"
+          description: Latest completed trading day used for this view.
+        intraday_numerator_used:
+          type: boolean
+          example: false
+          description: True if any intraday values were used in composing this card.
+        header:
+          $ref: '#/components/schemas/DrawerHeader'
+        sparkline:
+          $ref: '#/components/schemas/DrawerSparkline'
+        score_breakdown:
+          $ref: '#/components/schemas/DrawerScoreBreakdown'
+        position:
+          $ref: '#/components/schemas/DrawerPosition'
+        action_block:
+          $ref: '#/components/schemas/DrawerActionBlock'
+        meters:
+          $ref: '#/components/schemas/DrawerMeters'
+        next_action:
+          $ref: '#/components/schemas/DrawerNextAction'
+        alerts:
+          $ref: '#/components/schemas/DrawerAlerts'
+        diagnostics:
+          $ref: '#/components/schemas/DrawerDiagnostics'
+
+        # -------- Backward-compatibility aliases (deprecated) --------
         run_id:
           type: string
-          example: '20250911_153000'
+          deprecated: true
         as_of:
           type: string
           format: date-time
-          example: '2025-09-11T15:30:00Z'
-        symbol:
-          type: string
-          example: TCS.NS
-        symbol_canon:
-          type: string
-          example: TCS.NS
+          deprecated: true
         name:
           type: string
-          example: Tata Consultancy Services
+          deprecated: true
         sector:
           type: string
-          example: IT Services
+          deprecated: true
         price:
           type: number
-          format: float
-          example: 4012.5
+          format: double
+          deprecated: true
+          description: Use header.price instead.
         pct_today:
           type: number
-          format: float
-          example: 1.24
+          format: double
+          deprecated: true
+          description: Use header.pct_1d instead.
         score:
-          type: number
-          format: float
-          example: 0.82
+          type: integer
+          minimum: 0
+          maximum: 100
+          deprecated: true
+          description: Use score_breakdown.score_total_0_100.
         indicators:
-          $ref: '#/components/schemas/Indicators'
+          type: object
+          additionalProperties: true
+          deprecated: true
+        badges:
+          type: array
+          items:
+            $ref: '#/components/schemas/LegacyBadge'
+          deprecated: true
+        method_pill:
+          type: string
+          deprecated: true
+        alert_templates:
+          type: array
+          items:
+            type: string
+          deprecated: true
+        channels:
+          nullable: true
+          deprecated: true
+
+    DrawerHeader:
+      type: object
+      required: [name, price, pct_1d, badges]
+      properties:
+        name:
+          type: string
+          example: "Tata Consultancy Services"
+        sector:
+          type: string
+          nullable: true
+          example: "IT"
+        price:
+          type: number
+          format: double
+          example: 4521.5
+        pct_1d:
+          type: number
+          format: double
+          example: 2.4
         badges:
           type: array
           items:
             $ref: '#/components/schemas/Badge'
-        position:
-          $ref: '#/components/schemas/Position'
-        method_pill:
-          type: string
-          example: EMA10
-        meters:
-          type: object
-          properties:
-            risk:
-              $ref: '#/components/schemas/Meter'
-            euphoria:
-              $ref: '#/components/schemas/Meter'
-        next_action:
-          $ref: '#/components/schemas/NextAction'
-        alert_templates:
-          type: array
-          items:
-            $ref: '#/components/schemas/AlertTemplate'
-        channels:
-          $ref: '#/components/schemas/Channels'
-    Indicators:
+
+    Badge:
       type: object
+      required: [category, label]
       properties:
-        rsi14:
-          type: number
-          format: float
-          example: 68.4
-        adx14:
-          type: number
-          format: float
-          example: 32.1
-        adx_slope:
-          type: number
-          format: float
-          example: 0.9
-        ema_fast:
-          type: integer
-          example: 8
-        ema_fast_value:
-          type: number
-          format: float
-          example: 3950.3
-        ema_slow:
-          type: integer
-          example: 10
-        ema_slow_value:
-          type: number
-          format: float
-          example: 3928.7
-        relvol20:
-          type: number
-          format: float
-          example: 1.8
-        proximity_52w_high_pct:
-          type: number
-          format: float
-          example: 0.7
-    Position:
-      type: object
-      properties:
-        entry_price:
-          type: number
-          format: float
-          nullable: true
-          example: 3840.0
-        entry_price_locked:
-          type: number
-          format: float
-          nullable: true
-          example: 3820.0
-        qty:
-          type: integer
-          nullable: true
-          example: 50
-        trade_on:
-          type: boolean
-          example: true
-        stop_now:
-          type: number
-          format: float
-          nullable: true
-          example: 3925.0
-        exit_close_threshold:
-          type: number
-          format: float
-          nullable: true
-          example: 3901.5
-        breakeven_active:
-          type: boolean
-          example: true
-        euphoria_on:
-          type: boolean
-          example: false
-        note:
+        category:
           type: string
-          nullable: true
-          example: null
-    Meter:
-      type: object
-      properties:
-        level:
+          enum: [BREAKOUT, MOMENTUM, WATCH, IGNORE]
+        label:
           type: string
-          enum:
-          - Low
-          - Medium
-          - High
-          example: Medium
-        basis:
-          type: object
-          additionalProperties:
-            type: number
-          example:
-            atr_pct: 2.1
-            spread_pct: 0.18
-    AlertTemplate:
+          example: "🚀 Very High Breakout"
+
+    LegacyBadge:
       type: object
       properties:
         code:
           type: string
-          example: price_crosses
-        example:
+        text:
           type: string
-          example: price crosses ₹4050
-    Channels:
+        key:
+          nullable: true
+        label:
+          nullable: true
+        color:
+          nullable: true
+
+    DrawerSparkline:
+      type: object
+      required: [prices_30d]
+      properties:
+        prices_30d:
+          type: array
+          items: { type: number, format: double }
+          minItems: 1
+        ema10_30d:
+          type: array
+          items: { type: number, format: double }
+          description: Optional overlay; same length as prices_30d when present.
+
+    DrawerScoreBreakdown:
+      type: object
+      required: [score_total_0_100, rsi14, adx14, relvol20, trend_rank, breakout_quality]
+      properties:
+        score_total_0_100:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Canonical score (Full when available; else normalized Basic).
+        score_source:
+          type: string
+          enum: [full, basic_fallback]
+        score_basic:
+          type: integer
+          minimum: 0
+          maximum: 12
+          nullable: true
+        score_basic_normalized:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        rsi14:
+          type: number
+          format: double
+        adx14:
+          type: number
+          format: double
+        relvol20:
+          type: number
+          format: double
+        trend_rank:
+          type: integer
+          minimum: 0
+          maximum: 10
+        breakout_quality:
+          type: integer
+          minimum: 0
+          maximum: 10
+        proximity_52w_high_pct:
+          type: number
+          format: double
+          nullable: true
+        pivot_clear_pct:
+          type: number
+          format: double
+          nullable: true
+        base_len_bars:
+          type: integer
+          nullable: true
+        data_gaps:
+          type: array
+          items: { type: string }
+          description: Missing inputs when basic_fallback is used.
+        stale:
+          type: boolean
+          description: True when score_source is basic_fallback.
+
+    DrawerPosition:
       type: object
       properties:
-        email:
+        entry_price_locked:
+          type: number
+          format: double
+          nullable: true
+        qty:
+          type: integer
+          nullable: true
+
+    DrawerActionBlock:
+      type: object
+      required: [stop_now, stop_method, exit_close_threshold, breakeven_state, euphoria_state]
+      properties:
+        stop_now:
+          type: number
+          format: double
+        stop_method:
+          type: string
+          enum: [ATRxK, EMA_tight]
+        exit_close_threshold:
+          type: number
+          format: double
+        breakeven_state:
+          type: string
+          enum: [Pending, Active]
+        euphoria_state:
+          type: string
+          enum: [Off, On]
+
+    DrawerMeters:
+      type: object
+      required: [risk, euphoria]
+      properties:
+        risk:
+          $ref: '#/components/schemas/Meter'
+        euphoria:
+          $ref: '#/components/schemas/Meter'
+
+    Meter:
+      type: object
+      required: [level, score_0_100, basis, thresholds]
+      properties:
+        level:
+          type: string
+          enum: [Low, Medium, High]
+        score_0_100:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+          description: Quantitative calibration for the meter; null if not computable.
+        basis:
           type: object
-          properties:
-            enabled:
-              type: boolean
-              example: true
-            sound:
-              type: boolean
-              example: false
-        desktop:
+          additionalProperties: true
+          description: Raw inputs used to compute the meter (e.g., atr14_pct, rsi14, adx14).
+        thresholds:
           type: object
+          required: [low_lt, medium_gte, high_gte]
           properties:
-            enabled:
-              type: boolean
-              example: true
-            sound:
-              type: boolean
-              example: true
-        whatsapp:
+            low_lt:
+              type: integer
+              example: 33
+            medium_gte:
+              type: integer
+              example: 33
+            high_gte:
+              type: integer
+              example: 66
+
+    DrawerNextAction:
+      type: object
+      required: [code, text, refs]
+      properties:
+        code:
+          type: string
+          enum:
+            - SELL_NOW
+            - SELL_TOMORROW
+            - HOLD
+            - HOLD_BREAKEVEN
+            - HOLD_TIGHT
+            - BUY_BREAKOUT
+            - BUY_PULLBACK
+            - BUY_STARTER
+            - WATCH
+            - IGNORE
+        text:
+          type: string
+          example: "Hold — Trail stop at ₹4382.0"
+        reasons:
+          type: array
+          items: { type: string }
+        refs:
           type: object
-          properties:
-            enabled:
-              type: boolean
-              example: false
+          additionalProperties: { type: number, format: double }
+          description: Numeric references used in the text (e.g., S/E/pivot/entry/A/B).
+
+    DrawerAlerts:
+      type: object
+      properties:
+        suggestions:
+          type: array
+          items: { type: string }
+
+    DrawerDiagnostics:
+      type: object
+      required: [reason, rules_version]
+      properties:
+        reason:
+          type: string
+          example: "Yes — 86/100. strong momentum, trend strong, pivot cleared, volume strong"
+        reason_text:
+          type: string
+          nullable: true
+          description: Optional natural-language explanation; may be same as reason.
+        rules_version:
+          type: string
+          example: "scores_v2"
+        blocked_reason:
+          type: string
+          nullable: true
     ScanRequest:
       type: object
       additionalProperties: false

@@ -6,7 +6,6 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type ChannelsEmail = {
-  enabled?: boolean;
-  sound?: boolean;
-};
+export interface DrawerAlerts {
+  suggestions?: string[];
+}

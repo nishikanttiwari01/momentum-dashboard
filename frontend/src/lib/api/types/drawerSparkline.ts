@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type ChannelsDesktop = {
-  enabled?: boolean;
-  sound?: boolean;
-};
+export interface DrawerSparkline {
+  /** Optional overlay; same length as prices_30d when present. */
+  ema10_30d?: number[];
+  /** @minItems 1 */
+  prices_30d: number[];
+}

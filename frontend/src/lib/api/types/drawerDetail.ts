@@ -5,30 +5,74 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
-import type { AlertTemplate } from './alertTemplate';
-import type { Badge } from './badge';
-import type { Channels } from './channels';
-import type { Indicators } from './indicators';
-import type { DrawerDetailMeters } from './drawerDetailMeters';
-import type { NextAction } from './nextAction';
-import type { Position } from './position';
+import type { DrawerActionBlock } from './drawerActionBlock';
+import type { DrawerAlerts } from './drawerAlerts';
+import type { LegacyBadge } from './legacyBadge';
+import type { DrawerDetailChannels } from './drawerDetailChannels';
+import type { DrawerDiagnostics } from './drawerDiagnostics';
+import type { DrawerHeader } from './drawerHeader';
+import type { DrawerDetailIndicators } from './drawerDetailIndicators';
+import type { DrawerMeters } from './drawerMeters';
+import type { DrawerNextAction } from './drawerNextAction';
+import type { DrawerPosition } from './drawerPosition';
+import type { DrawerScoreBreakdown } from './drawerScoreBreakdown';
+import type { DrawerSparkline } from './drawerSparkline';
 
 export interface DrawerDetail {
-  alert_templates?: AlertTemplate[];
+  action_block: DrawerActionBlock;
+  /** @deprecated */
+  alert_templates?: string[];
+  alerts?: DrawerAlerts;
+  /** @deprecated */
   as_of?: string;
-  badges?: Badge[];
-  channels?: Channels;
-  indicators?: Indicators;
-  meters?: DrawerDetailMeters;
+  /** @deprecated */
+  badges?: LegacyBadge[];
+  /**
+   * @deprecated
+   * @nullable
+   */
+  channels?: DrawerDetailChannels;
+  diagnostics: DrawerDiagnostics;
+  /** Semantic version for the drawer contract. */
+  drawer_contract_version: string;
+  header: DrawerHeader;
+  /** @deprecated */
+  indicators?: DrawerDetailIndicators;
+  /** True if any intraday values were used in composing this card. */
+  intraday_numerator_used?: boolean;
+  meters: DrawerMeters;
+  /** @deprecated */
   method_pill?: string;
+  /** @deprecated */
   name?: string;
-  next_action?: NextAction;
+  next_action: DrawerNextAction;
+  /**
+   * Use header.pct_1d instead.
+   * @deprecated
+   */
   pct_today?: number;
-  position?: Position;
+  position?: DrawerPosition;
+  /**
+   * Use header.price instead.
+   * @deprecated
+   */
   price?: number;
+  /** @deprecated */
   run_id?: string;
+  /**
+   * Use score_breakdown.score_total_0_100.
+   * @deprecated
+   * @minimum 0
+   * @maximum 100
+   */
   score?: number;
+  score_breakdown: DrawerScoreBreakdown;
+  /** Version tag emitted by scoring layer. */
+  scoring_rules_version?: string;
+  /** @deprecated */
   sector?: string;
-  symbol?: string;
-  symbol_canon?: string;
+  sparkline: DrawerSparkline;
+  symbol: string;
+  /** Latest completed trading day used for this view. */
+  trading_day: string;
 }

@@ -64,16 +64,44 @@ def _parse_filters(params) -> Dict[tuple[str, str], Any]:
             out[(k[:-3], "eq")] = v
     return out
 
+def _badge_category_from_code_or_text(code: str, text: str) -> str:
+    """
+    Map legacy badge 'code'/'text' to contract categories: BREAKOUT | MOMENTUM | WATCH | IGNORE.
+    Keep it minimal & deterministic.
+    """
+    c = (code or "").upper()
+    t = (text or "").upper()
+    # Code-driven mapping (preferred)
+    if "BREAKOUT" in c:
+        return "BREAKOUT"
+    if "MOMENTUM" in c or "HIGH_MOMENTUM" in c:
+        return "MOMENTUM"
+    if "WATCH" in c:
+        return "WATCH"
+    if "IGNORE" in c:
+        return "IGNORE"
+    # Fallback: text keywords
+    if "BREAKOUT" in t:
+        return "BREAKOUT"
+    if "MOMENTUM" in t or "TREND" in t:
+        return "MOMENTUM"
+    if "WATCH" in t:
+        return "WATCH"
+    if "IGNORE" in t or "AVOID" in t:
+        return "IGNORE"
+    # Safe default
+    return "WATCH"
 
-def _badge_contract_safe(b: dict) -> dict:
+def _badge_to_contract_shape(b: dict) -> dict:
     """
-    Normalize a badge into the compact contract shape ONLY:
-      { code: str, text: str, color: str }
+    Normalize a legacy badge dict into contract Badge shape:
+      { category: Literal['BREAKOUT','MOMENTUM','WATCH','IGNORE'], label: str }
     """
-    code = b.get("code") or b.get("key") or ""
-    text = b.get("text") or b.get("label") or ""
-    color = b.get("color") or "grey"
-    return {"code": code, "text": text, "color": color}
+    code = (b.get("code") or b.get("key") or "")  # legacy inputs
+    label = (b.get("label") or b.get("text") or code or "").strip() or "Badge"
+    category = _badge_category_from_code_or_text(code, label)
+    return {"category": category, "label": label}
+
 
 
 def _derive_week_fields(row: Dict[str, Any]) -> None:
@@ -169,10 +197,20 @@ def list_screener(
     for r in items:
         _derive_week_fields(r)
 
-        # Normalize badges → only code/text/color
+        # Normalize badges → contract shape {category,label}
         badges = r.get("badges") or []
-        r["badges"] = [_badge_contract_safe(b) for b in badges if isinstance(b, dict)]
-
+        # r["badges"] = [_badge_contract_safe(b) for b in badges if isinstance(b, dict)]
+        # If already in contract shape, keep; else convert legacy dicts.
+        norm_badges: List[dict] = []
+        for b in badges:
+            if isinstance(b, dict) and "category" in b and "label" in b:
+                norm_badges.append({"category": b["category"], "label": b["label"]})
+            elif isinstance(b, dict):
+                norm_badges.append(_badge_to_contract_shape(b))
+            elif isinstance(b, str):
+                # extremely defensive: turn free-text into a WATCH badge
+                norm_badges.append({"category": "WATCH", "label": b})
+        r["badges"] = norm_badges
         # Clean up legacy helper
         r.pop("ret_1w", None)
 

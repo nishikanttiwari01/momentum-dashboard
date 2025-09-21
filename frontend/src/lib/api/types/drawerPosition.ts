@@ -6,20 +6,9 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export interface Position {
-  breakeven_active?: boolean;
-  /** @nullable */
-  entry_price?: number | null;
+export interface DrawerPosition {
   /** @nullable */
   entry_price_locked?: number | null;
-  euphoria_on?: boolean;
-  /** @nullable */
-  exit_close_threshold?: number | null;
-  /** @nullable */
-  note?: string | null;
   /** @nullable */
   qty?: number | null;
-  /** @nullable */
-  stop_now?: number | null;
-  trade_on?: boolean;
 }

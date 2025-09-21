@@ -1,25 +1,36 @@
 import * as React from 'react';
-import { Chip, Stack, Typography } from '@mui/material';
+import { Chip, Stack } from '@mui/material';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import type { AlertTemplate } from '@/lib/api/types';
 
-export default function AlertsRow({ templates }: { templates?: any[] | null }) {
+type Props = { templates?: AlertTemplate[] | null; dense?: boolean };
+
+export default function AlertsRow({ templates, dense = true }: Props) {
   const items =
     Array.isArray(templates) && templates.length > 0
-      ? templates.map((t) => String(t?.label ?? 'Alert'))
-      : ['Price crosses ₹X', 'Enters breakout', 'Close < EMAₙ', 'Breakeven active', 'Stop hit'];
+      ? templates.map((t, idx) => ({
+          key: t?.code ?? t?.label ?? t?.example ?? `alert-${idx}`,
+          label: String(t?.label ?? t?.code ?? t?.example ?? 'Alert'),
+        }))
+      : [
+          { key: 'price-x', label: 'Price crosses ₹X' },
+          { key: 'breakout', label: 'Enters breakout' },
+          { key: 'ema', label: 'Close < EMAₙ' },
+          { key: 'breakeven', label: 'Breakeven active' },
+          { key: 'stop', label: 'Stop hit' },
+        ];
 
   return (
-    <Box sx={{ mb: 2 }}>
-      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-        Alerts
-      </Typography>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
-        {items.map((lbl) => (
-          <Chip key={lbl} icon={<NotificationsActiveIcon />} label={lbl} variant="outlined" />
-        ))}
-      </Stack>
-    </Box>
+    <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap' }}>
+      {items.map((it) => (
+        <Chip
+          key={it.key}
+          icon={<NotificationsActiveIcon />}
+          size={dense ? 'small' : 'medium'}
+          label={it.label}
+          variant="outlined"
+        />
+      ))}
+    </Stack>
   );
 }
-
-import { Box } from '@mui/material';

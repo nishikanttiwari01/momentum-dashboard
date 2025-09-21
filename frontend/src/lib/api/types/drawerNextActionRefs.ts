@@ -5,9 +5,8 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
-import type { Meter } from './meter';
 
-export type DrawerDetailMeters = {
-  euphoria?: Meter;
-  risk?: Meter;
-};
+/**
+ * Numeric references used in the text (e.g., S/E/pivot/entry/A/B).
+ */
+export type DrawerNextActionRefs = {[key: string]: number};

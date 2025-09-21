@@ -7,8 +7,18 @@
  */
 import type { MeterBasis } from './meterBasis';
 import type { MeterLevel } from './meterLevel';
+import type { MeterThresholds } from './meterThresholds';
 
 export interface Meter {
-  basis?: MeterBasis;
-  level?: MeterLevel;
+  /** Raw inputs used to compute the meter (e.g., atr14_pct, rsi14, adx14). */
+  basis: MeterBasis;
+  level: MeterLevel;
+  /**
+   * Quantitative calibration for the meter; null if not computable.
+   * @minimum 0
+   * @maximum 100
+   * @nullable
+   */
+  score_0_100: number | null;
+  thresholds: MeterThresholds;
 }

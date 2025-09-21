@@ -1,5 +1,6 @@
+// detail/EntryModule.tsx
 import * as React from 'react';
-import { Button, Stack, Switch, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Divider, Stack, Switch, TextField, Tooltip, Typography } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { rup } from './utils';
 
@@ -35,20 +36,24 @@ export default function EntryModule({
     setQ(qty ? String(qty) : '');
   }, [qty]);
 
-  const lockDisabled = !trade_on || !entryPrice || Number(entryPrice) <= 0 || (q && Number(q) <= 0);
+  const lockDisabled =
+    !trade_on || !entryPrice || Number(entryPrice) <= 0 || (q && Number(q) <= 0);
 
   return (
     <Box sx={{ mb: 2 }}>
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+      {/* Section header + line (consistent with other sections) */}
+      <Typography variant="subtitle1" sx={{ fontWeight: 700, letterSpacing: '.04em', color: 'text.secondary' }}>
         Entry
       </Typography>
+      <Divider sx={{ mt: 0.75, mb: 1.25, opacity: 0.6 }} />
 
       <KV
         label="Entry price"
         value={rup(typeof effectiveEntry === 'number' ? effectiveEntry : undefined)}
-        help={locked ? 'Locked' : 'Suggested (can lock when Trade ON)'}
+        help={locked ? 'Locked' : 'Suggested (lock when Trade ON)'}
       />
 
+      {/* Trade toggle */}
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 1, mb: 1 }}>
         <Switch checked={!!trade_on} onChange={(e) => onTradeChange?.(e.target.checked)} />
         <Typography variant="body2">Trade</Typography>
@@ -59,6 +64,7 @@ export default function EntryModule({
         )}
       </Stack>
 
+      {/* Inline inputs (view-only wiring preserved) */}
       {trade_on && (
         <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
           <TextField
@@ -69,7 +75,7 @@ export default function EntryModule({
               setEntryPrice(e.target.value);
               onEntryChange?.(e.target.value);
             }}
-            sx={{ width: 180 }}
+            sx={{ width: 200 }}
             inputProps={{ inputMode: 'decimal' }}
             disabled={locked}
           />
@@ -81,7 +87,7 @@ export default function EntryModule({
               setQ(e.target.value);
               onQtyChange?.(e.target.value);
             }}
-            sx={{ width: 120 }}
+            sx={{ width: 140 }}
             inputProps={{ inputMode: 'numeric' }}
             disabled={locked}
           />
@@ -96,11 +102,11 @@ export default function EntryModule({
 
 const KV: React.FC<{ label: string; value: React.ReactNode; help?: string }> = ({ label, value, help }) => (
   <Stack direction="row" spacing={1} alignItems="baseline">
-    <Typography variant="body2" sx={{ width: 160, color: 'text.secondary' }}>
+    <Typography variant="body2" sx={{ width: 160, color: 'text.secondary', flexShrink: 0 }}>
       {label}:
     </Typography>
     <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-      {value}
+      {value ?? '—'}
     </Typography>
     {help ? (
       <Typography variant="caption" color="text.secondary">
@@ -109,5 +115,3 @@ const KV: React.FC<{ label: string; value: React.ReactNode; help?: string }> = (
     ) : null}
   </Stack>
 );
-
-import { Box } from '@mui/material';

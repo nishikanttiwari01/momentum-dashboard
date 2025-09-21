@@ -6,4 +6,7 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type MeterBasis = {[key: string]: number};
+/**
+ * Raw inputs used to compute the meter (e.g., atr14_pct, rsi14, adx14).
+ */
+export type MeterBasis = { [key: string]: unknown };
