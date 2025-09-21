@@ -11,7 +11,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import SchoolIcon from '@mui/icons-material/School';
 import { NavLink } from 'react-router-dom';
 
-export const NAV_WIDTH = 240;
+export const NAV_WIDTH = 160;
 
 const items = [
   { to: '/', label: 'Dashboard', icon: <DashboardIcon /> },
@@ -64,7 +64,7 @@ export default function LeftNav() {
             sx={{
               mx: 1,
               mb: .5,
-              '&.active': { bgcolor: '#152238' },
+              '&.active': { bgcolor: '#dfe5efff' },
             }}
           >
             <ListItemIcon sx={{ minWidth: 36, color: 'text.secondary' }}>{it.icon}</ListItemIcon>

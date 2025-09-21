@@ -1,0 +1,19 @@
+:root{
+  --bg-default:#f5f7fb; --bg-paper:#ffffff; --border:#e6e8ef;
+}
+html,body,#root{height:100%}
+body{background:var(--bg-default); -webkit-font-smoothing:antialiased}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:8px}
+::selection{background:rgba(83,109,254,.18)}
+/* utility text colors */
+.text-pos{ color:#16a34a !important } .text-neg{ color:#ef4444 !important }
+/* DataGrid as a card */
+.datagrid-elevated .MuiDataGrid-root{
+  border:1px solid var(--border); border-radius:16px; background:var(--bg-paper);
+  box-shadow:0 3px 11px 0 #E8EAFC,0 3px 3px -2px #B2B2B21A,0 1px 8px 0 #9A9A9A1A;
+}
+.datagrid-elevated .MuiDataGrid-columnHeaders{ background:#fafbff; border-bottom:1px solid var(--border) }
+.datagrid-elevated .MuiDataGrid-row:nth-of-type(odd){ background:#fbfcff }
+.datagrid-elevated .MuiDataGrid-row:hover{ background:#f6f8ff }
+.datagrid-elevated .MuiDataGrid-cell{ border-bottom:1px solid var(--border) }

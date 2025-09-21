@@ -67,10 +67,10 @@ export default function ActionBlock({
   euphoria_state,
 }: Props) {
   // Derived display strings
-  const stopHelp = `sell if touched${stop_method ? ` (${stop_method})` : ''}`;
-  const exitHelp = 'sell next day if true';
-  const breakevenHelp = 'stop won’t go below entry';
-  const euphoriaHelp = 'tighter stop & faster EMA';
+  const stopHelp = `Sell if touched${stop_method ? ` (${stop_method})` : ''}`;
+  const exitHelp = 'Sell next day if true';
+  const breakevenHelp = 'Stop won’t go below entry';
+  const euphoriaHelp = 'Tighter stop & faster EMA';
 
   const breakevenVal = prettyState(breakeven_state, undefined, breakeven_active);
   const euphoriaVal = prettyState(euphoria_state, euphoria_on, undefined);

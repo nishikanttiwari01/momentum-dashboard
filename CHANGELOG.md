@@ -4,6 +4,16 @@ All notable changes to this project will be documented here.
 We follow a **phase-based versioning** (v0.x.0) where each phase corresponds to a locked milestone.
 
 ---
+## v0.141.0 Phase 14: Enahncements (2025-09-22)
+
+### Added
+- **UI**
+  - Revised momentum table with trading like look.
+  - Revised right drawer. 
+- **Backend Changes**
+  - Introduced alerts via ntfy app.
+  - Improved scoring and badge functions 
+
 ## v0.11.0 Phase 11: Indicators & Full Momentum Score (2025-09-15)
 
 ### Added

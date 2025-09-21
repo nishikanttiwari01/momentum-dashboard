@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AppBar, Toolbar, Box, Stack, FormControl, InputLabel, Select, MenuItem, IconButton } from '@mui/material';
+import { AppBar, Toolbar, Box, Stack, FormControl, InputLabel, Select, MenuItem, IconButton,Typography } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 type RefreshOpt = 'off' | '15' | '30' | '60' | 'focus';
@@ -19,7 +19,9 @@ export default function AppTopBar({
     >
       <Toolbar sx={{ minHeight: 64 }}>
         {/* No title here – brand lives in the left nav */}
-        <Box sx={{ flex: 1 }} />
+        <Box sx={{ flex: 1 }}/>
+         <Typography variant="subtitle2" sx={{ lineHeight: 1.1 } }>Momentum Suite    </Typography>
+        
         <Stack direction="row" spacing={2} alignItems="center">
           <FormControl size="small" sx={{ minWidth: 160 }}>
             <InputLabel id="refresh-label">Auto refresh</InputLabel>

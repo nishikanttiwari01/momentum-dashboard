@@ -1664,7 +1664,7 @@ components:
       properties:
         category:
           type: string
-          enum: [BREAKOUT, MOMENTUM, WATCH, IGNORE]
+          enum: [BREAKOUT, MOMENTUM, WATCH, IGNORE,ACTION]
         label:
           type: string
           example: "🚀 Very High Breakout"

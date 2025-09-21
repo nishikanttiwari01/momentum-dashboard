@@ -12,6 +12,11 @@ python run_uvicorn.py  # temporarily change reload=True -> False in the file
 set APP_DISABLE_ALEMBIC=0
 alembic upgrade head
 set APP_DISABLE_ALEMBIC=1
+(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>alembic heads
+20250912_0002 (head)
+20250921_01 (head)
+
+(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>alembic merge -m "Merge heads 20250921_01 & 20250912_0002" 20250921_01 20250912_0002
 
 ### New way to start application backend
 cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard

@@ -74,6 +74,10 @@ class Settings(BaseModel):
     screener: ScreenerCfg = ScreenerCfg()
     scheduler: SchedulerCfg = SchedulerCfg()
     data: DataCfg = DataCfg()
+    # --- Minimal addition for Alerts (non-breaking) ---
+    # Keep it as a free-form dict so YAML can evolve (rules, channels, throttle, etc.)
+    # The alerts service will parse/normalize it.
+    alerts: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ----------------- YAML helpers (unchanged) -----------------

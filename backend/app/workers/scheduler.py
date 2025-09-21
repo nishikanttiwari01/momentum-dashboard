@@ -19,6 +19,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from app.core import config
 from app.core.db import get_session
 from app.services.screening_service import run_screening
+from app.workers.jobs import post_scan_jobs  # <-- added import
 
 log = logging.getLogger(__name__)
 _scheduler: Optional[BackgroundScheduler] = None
@@ -60,6 +61,14 @@ def _run_once(universe: Optional[str]) -> None:
                 "universe": universe or "default",
             },
         )
+
+        # ---- NEW: run post-scan side effects (alerts, etc.) ----
+        try:
+            post_scan_jobs(result.run_id)
+        except Exception as e:
+            log.exception("post-scan jobs failed for run_id=%s: %s", result.run_id, e)
+        # ---------------------------------------------------------
+
     except Exception as exc:
         log.exception("scheduled scan failed: %s", exc)
     finally:

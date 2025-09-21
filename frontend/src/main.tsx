@@ -6,6 +6,7 @@ import { ThemeProvider, CssBaseline } from '@mui/material';
 import AppRouter from './router';
 import theme from './theme';
 import { configureApi } from './lib/api/configure';
+import './styles/global.css';
 
 // 1) configure API BEFORE React mounts
 configureApi();

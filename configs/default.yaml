@@ -106,20 +106,6 @@ drawer:
     euphoria_adx: 45
     delta_adx_min: 0
 
-alerts:
-  enabled: true
-  channels:
-    email: true
-    desktop: true
-    whatsapp: false                  # stub only (OSS)
-  throttle:
-    min_minutes_between: 60
-  dedupe:
-    window_minutes: 180
-  digest:
-    enabled: true
-    send_at_local: ["09:00","15:30"]
-  # Triggers spec lives in code; YAML exposes channel toggles/cooldowns
 
 watchlist:
   default_lists: ["My Watchlist"]
@@ -161,7 +147,7 @@ performance:
   arrow_threads: 4
   batch_size: 100000
 logging:
-  level: INFO
+  level: DEBUG    #INFO
   file: ./logs/app.log        # string path
   max_bytes: 10485760         # 10 MB
   backup_count: 5
@@ -170,7 +156,7 @@ validation:
   config_schema_enforced: true      # reject unknown keys; validate on boot
 
 screener:
-  default_universe: "ALL"
+  default_universe: "ALL" # NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL|CUSTOM
 
 scheduler:
   enabled: true
@@ -179,3 +165,21 @@ scheduler:
 
 data:
   adapter: "yahoo"   # change to "yahoo" for live scans
+alerts:
+  enabled: true
+  channels:
+    telegram: true
+    desktop: true
+    ntfy: true
+  ntfy:
+    server: https://ntfy.sh
+    topic: momentum-alerts-nishi
+    token:    # leave empty unless your topic/server is protected
+  rules:
+    momentum_score_gte:
+      threshold: 75         # accepts 80 or 800 (800 → normalized to 80)
+      repeat_policy: once_per_day
+  throttle:
+    min_minutes_between: 60
+  dedupe:
+    window_minutes: 180

@@ -41,9 +41,10 @@ def basic_score(rsi: Optional[float],
 
     # Breakout quality → up to 3
     bq = 0
-    if is_new_52w_high: 
+    if is_new_52w_high:
         bq += 1
-        badges.append({"code":"NEW_HIGH","text":"📈 New 52W High"})
+        # NEW SHAPE
+        badges.append({"category": "BREAKOUT", "label": "📈 New 52W High"})
     if (pivot_clear_pct or -1) >= 1.0: bq += 1
     if (base_len_bars or 0) >= 10: bq += 1
     score += bq
@@ -55,12 +56,25 @@ def basic_score(rsi: Optional[float],
     if obv_above_ma: vol += 1
     score += vol
 
-    score_pct = round((score/12.0)*100.0, 2)
-    # Momentum badges
-    if score >= 8:
-        badges.append({"code":"HIGH_MOMENTUM","text":"🔥 High Momentum"})
-    if score >= 10 and (rsi or 0) >= 60 and (adx or 0) >= 30 and (pivot_clear_pct or 0) >= 2.0:
-        badges.append({"code":"VERY_HIGH_BREAKOUT","text":"💥 Very High Breakout"})
+    score_pct = round((score / 12.0) * 100.0, 2)
+
+    # ---- Unified MOMENTUM badge (always present, based on % bracket)
+    IGNORE_PCT   = 45   # very low -> IGNORE
+    WATCH_PCT    = 60   # low -> WATCH
+    HIGH_PCT     = 75   # high -> MOMENTUM
+    BREAKOUT_PCT = 85   # strong + RSI/ADX/pivot -> BREAKOUT
+
+    if score_pct < IGNORE_PCT:
+        badges.append({"category": "IGNORE", "label": "IGNORE"})
+    elif score_pct < WATCH_PCT:
+        badges.append({"category": "WATCH", "label": "LOW MOMENTUM"})
+    elif score_pct >= BREAKOUT_PCT and (rsi or 0) >= 60 and (adx or 0) >= 30 and (pivot_clear_pct or 0) >= 2.0:
+        badges.append({"category": "BREAKOUT", "label": "VERY HIGH BREAKOUT"})
+    elif score_pct < HIGH_PCT:
+        badges.append({"category": "MOMENTUM", "label": "MEDIUM MOMENTUM"})
+    else:
+        badges.append({"category": "MOMENTUM", "label": "HIGH MOMENTUM"})
+
     return score, score_pct, badges
 
 # -------------------------
@@ -123,13 +137,13 @@ def full_score(rsi: Optional[float],
             prox = 10
         else:
             gap = abs(proximity_52w_high_pct)
-            prox = 0 if gap >= 5 else round(10 * (1 - gap/5.0))
+            prox = 0 if gap >= 5 else round(10 * (1 - gap / 5.0))
     pivot_s = 0
     if pivot_clear_pct is not None and pivot_clear_pct > 0:
         pivot_s = min(10, 5 + 2.5 * min(pivot_clear_pct, 2))
     base_s = 0
     if base_len_bars is not None:
-        base_s = _clamp((base_len_bars-10)/(40-10), 0, 1)*6
+        base_s = _clamp((base_len_bars - 10) / (40 - 10), 0, 1) * 6
     base_s += min(4, squeeze_flags)  # squeeze/NR7 etc
     base_s = min(10, round(base_s))
     P2 = int(round(prox + pivot_s + base_s))
@@ -138,7 +152,7 @@ def full_score(rsi: Optional[float],
     relvol_s = 0
     if relvol20 is not None:
         if relvol20 < 1.0: relvol_s = 0
-        elif relvol20 < 1.5: relvol_s = round((relvol20-1.0)/0.5 * 6)
+        elif relvol20 < 1.5: relvol_s = round((relvol20 - 1.0) / 0.5 * 6)
         elif relvol20 < 2.0: relvol_s = 8
         else: relvol_s = 10
     volz_s = min(5, max(0, ((vol_z or 0) - 1.0) * 2.5))
@@ -175,11 +189,27 @@ def full_score(rsi: Optional[float],
         score -= 3
 
     score = int(_clamp(score, 0, 100))
-    badges: List[Dict[str,str]] = []
-    if 75 <= score < 85:
-        badges.append({"code":"HIGH_MOMENTUM","text":"🔥 High Momentum"})
-    if score >= 85 and (rsi or 0) >= 60 and (adx or 0) >= 30 and (pivot_clear_pct or 0) >= 2.0:
-        badges.append({"code":"VERY_HIGH_BREAKOUT","text":"💥 Very High Breakout"})
+
+    badges: List[Dict[str, str]] = []
+
+    # ---- Unified MOMENTUM badge (always present)
+    # ---- Unified MOMENTUM badge (always present, based on % bracket)
+    IGNORE_PCT   = 45   # very low -> IGNORE
+    WATCH_PCT    = 60   # low -> WATCH
+    HIGH_PCT     = 75   # high -> MOMENTUM
+    BREAKOUT_PCT = 85   # strong + RSI/ADX/pivot -> BREAKOUT
+
+    if score < IGNORE_PCT:
+        badges.append({"category": "IGNORE", "label": "IGNORE"})
+    elif score < WATCH_PCT:
+        badges.append({"category": "WATCH", "label": "LOW MOMENTUM"})
+    elif score >= BREAKOUT_PCT and (rsi or 0) >= 60 and (adx or 0) >= 30 and (pivot_clear_pct or 0) >= 2.0:
+        badges.append({"category": "BREAKOUT", "label": "VERY HIGH BREAKOUT"})
+    elif score < HIGH_PCT:
+        badges.append({"category": "MOMENTUM", "label": "MEDIUM MOMENTUM"})
+    else:
+        badges.append({"category": "MOMENTUM", "label": "HIGH MOMENTUM"})
+
     return score, badges
 
 

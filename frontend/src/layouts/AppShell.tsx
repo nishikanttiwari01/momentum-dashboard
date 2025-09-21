@@ -15,14 +15,11 @@ export default function AppShell() {
   }, [refresh]);
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        minHeight: '100vh',
-        background:
-          'radial-gradient(1200px 400px at 60% -200px, rgba(56,189,248,0.12), transparent), #0b1220',
-      }}
-    >
+  <Box sx={(theme) => ({
+    display: 'flex',
+    minHeight: '100vh',
+    backgroundColor: theme.palette.background.default,
+  })}>
       <LeftNav />
       <AppTopBar refresh={refresh} setRefresh={setRefresh} navWidth={NAV_WIDTH} />
 

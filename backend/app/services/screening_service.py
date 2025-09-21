@@ -220,13 +220,11 @@ def _make_scores_row(
         close_pos_in_bar=close_pos_in_bar
     )
 
-    # ---------- NEW: canonical scoring + fallback metadata ----------
-    # Align basic score fields: raw (0–12) and normalized (0–100)
+    # ---------- canonical scoring + fallback metadata ----------
     score_basic = basic_raw if basic_raw is not None else None
     score_basic_normalized = int(round(basic_pct)) if basic_pct is not None else None
     score_full = int(round(full_100)) if full_100 is not None else None
 
-    # Required keys for full trust
     full_required_keys = [
         "relvol20", "vol_z20", "obv", "obv_ma30", "obv_slope_10", "obv_above_ma",
         "pivot_20d", "pivot_clear_pct", "base_len_bars",
@@ -248,26 +246,20 @@ def _make_scores_row(
     if score_full is not None and not data_gaps:
         score = int(score_full)
         score_source = "full"
-        # badges: combine full + basic
         badges = (full_badges or [])
-        # reason: use full
         recommendation, reason = recommendation_and_reason(
             score, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct,
             atr14_pct=atr14_pct, atr10_pct=atr10_pct, gap_up_pct=gap_up_pct,
             close_pos_in_bar=close_pos_in_bar
         )
-
     else:
-        # Fallback to normalized basic
         score = score_basic_normalized if score_basic_normalized is not None else 0
         score_source = "basic_fallback"
         stale = True
-        # badges: restrict to safe Watch (data incomplete)
         badges = (basic_badges or [])
         if not badges:
             badges = [{"code": "WATCH", "text": "⏳ Watch (data incomplete)"}]
 
-        # reason: explicit fallback line
         recommendation, reason = recommendation_and_reason(
             None, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct
         )
@@ -286,9 +278,9 @@ def _make_scores_row(
         "ema50": ema50,
         "ema200": ema200,
         "relvol20": relvol20,
-        "proximity_52w_high_pct": prox_52w,  # CHANGED: use canonical field name
+        "proximity_52w_high_pct": prox_52w,  # canonical
         "atr14_pct": atr14_pct,
-        # NEW indicator fields persisted to parquet:
+        # persisted extras
         "atr10_pct": atr10_pct,
         "vol_z20": vol_z20,
         "obv": obv_val,
@@ -305,14 +297,14 @@ def _make_scores_row(
         "ret_3m": ret_3m,
         "ret_6m": ret_6m,
         "ret_12_1m": ret_12_1m,
-        # ---------- NEW: canonical scoring fields ----------
-        "score": score,                         # canonical 0–100 used for sort
-        "score_full": score_full,               # may be None
-        "score_basic": score_basic,             # 0–12 raw
-        "score_basic_normalized": score_basic_normalized,  # 0–100 or None
-        "score_source": score_source,           # "full" | "basic_fallback"
-        "data_gaps": data_gaps,                 # [] when full available
-        "stale": stale,                         # True if fallback due to gaps
+        # scores
+        "score": score,
+        "score_full": score_full,
+        "score_basic": score_basic,
+        "score_basic_normalized": score_basic_normalized,
+        "score_source": score_source,
+        "data_gaps": data_gaps,
+        "stale": stale,
         "rules_version": "scores_v2",
         "score_scale": "0-100",
         "badges": badges,
@@ -321,6 +313,95 @@ def _make_scores_row(
         "as_of": as_of_iso,
         "run_id": run_id,
     }
+
+    # === Back-fill legacy fields & small derivations ===
+    row.setdefault("rsi", row.get("rsi14"))
+    row.setdefault("adx", row.get("adx14"))
+    row.setdefault("pct_from_52w_high", row.get("proximity_52w_high_pct"))
+    row.setdefault("atr_pct", row.get("atr14_pct"))
+    row.setdefault("pct_today", row.get("change_pct"))
+
+    # Liquidity: 20d avg traded value (₹)
+    if row.get("liquidity") is None:
+        try:
+            ser_liq = (df["close"] * df["volume"]).rolling(20, min_periods=5).mean()
+            row["liquidity"] = float(ser_liq.iloc[-1]) if ser_liq.notna().any() else None
+        except Exception:
+            row["liquidity"] = None
+
+    # Volume spike: z-score vs last 20d
+    if row.get("vol_spike") is None:
+        try:
+            if "vol_z20" in ind.columns:
+                row["vol_spike"] = float(ind["vol_z20"].iloc[-1])
+            else:
+                v = df["volume"]
+                mu = v.rolling(20, min_periods=5).mean()
+                sd = v.rolling(20, min_periods=5).std(ddof=0)
+                z = (v - mu) / sd.replace(0.0, np.nan)
+                row["vol_spike"] = float(z.iloc[-1]) if z.notna().any() else None
+        except Exception:
+            row["vol_spike"] = None
+
+    # Strength label (simple ADX-based)
+    if not row.get("strength"):
+        adx_val = row.get("adx")
+        if isinstance(adx_val, (int, float)):
+            row["strength"] = "High" if adx_val >= 35 else ("Medium" if adx_val >= 20 else "Low")
+
+    # Buy flag from score
+    if row.get("buy") is None and isinstance(row.get("score"), (int, float)):
+        row["buy"] = "Yes" if row["score"] >= 75 else "No"
+
+    # --------- Badge policy (minimal changes, normalized) ----------
+    badges_in: List[Any] = row.get("badges") or []
+
+    # If no ACTION badge, append one based on score
+    has_action = any(isinstance(b, dict) and b.get("category") == "ACTION" for b in badges_in)
+    if not has_action and isinstance(row.get("score"), (int, float)):
+        badges_in.append(
+            {"category": "ACTION", "label": "✅ Buy"} if row["score"] >= 75
+            else {"category": "ACTION", "label": "🕒 Watch"}
+        )
+
+    # Ensure a classification badge exists from {BREAKOUT, MOMENTUM, WATCH, IGNORE}
+    cls_categories = {"BREAKOUT", "MOMENTUM", "WATCH", "IGNORE"}
+    def _code_to_category(code: str) -> Optional[str]:
+        c = (code or "").upper()
+        if "BREAKOUT" in c: return "BREAKOUT"
+        if "MOMENTUM" in c: return "MOMENTUM"
+        if "WATCH" in c: return "WATCH"
+        if "IGNORE" in c: return "IGNORE"
+        return None
+
+    has_classification = any(
+        isinstance(b, dict) and str(b.get("category", "")).upper() in cls_categories
+        for b in badges_in
+    )
+    if not has_classification:
+        # Derive a simple classification if scoring didn't provide one
+        if row["score"] is not None and row["score"] >= 85 and (rsi14 or 0) >= 60 and (adx14 or 0) >= 30 and (pivot_clear_pct or 0) >= 2.0:
+            badges_in.append({"category": "BREAKOUT", "label": "💥 Very High Breakout"})
+        elif row["score"] is not None and row["score"] >= 75:
+            badges_in.append({"category": "MOMENTUM", "label": "🔥 High Momentum"})
+        else:
+            badges_in.append({"category": "WATCH", "label": "⏳ Watch"})
+
+    # Normalize badge shape and also map legacy {code,text} to classification where possible
+    norm_badges: List[Dict[str, str]] = []
+    for b in badges_in:
+        if isinstance(b, dict):
+            label = b.get("label") or b.get("text") or b.get("code") or "Badge"
+            category = b.get("category")
+            if not category:
+                cat_from_code = _code_to_category(str(b.get("code", "")))
+                category = cat_from_code or "INFO"
+            norm_badges.append({"category": str(category), "label": str(label)})
+        else:
+            norm_badges.append({"category": "INFO", "label": str(b)})
+
+    row["badges"] = norm_badges
+
     return row
 
 
@@ -408,7 +489,8 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                     "score": 0, "score_full": None, "score_basic": None, "score_basic_normalized": None,
                     "score_source": "basic_fallback", "data_gaps": ["no_prices"], "stale": True,
                     "rules_version": "scores_v2", "score_scale": "0-100",
-                    "badges": [], "recommendation": "No", "reason": "",
+                    "badges": [{"category": "WATCH", "label": "⏳ Watch (no prices)"}],
+                    "recommendation": "No", "reason": "",
                     "as_of": as_of_iso, "run_id": job.run_id,
                 })
                 continue
@@ -421,7 +503,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             rows.append(row)
 
         # Write the single consolidated dataset: scores/ (schema v2)
-        datasets.write_schema_version("scores", 2)  # CHANGED: single dataset with v2 schema
+        datasets.write_schema_version("scores", 2)
         w = datasets.begin_atomic_write("scores", job.run_id)
         try:
             w.write_df(pa.Table.from_pylist(rows))
