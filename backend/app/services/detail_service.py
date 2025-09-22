@@ -132,6 +132,161 @@ def _resolve_run_id(symbol: str, run_id: Optional[str], deps: DetailDeps) -> Tup
         return None, None
     return rid, as_of
 
+def _compute_entry_suggestion(
+    *,
+    price_now: float,
+    ema_fast_n: int,
+    ema_fast_val: float,
+    ema_slow_n: int,
+    ema_slow_val: float,
+    rsi14: float,
+    adx14: float,
+    relvol20: float,   # kept for future use / logging parity
+    prox52: float,
+    atr_abs: float,
+) -> Dict[str, Any]:
+    """
+    Simple, explainable entry suggestion used by the drawer when there's no locked entry.
+    Returns a dict: {type, price, low, high, reason}
+    """
+    def strong_momo() -> bool:
+        # bullish momentum OR very close to 52w high
+        return (rsi14 >= 60 and adx14 >= 25) or (prox52 >= -1.0)
+
+    def extended() -> bool:
+        # % distance above slow EMA
+        if ema_slow_val <= 0:
+            return False
+        gap_pct = (price_now - ema_slow_val) / ema_slow_val * 100.0
+        return gap_pct >= 3.0
+
+    # 1) Breakout / Pullback logic
+    if strong_momo() and price_now >= ema_slow_val:
+        if not extended():
+            return {
+                "type": "BREAKOUT",
+                "price": float(price_now),
+                "low": None,
+                "high": None,
+                "reason": f"Price ≥ EMA{ema_slow_n} and near 52W high / strong momentum",
+            }
+        # extended → prefer pullback toward fast EMA band
+        hi = float(ema_fast_val)
+        lo = float(max(ema_fast_val - 0.5 * atr_abs, 0.0)) if atr_abs else float(ema_fast_val * 0.995)
+        px = float(min(price_now, hi))
+        return {
+            "type": "PULLBACK",
+            "price": px,
+            "low": lo,
+            "high": hi,
+            "reason": f"Extended; prefer pullback to EMA{ema_fast_n}",
+        }
+
+    # 2) Starter position if momentum is brewing and price is not far below slow EMA
+    if rsi14 >= 55 and adx14 >= 20 and (ema_slow_val == 0 or price_now >= ema_slow_val * 0.99):
+        starter = float(max(ema_slow_val, price_now))
+        return {
+            "type": "STARTER",
+            "price": starter,
+            "low": None,
+            "high": None,
+            "reason": f"Momentum building; starter near EMA{ema_slow_n}",
+        }
+
+    # 3) Default
+    return {
+        "type": "WATCH",
+        "price": float(price_now) if price_now else 0.0,
+        "low": None,
+        "high": None,
+        "reason": "No clear entry; watch only",
+    }
+# ---------- Helpers ----------
+
+def _header_badges_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Map legacy parquet badges (code/text) to new header.Badge {category,label}.
+    """
+    out: List[Dict[str, Any]] = []
+    badges = row.get("badges") or []
+    for b in badges:
+        code = (b or {}).get("code") or ""
+        text = (b or {}).get("text") or ""
+        category = None
+        c = code.upper()
+        if c in ("VERY_HIGH_BREAKOUT", "NEW_HIGH", "BREAKOUT", "HIGH_BREAKOUT"):
+            category = "BREAKOUT"
+        elif c in ("HIGH_MOMENTUM", "MOMENTUM"):
+            category = "MOMENTUM"
+        elif c in ("WATCH", "DATA_INCOMPLETE", "WATCH_INCOMPLETE"):
+            category = "WATCH"
+        elif c in ("IGNORE",):
+            category = "IGNORE"
+        # fallback by text
+        if category is None:
+            t = text.lower()
+            if "breakout" in t or "new 52w" in t:
+                category = "BREAKOUT"
+            elif "momentum" in t:
+                category = "MOMENTUM"
+            elif "watch" in t:
+                category = "WATCH"
+        if category:
+            out.append({"category": category, "label": text or code})
+    return out
+
+def _compute_meters_and_next(price_now: Optional[float], ind: Dict[str, Any], pos: Dict[str, Any]):
+    if _domain_compute_meters and _domain_compute_next:
+        try:
+            meters = _domain_compute_meters(indicators=ind, score_row={"atr14_pct": ind.get("atr14_pct"), "atr_pct": ind.get("atr14_pct")})
+            next_action = _domain_compute_next(price=price_now, indicators=ind, position=pos)
+            return meters, next_action
+        except Exception:
+            log.exception("domain meters/next_action failed; trying rules engine fallback")
+
+    if _HAVE_RULES:
+        try:
+            meters = _rules_compute_meters(price_now, ind, pos)
+            next_action = _rules_resolve_next_action(price_now, ind, pos)
+            return meters, next_action
+        except Exception:
+            log.exception("rules engine failed; falling back to legacy")
+
+    # Legacy fallback
+    def _risk(x):
+        x = float(x) if x is not None else None
+        if x is None: return "Medium"
+        if x < 1.2:   return "Low"
+        if x < 1.8:   return "Medium"
+        return "High"
+    def _euph(rsi, adx):
+        r = float(rsi or 0); a = float(adx or 0); s = r + 0.5 * a
+        if s < 70: return "Low"
+        if s < 90: return "Medium"
+        return "High"
+    meters = {
+        "risk": {"level": _risk(ind.get("relvol20")), "basis": {"atr_pct": float(ind.get("atr14_pct") or 0.0)}},
+        "euphoria": {"level": _euph(ind.get("rsi14"), ind.get("adx14")),
+                     "basis": {"rsi14": float(ind.get("rsi14") or 0.0), "adx14": float(ind.get("adx14") or 0.0)}},
+    }
+    ema_n = int(ind.get("ema_slow") or ind.get("ema_fast") or 10)
+    ema_val = float(ind.get("ema_slow_value") or ind.get("ema_fast_value") or (price_now or 0.0))
+    if price_now is not None and ema_val and price_now >= ema_val:
+        stop_now = pos.get("stop_now") or 0.0
+        if stop_now:
+            next_action = {"code": "HOLD", "text": f"Hold (trail stop at ₹{float(stop_now):,.1f})",
+                           "reasons": [f"Close ≥ EMA{ema_n}", "Momentum intact"],
+                           "refs": {"stop_now": float(stop_now), "ema_n": int(ema_n), "ema_value": float(ema_val)}}
+        else:
+            next_action = {"code": "HOLD", "text": f"Hold (above EMA{ema_n})",
+                           "reasons": [f"Close ≥ EMA{ema_n}"],
+                           "refs": {"ema_n": int(ema_n), "ema_value": float(ema_val)}}
+    else:
+        next_action = {"code": "WATCH", "text": "Watch (no clear signal)", "reasons": [],
+                       "refs": {"ema_n": int(ema_n), "ema_value": float(ema_val)}}
+    return meters, next_action
+
+
 
 def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Dict[str, Any]:
     """
@@ -368,8 +523,96 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
     log.info("build: payload %s@%s as_of=%s price=%s", sym_in, payload["run_id"], payload["as_of"], payload["price"])
     return payload
 
+def _normalize_meters_to_contract(meters: Dict[str, Any], ind: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure meters have the quantitative fields required by the model:
+    - score_0_100
+    - thresholds
+    Works with both upgraded domain meters and legacy meters.
+    """
+    def add_fields(kind: str, m: Dict[str, Any]) -> Dict[str, Any]:
+        m = dict(m or {})
+        # thresholds
+        if "thresholds" not in m:
+            m["thresholds"] = {"low_lt": 33, "medium_gte": 33, "high_gte": 66}
+        # score
+        if m.get("score_0_100") is None:
+            if kind == "risk":
+                atr = (m.get("basis", {}) or {}).get("atr14_pct")
+                if atr is None:
+                    atr = (m.get("basis", {}) or {}).get("atr_pct")
+                try:
+                    s = max(0.0, min(100.0, (float(atr) / 8.0) * 100.0)) if atr is not None else None
+                except Exception:
+                    s = None
+                m["score_0_100"] = int(round(s)) if s is not None else 0
+            else:
+                rsi = ind.get("rsi14"); adx = ind.get("adx14"); slope = ind.get("adx_slope_5") or 0.0
+                try:
+                    rsi_part = max(0.0, min(70.0, ((float(rsi) - 55.0) / 25.0) * 70.0)) if rsi is not None else 0.0
+                except Exception:
+                    rsi_part = 0.0
+                try:
+                    adx_part = max(0.0, min(30.0, ((float(adx) - 20.0) / 25.0) * 30.0)) if adx is not None else 0.0
+                except Exception:
+                    adx_part = 0.0
+                slope_bonus = 5.0 if (slope or 0.0) > 0 else 0.0
+                # ✅ correct clamp: clamp the SUM between 0 and 100
+                s = max(0.0, min(100.0, rsi_part + adx_part + slope_bonus))
+                m["score_0_100"] = int(round(s))
+        return m
+
+    meters = dict(meters or {})
+    meters["risk"] = add_fields("risk", meters.get("risk") or {"level": "Low", "basis": {}})
+    meters["euphoria"] = add_fields("euphoria", meters.get("euphoria") or {"level": "Low", "basis": {}})
+    return meters
+
 
 # ---------- New-layout read helper (no legacy) ----------
+def _normalize_meters_to_contract(meters: Dict[str, Any], ind: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensure meters have the quantitative fields required by the model:
+    - score_0_100
+    - thresholds
+    Works with both upgraded domain meters and legacy meters.
+    """
+    def add_fields(kind: str, m: Dict[str, Any]) -> Dict[str, Any]:
+        m = dict(m or {})
+        # thresholds
+        if "thresholds" not in m:
+            m["thresholds"] = {"low_lt": 33, "medium_gte": 33, "high_gte": 66}
+        # score
+        if m.get("score_0_100") is None:
+            if kind == "risk":
+                atr = (m.get("basis", {}) or {}).get("atr14_pct")
+                if atr is None:
+                    atr = (m.get("basis", {}) or {}).get("atr_pct")
+                try:
+                    s = max(0.0, min(100.0, (float(atr) / 8.0) * 100.0)) if atr is not None else None
+                except Exception:
+                    s = None
+                m["score_0_100"] = int(round(s)) if s is not None else 0
+            else:
+                rsi = ind.get("rsi14"); adx = ind.get("adx14"); slope = ind.get("adx_slope_5") or 0.0
+                try:
+                    rsi_part = max(0.0, min(70.0, ((float(rsi) - 55.0) / 25.0) * 70.0)) if rsi is not None else 0.0
+                except Exception:
+                    rsi_part = 0.0
+                try:
+                    adx_part = max(0.0, min(30.0, ((float(adx) - 20.0) / 25.0) * 30.0)) if adx is not None else 0.0
+                except Exception:
+                    adx_part = 0.0
+                slope_bonus = 5.0 if (slope or 0.0) > 0 else 0.0
+                # ✅ correct clamp: clamp the SUM between 0 and 100
+                s = max(0.0, min(100.0, rsi_part + adx_part + slope_bonus))
+                m["score_0_100"] = int(round(s))
+        return m
+
+    meters = dict(meters or {})
+    meters["risk"] = add_fields("risk", meters.get("risk") or {"level": "Low", "basis": {}})
+    meters["euphoria"] = add_fields("euphoria", meters.get("euphoria") or {"level": "Low", "basis": {}})
+    return meters
+
 
 def _read_row_new_layout(scores_repo: Any, symbol: str, *, run_id_hint: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], Optional[str]]:
     """

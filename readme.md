@@ -11,6 +11,8 @@ cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
 set APP_DISABLE_ALEMBIC=1
 python run_uvicorn.py
 
+set BACKFILL_ON_START=0  off   BACKFILL_ON_START=1 on
+
 ### Option A: run Alembic once, then start dev
 set APP_DISABLE_ALEMBIC=0
 alembic upgrade head
