@@ -276,7 +276,7 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
 // { field: 'reason', headerName: 'Reason', flex: 1.2, minWidth: 210 },
 {
   field: 'badges',
-  headerName: 'Badges',
+  headerName: 'Momentum',
   minWidth: 180,
   sortable: false,
   filterable: false,
@@ -342,7 +342,7 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
         rowCount={rowCount}
         paginationModel={pagination}
         onPaginationModelChange={setPagination}
-        pageSizeOptions={[10, 25, 50, 100]}
+        pageSizeOptions={[10, 25, 50, 100,500]}
         sortingMode="server"
         sortModel={sortModel}
         onSortModelChange={setSortModel}

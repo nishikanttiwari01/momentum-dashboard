@@ -37,31 +37,49 @@ from app.workers import scheduler as sched
 
 from app.core.logging_config import setup_logging
 
+# ---------------- NEW: light helpers for startup backfill ----------------
+import os
+import asyncio
+import anyio
+
+def _boolish(val: str | None, default: bool = True) -> bool:
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+async def _run_startup_backfill(logger: logging.Logger) -> None:
+    """
+    Fire-and-forget wrapper that invokes the existing CLI backfill
+    without blocking app startup.
+    """
+    # small delay so the server is fully up
+    await asyncio.sleep(5)
+    try:
+        logger.info("startup backfill: begin")
+        # Import lazily so normal boot has no hard dependency if module moves
+        from app.cli.backfill import main as backfill_main
+        # run the CLI entrypoint in a worker thread (it prints progress & returns an int rc)
+        rc = await anyio.to_thread.run_sync(backfill_main, [])
+        logger.info("startup backfill: done rc=%s", rc)
+    except Exception:
+        logger.exception("startup backfill: FAILED")
+# -------------------------------------------------------------------------
+
+
 # NOTE: don't create/return an app instance here yet; do it in create_app().
 
-
 def _wire_logging() -> logging.Logger:
-    """
-    Initialize logging exactly once. Always add a rotating file handler
-    pointing at <repo-root>/logs/app.log. Returns a module logger.
-    """
-    setup_logging()  # writes "Logging initialized -> .../logs/app.log"
+    setup_logging()
     logger = logging.getLogger("app.main")
     logger.info("App boot: logging configured")
     return logger
 
 
 def _wrap_unhandled(logger: logging.Logger):
-    """
-    Return a logging wrapper for your on_unhandled_exception so that
-    we preserve your existing JSON shape but also log the traceback.
-    """
     orig = on_unhandled_exception
-
     async def _wrapper(request: Request, exc: Exception):
         logger.exception("UNHANDLED %s %s -> %r", request.method, request.url.path, exc)
         return await orig(request, exc)
-
     return _wrapper
 
 
@@ -70,14 +88,12 @@ async def lifespan(app: FastAPI):
     logger = logging.getLogger("app.main")
     logger.info("lifespan: begin")
 
-    # Ensure test-time env vars (e.g. APP_SQLITE_PATH) take effect
     if hasattr(config.load, "cache_clear"):
         config.load.cache_clear()
 
     cfg = config.load()
     logger.info("lifespan: config loaded env=%s", getattr(cfg.app, "env", "unknown"))
 
-    # Initialize DB from configured path (tests point this at a tmp file)
     try:
         db.init_sqlite(cfg.storage.sqlite_path)
         logger.info("lifespan: db.init_sqlite ok path=%s", cfg.storage.sqlite_path)
@@ -85,11 +101,9 @@ async def lifespan(app: FastAPI):
         logger.exception("lifespan: db.init_sqlite failed")
         raise
 
-    # CHANGED: log DB path + positions table row count (best effort)
     logger.info("DB: sqlite_path=%s", cfg.storage.sqlite_path)
     try:
-        # use the same sessionmaker as the app
-        from app.core.db import get_sessionmaker  # existing helper in your project
+        from app.core.db import get_sessionmaker
         sm = get_sessionmaker()
         with sm() as s:
             try:
@@ -100,17 +114,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("DB: unable to log positions count: %r", e)
 
-    # per-app idempotency salt for tests
     app.state.idem_salt = uuid4().hex
-
     app.state.ready = True
 
-    # Start scheduler in a guarded way so startup never hangs silently
+    # Start scheduler (non-fatal on failure)
     try:
         sched.start_if_enabled()
-        logger.info("lifespan: scheduler started (if enabled)")
     except Exception:
         logger.exception("lifespan: scheduler start failed (continuing)")
+
+    # ------------- NEW: optionally kick off startup backfill -------------
+    # Source of truth: env var BACKFILL_ON_START (default true).
+    # You can also export it via your YAML -> env pipeline.
+    if _boolish(os.getenv("BACKFILL_ON_START"), default=True):
+        try:
+            asyncio.create_task(_run_startup_backfill(logger))
+            logger.info("startup backfill: scheduled (BACKFILL_ON_START=on)")
+        except Exception:
+            logger.exception("startup backfill: schedule failed (continuing)")
+    else:
+        logger.info("startup backfill: disabled (BACKFILL_ON_START=off)")
+    # ---------------------------------------------------------------------
 
     logger.info("lifespan: yield to serve")
     try:
@@ -131,7 +155,6 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    # CHANGED: initialize logging here so it's active for the real app instance
     logger = _wire_logging()
     logging.getLogger("app.main").setLevel(logging.INFO)
     logging.getLogger("app.api.v1.instruments").setLevel(logging.INFO)
@@ -143,7 +166,6 @@ def create_app() -> FastAPI:
     app = FastAPI(title=cfg.app.name, lifespan=lifespan)
     app.state.ready = False
 
-    # CORS + request middlewares
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.server.cors_origins,
@@ -154,7 +176,6 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestLogMiddleware)
     app.add_middleware(RequestIdMiddleware)
 
-    # CHANGED: request access log (method/path/status) on the live app
     @app.middleware("http")
     async def _req_access_logger(request: Request, call_next):
         path = request.url.path
@@ -165,14 +186,12 @@ def create_app() -> FastAPI:
             logger.exception("REQ EXC %s %s", method, path)
             raise
         logger.info("REQ %s %s -> %s", method, path, response.status_code)
-        return response   # <— IMPORTANT: ensure this is 'response'
+        return response
 
-    # Exception handlers — keep your shapes, but ensure we log
     app.add_exception_handler(RequestValidationError, on_validation_error)
     app.add_exception_handler(StarletteHTTPException, on_http_exception)
-    app.add_exception_handler(Exception, _wrap_unhandled(logger))  # CHANGED
+    app.add_exception_handler(Exception, _wrap_unhandled(logger))
 
-    # Routers
     prefix = cfg.app.api_prefix
     app.include_router(health.router,      prefix=prefix)
     app.include_router(screener.router,    prefix=prefix, tags=["Screener"])

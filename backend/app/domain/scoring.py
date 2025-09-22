@@ -202,13 +202,13 @@ def full_score(rsi: Optional[float],
     if score < IGNORE_PCT:
         badges.append({"category": "IGNORE", "label": "IGNORE"})
     elif score < WATCH_PCT:
-        badges.append({"category": "WATCH", "label": "LOW MOMENTUM"})
+        badges.append({"category": "WATCH", "label": "LOW"})
     elif score >= BREAKOUT_PCT and (rsi or 0) >= 60 and (adx or 0) >= 30 and (pivot_clear_pct or 0) >= 2.0:
-        badges.append({"category": "BREAKOUT", "label": "VERY HIGH BREAKOUT"})
+        badges.append({"category": "BREAKOUT", "label": "BREAKOUT"})
     elif score < HIGH_PCT:
-        badges.append({"category": "MOMENTUM", "label": "MEDIUM MOMENTUM"})
+        badges.append({"category": "MOMENTUM", "label": "MEDIUM"})
     else:
-        badges.append({"category": "MOMENTUM", "label": "HIGH MOMENTUM"})
+        badges.append({"category": "MOMENTUM", "label": "HIGH"})
 
     return score, badges
 

@@ -81,8 +81,15 @@ def main(argv: list[str] | None = None) -> int:
         cfg.end = date.fromisoformat(argv[1])
 
     today = date.today()
+    yesterday = today - timedelta(days=1)
+
+    # Default: last ~12 months up to YESTERDAY (not today)
     start = cfg.start or (today - timedelta(days=int(cfg.months_back * 365 / 12) + 30))
-    end = cfg.end or today
+    end = cfg.end or yesterday
+
+    # If user passed an end date in the future or today, clamp to yesterday
+    if end >= today:
+        end = yesterday
 
     sess = _session(cfg)
     failures: list[str] = []

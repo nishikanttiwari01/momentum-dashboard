@@ -4,8 +4,62 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, List
+from datetime import datetime, date
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger("app.services.detail")
+
+
+_TZ_DEFAULT = "Asia/Singapore"
+
+def _as_of_from_run_id(run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
+    """
+    Parse run_id like 'YYYYMMDDHHMMSS' to a timezone-aware datetime.
+    Safe fallback to 'now' if parsing fails.
+    """
+    try:
+        dt = datetime.strptime((run_id or "")[:14], "%Y%m%d%H%M%S")
+    except Exception:
+        return datetime.now(ZoneInfo(tz_name))
+    return dt.replace(tzinfo=ZoneInfo(tz_name))
+
+def _coerce_as_of(value, *, run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
+    """
+    Accepts datetime/date/str/None and returns a tz-aware datetime.
+    - date -> midnight local tz
+    - 'YYYY-MM-DD' -> midnight local tz
+    - naive datetime -> attach local tz
+    - aware datetime -> return as-is
+    - None/'' -> derive from run_id
+    """
+    if value in (None, "", " "):
+        return _as_of_from_run_id(run_id, tz_name)
+
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=ZoneInfo(tz_name))
+
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=ZoneInfo(tz_name))
+
+    # string cases
+    s = str(value).strip()
+    # Try ISO first
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt if dt.tzinfo else dt.replace(tzinfo=ZoneInfo(tz_name))
+    except Exception:
+        pass
+
+    # Try YYYY-MM-DD
+    try:
+        d = datetime.strptime(s, "%Y-%m-%d").date()
+        return datetime(d.year, d.month, d.day, tzinfo=ZoneInfo(tz_name))
+    except Exception:
+        pass
+
+    # Last resort: from run_id
+    return _as_of_from_run_id(run_id, tz_name)
+
 
 # Optional external rule engine (kept)
 try:
@@ -288,6 +342,9 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
         "channels": None,
         "symbol_canon": (canon or sym_in),
     }
+
+    # --- ONLY CHANGE ADDED: ensure as_of is a tz-aware datetime (fixes empty-string/date-only cases) ---
+    payload["as_of"] = _coerce_as_of(payload.get("as_of"), run_id=run_id, tz_name=_TZ_DEFAULT)
 
     log.info("build: payload %s@%s price=%s", sym_in, run_id, payload["price"])
     return payload

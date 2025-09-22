@@ -50,6 +50,7 @@ def _dt_partition(parent: Path, dt: str) -> Path:
 
 
 _RUN_ID_RE = re.compile(r"^\d{8}(T?\d{6}Z?)$")  # accepts YYYYMMDDHHMMSS or YYYYMMDDTHHMMSSZ
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def _is_valid_run_id(run_id: str) -> bool:
     """
@@ -58,6 +59,9 @@ def _is_valid_run_id(run_id: str) -> bool:
       - 'YYYYMMDDTHHMMSSZ'          (e.g., 20250912T034903Z)  <-- what the CLI emits
     """
     return bool(_RUN_ID_RE.match(run_id))
+
+def _is_valid_date(date_str: str) -> bool:
+    return bool(_DATE_RE.match(date_str))
 
 # -----------------------------
 # Simple file lock (directory-based)
@@ -134,12 +138,18 @@ class AtomicWriter:
       w.write_df(df2)  # optional multiple parts
       w.commit()
     """
-    def __init__(self, table: str, run_id: str, cfg: WriterConfig):
+    def __init__(
+        self,
+        table: str,
+        run_id: str,
+        cfg: WriterConfig,
+        custom_final_dir: Optional[Path] = None,  # <--- non-breaking extension
+    ):
         self.table = table
         self.run_id = run_id
         self.cfg = cfg
         self.root = _table_root(table)
-        self.final_dir = _run_partition(table, run_id)
+        self.final_dir = custom_final_dir or _run_partition(table, run_id)
         self.tmp_dir = self.root / "tmp" / uuid.uuid4().hex
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.parts_written = 0
@@ -221,6 +231,131 @@ def begin_atomic_write(table: str, run_id: str, cfg: Optional[WriterConfig] = No
     assert table in TABLES, f"Unknown table {table}"
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
     return AtomicWriter(table, run_id, cfg or WriterConfig())
+
+# -----------------------------
+# NEW: Daily & Intraday helpers for "scores"
+# -----------------------------
+
+def scores_daily_dir(as_of: str) -> Path:
+    assert _is_valid_date(as_of), f"Bad as_of date: {as_of}"
+    p = _table_root("scores") / "daily" / f"as_of={as_of}"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+def scores_intraday_run_dir(date_str: str, run_id: str) -> Path:
+    assert _is_valid_date(date_str), f"Bad date: {date_str}"
+    assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
+    p = _table_root("scores") / "intraday" / f"date={date_str}" / f"run_id={run_id}"
+    p.parent.mkdir(parents=True, exist_ok=True)  # ensure date dir exists
+    return p
+
+def _has_committed_run_under(path: Path) -> bool:
+    """
+    True if 'path' contains any child directory with a _SUCCESS marker
+    (used to enforce one EOD snapshot per day).
+    """
+    if not path.exists():
+        return False
+    for child in path.glob("run_id=*"):
+        if child.is_dir() and (child / "_SUCCESS").exists():
+            return True
+    return False
+
+class _NullWriter:
+    """No-op writer used when a daily partition already exists (no-overwrite policy)."""
+    def __init__(self, final_dir: Path):
+        self.final_dir = final_dir
+        self.parts_written = 0
+        self.rows_written = 0
+        self._closed = True  # treat as already closed
+
+    def write_df(self, *_args, **_kwargs) -> None:
+        return
+
+    def commit(self) -> None:
+        return
+
+    def abort(self) -> None:
+        return
+
+def begin_atomic_write_scores_daily(as_of: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter | _NullWriter:
+    """
+    Create a writer under scores/daily/as_of=YYYY-MM-DD/run_id=<run_id>.
+    If that as_of already has a committed run, return a no-op writer (skip/immutability).
+    """
+    as_of_root = scores_daily_dir(as_of)
+    if _has_committed_run_under(as_of_root):
+        # Daily is immutable unless a future "force" path is used
+        return _NullWriter(final_dir=as_of_root)
+
+    final_dir = as_of_root / f"run_id={run_id}"
+    assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
+    return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
+
+def begin_atomic_write_scores_intraday(date_str: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter:
+    """
+    Create a writer under scores/intraday/date=YYYY-MM-DD/run_id=<run_id>.
+    Multiple runs per day are allowed.
+    """
+    final_dir = scores_intraday_run_dir(date_str, run_id)
+    return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
+
+def latest_intraday(date_str: str) -> Optional[str]:
+    """
+    Return the latest run_id for an intraday date if any committed runs exist.
+    """
+    root = _table_root("scores") / "intraday" / f"date={date_str}"
+    if not root.exists():
+        return None
+    cands: list[str] = []
+    for child in root.glob("run_id=*"):
+        if not child.is_dir():
+            continue
+        rid = child.name.split("run_id=", 1)[-1]
+        if _is_valid_run_id(rid) and (child / "_SUCCESS").exists():
+            cands.append(rid)
+    return sorted(cands)[-1] if cands else None
+
+def latest_daily_at_or_before(date_str: str) -> Optional[str]:
+    """
+    Return the latest as_of (YYYY-MM-DD) ≤ date_str with a committed run present.
+    """
+    root = _table_root("scores") / "daily"
+    if not root.exists():
+        return None
+    cands: list[str] = []
+    for child in root.glob("as_of=*"):
+        if not child.is_dir():
+            continue
+        as_of = child.name.split("as_of=", 1)[-1]
+        if not _is_valid_date(as_of):
+            continue
+        if as_of <= date_str and _has_committed_run_under(child):
+            cands.append(as_of)
+    return sorted(cands)[-1] if cands else None
+
+def scan_scores_daily(as_of: str, columns: Optional[Iterable[str]] = None, filters: Optional[ds.Expression] = None) -> pa.Table:
+    """
+    Read the daily partition for a given as_of (recursively includes its run dir).
+    Returns empty table if not present/committed.
+    """
+    root = scores_daily_dir(as_of)
+    if not _has_committed_run_under(root):
+        return pa.table({c: [] for c in (columns or [])}) if columns else pa.table({})
+    # dataset() scans recursively; will include files under run_id=...
+    dataset = ds.dataset(root, format="parquet", partitioning="hive", exclude_invalid_files=True)
+    return dataset.to_table(columns=list(columns) if columns else None, filter=filters)
+
+def scan_scores_intraday(date_str: str, run_id: str, columns: Optional[Iterable[str]] = None, filters: Optional[ds.Expression] = None) -> pa.Table:
+    """
+    Read a specific intraday run partition: date=YYYY-MM-DD/run_id=YYYYMMDDHHMMSS.
+    Returns empty table if not present/committed.
+    """
+    part_root = scores_intraday_run_dir(date_str, run_id)
+    if not (part_root / "_SUCCESS").exists():
+        return pa.table({c: [] for c in (columns or [])}) if columns else pa.table({})
+    dataset = ds.dataset(part_root, format="parquet", partitioning="hive", exclude_invalid_files=True)
+    return dataset.to_table(columns=list(columns) if columns else None, filter=filters)
 
 # -----------------------------
 # Schema version helpers (meta/)

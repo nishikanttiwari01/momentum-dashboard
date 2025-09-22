@@ -6,15 +6,37 @@ from fastapi import APIRouter, Request, Query
 from app.schemas.screener import ScreenerList, ScreenerRow
 from app.repos.parquet.scores_repo import ScoresRepo
 
-# ADDED: minimal imports to clean NaN/Inf payloads
+# ADDED: minimal imports to clean NaN/Inf payloads and log drops
 import math
 import numbers
+import logging
+from datetime import datetime, timezone
 
 router = APIRouter(tags=["Screener"])
 repo = ScoresRepo()
+log = logging.getLogger(__name__)
 
 # Treat these query params as non-filter controls. Everything else maps into filter ops.
 KNOWN_KEYS = {"run_id", "as_of", "sort", "page", "per_page", "universe"}
+
+
+def _ensure_tz_as_of(v, fallback_dt: datetime) -> datetime:
+    # Accept datetime with/without tz, or strings like "YYYY-MM-DD" / ISO 8601
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    if isinstance(v, str):
+        try:
+            # "YYYY-MM-DDTHH:MM:SS±HH:MM" -> datetime (may already have tz)
+            dt = datetime.fromisoformat(v)
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            # "YYYY-MM-DD" -> midnight UTC
+            try:
+                d = datetime.strptime(v[:10], "%Y-%m-%d")
+                return d.replace(tzinfo=timezone.utc)
+            except Exception:
+                return fallback_dt
+    return fallback_dt
 
 
 def _parse_filters(params) -> Dict[tuple[str, str], Any]:
@@ -64,6 +86,7 @@ def _parse_filters(params) -> Dict[tuple[str, str], Any]:
             out[(k[:-3], "eq")] = v
     return out
 
+
 def _badge_category_from_code_or_text(code: str, text: str) -> str:
     """
     Map legacy badge 'code'/'text' to contract categories: BREAKOUT | MOMENTUM | WATCH | IGNORE.
@@ -92,6 +115,7 @@ def _badge_category_from_code_or_text(code: str, text: str) -> str:
     # Safe default
     return "WATCH"
 
+
 def _badge_to_contract_shape(b: dict) -> dict:
     """
     Normalize a legacy badge dict into contract Badge shape:
@@ -101,7 +125,6 @@ def _badge_to_contract_shape(b: dict) -> dict:
     label = (b.get("label") or b.get("text") or code or "").strip() or "Badge"
     category = _badge_category_from_code_or_text(code, label)
     return {"category": category, "label": label}
-
 
 
 def _derive_week_fields(row: Dict[str, Any]) -> None:
@@ -145,7 +168,11 @@ def _clean_nonfinite_inplace(d: Dict[str, Any]) -> None:
                 else:
                     cleaned.append(x)
             d[k] = cleaned
-        # nested dicts (e.g., badges already normalized) left as-is
+        # nested dicts left as-is
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, numbers.Real) and math.isfinite(float(v))
 
 
 @router.get("/screener", response_model=ScreenerList)
@@ -172,7 +199,7 @@ def list_screener(
             per_page=per_page,
             columns=[
                 # Core quote & identity
-                "symbol", "name", "sector", "last", "change_pct",
+                "symbol", "name", "sector", "last", "close", "price", "change_pct",
                 # Score & strength
                 "score", "strength",
                 # Indicators & returns
@@ -194,13 +221,32 @@ def list_screener(
 
     # Normalize each row into the contract-safe shape
     norm_items: List[ScreenerRow] = []
+    dropped = 0
+
     for r in items:
+        # Fill last from close/price if missing
+        if r.get("last") is None:
+            fallback_last = r.get("close")
+            if fallback_last is None:
+                fallback_last = r.get("price")
+            if fallback_last is not None:
+                r["last"] = fallback_last
+
+        # Ensure 'last' and 'score' are valid; drop otherwise (prevents 500s)
+        s_val = r.get("score")
+        if isinstance(s_val, float) and 0.0 <= s_val <= 1.0:
+            s_val = s_val * 100.0  # normalize if score stored in 0..1
+        if not _is_num(r.get("last")) or not _is_num(s_val if s_val is not None else 0):
+            dropped += 1
+            continue
+
+        # Keep normalized 0..100 integer score
+        r["score"] = int(round(float(s_val))) if s_val is not None else 0
+
         _derive_week_fields(r)
 
         # Normalize badges → contract shape {category,label}
         badges = r.get("badges") or []
-        # r["badges"] = [_badge_contract_safe(b) for b in badges if isinstance(b, dict)]
-        # If already in contract shape, keep; else convert legacy dicts.
         norm_badges: List[dict] = []
         for b in badges:
             if isinstance(b, dict) and "category" in b and "label" in b:
@@ -214,16 +260,6 @@ def list_screener(
         # Clean up legacy helper
         r.pop("ret_1w", None)
 
-        # Normalize score as int 0..100
-        s = r.get("score")
-        if isinstance(s, float):
-            r["score"] = int(round(s * 100 if 0.0 <= s <= 1.0 else s))
-        elif s is None:
-            r["score"] = 0
-
-        # Ensure symbol exists
-        r.setdefault("symbol", "")
-
         # Sanitize non-finite numerics
         _clean_nonfinite_inplace(r)
 
@@ -234,9 +270,16 @@ def list_screener(
         # Build the Pydantic row
         norm_items.append(ScreenerRow(**r))
 
+    if dropped:
+        log.warning("screener: dropped invalid rows (missing last/score)",
+                    extra={"dropped": dropped})
+
+    # Ensure tz-aware as_of for response model
+    as_of_dt = _ensure_tz_as_of(resolved_as_of, datetime.now(timezone.utc))
+
     return ScreenerList(
         items=norm_items,
         pagination={"page": page, "per_page": per_page, "total": total, "next_cursor": None},
-        as_of=resolved_as_of,
+        as_of=as_of_dt,
         run_id=resolved_run_id,
     )

@@ -45,6 +45,22 @@ def _to_aware(dt: Optional[datetime]) -> Optional[datetime]:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
+def _as_of_date_str(as_of_val: Optional[str]) -> Optional[str]:
+    """
+    Return YYYY-MM-DD if payload.as_of is present (date or ISO datetime),
+    else None. Tolerant to '2025-09-21', '2025-09-21T10:00:00Z', etc.
+    """
+    if not as_of_val:
+        return None
+    s = str(as_of_val).strip()
+    # if it's already a date string
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    try:
+        return pd.to_datetime(s).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
 
 # --------------------------- IO helpers -----------------------------
 
@@ -258,7 +274,7 @@ def _make_scores_row(
         stale = True
         badges = (basic_badges or [])
         if not badges:
-            badges = [{"code": "WATCH", "text": "⏳ Watch (data incomplete)"}]
+            badges = [{"category": "WATCH", "label": "⏳ Watch (data incomplete)"}]
 
         recommendation, reason = recommendation_and_reason(
             None, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct
@@ -409,14 +425,32 @@ def _make_scores_row(
 
 def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, Any]) -> Tuple[RunDetail, bool]:
     """
-    Phase 11: Single dataset 'scores/' (schema_version=2) with full columns.
-    Writes one atomic snapshot; no more scores_v2/.
+    Phase 11 → Phase 12 bridge:
+      - Keep legacy single dataset write to scores/run_id=...
+      - ALSO write to new layout:
+          * daily/as_of=YYYY-MM-DD/run_id=...  (when payload.as_of present)
+          * intraday/date=YYYY-MM-DD/run_id=... (otherwise)
+      - When as_of is provided, slice price history to <= as_of for correct EOD.
     """
     _ensure_parquet_root()
     jobs = SqlJobsRepo(session)
     history = SqlHistoryRepo(session)
 
-    as_of_iso = (payload.get("as_of") or _utcnow_aware().isoformat().replace("+00:00", "Z"))
+    # ---- make as_of ISO **timezone-aware** ----
+    as_of_raw = payload.get("as_of")
+    as_of_date = _as_of_date_str(as_of_raw)
+    if as_of_date:
+        # represent EOD with midnight UTC to keep tz-aware
+        as_of_iso = f"{as_of_date}T00:00:00Z"
+    elif as_of_raw:
+        # coerce any datetime-ish string to UTC ISO
+        try:
+            as_of_iso = pd.to_datetime(as_of_raw, utc=True).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            as_of_iso = _utcnow_aware().isoformat().replace("+00:00", "Z")
+    else:
+        as_of_iso = _utcnow_aware().isoformat().replace("+00:00", "Z")
+
     universe = None
     if isinstance(payload.get("universe"), str):
         uni = payload["universe"].strip().upper()
@@ -472,50 +506,64 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         for sym in symbols:
             df = _history_df(sym, period="400d")
             q = quotes.get(sym, {})
-            if df.empty:
-                # still emit a stub row (with name/sector if known)
-                rows.append({
-                    "symbol": sym, "name": q.get("name"), "sector": q.get("sector"),
-                    "last": None, "change_pct": None,
-                    "rsi14": None, "adx14": None, "ema10": None, "ema50": None, "ema200": None,
-                    "relvol20": None, "proximity_52w_high_pct": None, "atr14_pct": None,
-                    # NEW fields kept in schema even when empty:
-                    "atr10_pct": None, "vol_z20": None,
-                    "obv": None, "obv_ma30": None, "obv_slope_10": None, "obv_above_ma": None,
-                    "pivot_20d": None, "pivot_clear_pct": None, "base_len_bars": None,
-                    "gap_up_pct": None, "close_pos_in_bar": None,
-                    "ret_1w": None, "ret_1m": None, "ret_3m": None, "ret_6m": None, "ret_12_1m": None,
-                    # canonical/metadata defaults:
-                    "score": 0, "score_full": None, "score_basic": None, "score_basic_normalized": None,
-                    "score_source": "basic_fallback", "data_gaps": ["no_prices"], "stale": True,
-                    "rules_version": "scores_v2", "score_scale": "0-100",
-                    "badges": [{"category": "WATCH", "label": "⏳ Watch (no prices)"}],
-                    "recommendation": "No", "reason": "",
-                    "as_of": as_of_iso, "run_id": job.run_id,
-                })
+
+            # --- as_of slicing for EOD/backfills ---
+            df_eff = df
+            if as_of_date:
+                try:
+                    cut = pd.to_datetime(as_of_date).date()
+                    if not df.empty:
+                        mask = pd.Series(df.index.date <= cut, index=df.index)
+                        df_eff = df.loc[mask[mask].index]
+                except Exception:
+                    df_eff = df  # fallback
+
+            # --- REQUIRED FIX: skip symbols with no prices to avoid Pydantic last=None errors ---
+            if df_eff is None or df_eff.empty:
+                log.warning("no prices for symbol; skipping row", extra={"symbol": sym, "as_of": as_of_iso})
                 continue
 
-            ind = _compute_indicators(df)
+            ind = _compute_indicators(df_eff)
             row = _make_scores_row(
                 symbol=sym, name=q.get("name"), sector=q.get("sector"),
-                as_of_iso=as_of_iso, run_id=job.run_id, df=df, ind=ind
+                as_of_iso=as_of_iso, run_id=job.run_id, df=df_eff, ind=ind
             )
             rows.append(row)
 
-        # Write the single consolidated dataset: scores/ (schema v2)
+        # ------------------- WRITE SNAPSHOTS (new layout only) -------------------
         datasets.write_schema_version("scores", 2)
-        w = datasets.begin_atomic_write("scores", job.run_id)
+        rows_written = len(rows)
         try:
-            w.write_df(pa.Table.from_pylist(rows))
-            w.commit()
-            rows_written = len(rows)
-            snapshot_path = str((datasets.get_parquet_root() / "scores" / f"run_id={job.run_id}").resolve())
+            if as_of_date:
+                # DAILY: one snapshot per trading day; writer skips if already committed
+                w_daily = datasets.begin_atomic_write_scores_daily(as_of_date, job.run_id)
+                w_daily.write_df(pa.Table.from_pylist(rows))
+                w_daily.commit()
+                snapshot_path = str(
+                    (datasets.get_parquet_root()
+                     / "scores" / "daily"
+                     / f"as_of={as_of_date}"
+                     / f"run_id={job.run_id}").resolve()
+                )
+                log.info("scores daily written", extra={"as_of": as_of_date, "run_id": job.run_id})
+            else:
+                # INTRADAY: many runs per day (partitioned by date/run_id)
+                today_str = _utcnow_aware().date().strftime("%Y-%m-%d")
+                w_intra = datasets.begin_atomic_write_scores_intraday(today_str, job.run_id)
+                w_intra.write_df(pa.Table.from_pylist(rows))
+                w_intra.commit()
+                snapshot_path = str(
+                    (datasets.get_parquet_root()
+                     / "scores" / "intraday"
+                     / f"date={today_str}"
+                     / f"run_id={job.run_id}").resolve()
+                )
+                log.info("scores intraday written", extra={"date": today_str, "run_id": job.run_id})
         except Exception:
-            try:
-                w.abort()
-            except Exception:
-                pass
+            log.exception("snapshot write failed", extra={"run_id": job.run_id})
             raise
+
+        # ------------------- END WRITES -------------------
 
         # Mark success + write history (best-effort)
         jobs.complete_run(run_id=job.run_id, status="SUCCEEDED", error=None)
