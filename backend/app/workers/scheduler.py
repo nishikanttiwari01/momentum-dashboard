@@ -12,14 +12,16 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 import uuid
 import logging
-import time  # <-- added
+import time
+from pathlib import Path  # <-- added
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.core import config
 from app.core.db import get_session
 from app.services.screening_service import run_screening
-from app.workers.jobs import post_scan_jobs  # <-- added import
+from app.workers.jobs import post_scan_jobs
+from app.repos.parquet import datasets  # <-- added (for root + target hint)
 
 log = logging.getLogger(__name__)
 _scheduler: Optional[BackgroundScheduler] = None
@@ -40,34 +42,72 @@ def _run_once(universe: Optional[str]) -> None:
     - Softly passes 'universe' in payload (Phase-10-ready, non-breaking).
     """
     start_ts = time.perf_counter()
+
+    # ---- TRUTH LOGS: where will intraday write land (hint) ----
+    try:
+        root = datasets.get_parquet_root().resolve()  # writer default is ./parquet unless PARQUET_ROOT is set
+        date_utc = datetime.now(timezone.utc).date().isoformat()  # run_screening uses UTC for intraday date
+        log.info(
+            "scheduler_planned_intraday",
+            extra={
+                "universe": universe or "default",
+                "parquet_root": str(root),
+                "date_utc": date_utc,
+                "target_hint": f"{root}/scores/intraday/date={date_utc}/run_id=<to-be-assigned>",
+            },
+        )
+    except Exception:
+        pass
+
     log.info("scheduled scan starting", extra={"universe": universe or "default"})
 
     # Acquire a SQLAlchemy session from the existing dependency
-    gen = get_session()            # generator that yields a Session and closes in finally
-    s = next(gen)                  # borrow a session from the dependency
+    gen = get_session()
+    s = next(gen)
     try:
         payload: Dict[str, Any] = {}
         if universe:
-            payload["universe"] = universe  # accepted and soft-validated by the service (Phase-10)
-        # Idempotency key ensures replay safety in jobs_repo (same semantics as /scan)
+            payload["universe"] = universe
         key = _now_key()
+
+        # ---- call the same service as /scan ----
         result, created = run_screening(session=s, key=key, payload=payload)
+
+        # Immediate truth log: run result and final snapshot path (if any)
         log.info(
-            "scheduled scan completed",
+            "scheduled_scan_completed",
             extra={
                 "run_id": result.run_id,
-                "was_created": created,  # renamed from 'created'
+                "was_created": created,
                 "status": result.status,
                 "universe": universe or "default",
+                "snapshot_path": result.snapshot_path,  # set by run_screening to new layout paths
             },
         )
 
-        # ---- NEW: run post-scan side effects (alerts, etc.) ----
+        # Best-effort listing of parquet parts at the target (helps confirm "actually wrote")
+        try:
+            if result.snapshot_path:
+                tgt = Path(result.snapshot_path)
+                if tgt.exists():
+                    files = [p.name for p in tgt.glob("*.parquet")]
+                    log.info("scheduler_postcommit_listing", extra={"target": str(tgt), "files": files})
+                else:
+                    # If daily was immutable no-op or path differs, at least show the parent date/as_of folder contents
+                    parent = tgt.parent if tgt.parent else None
+                    files = [p.name for p in parent.glob("*.parquet")] if (parent and parent.exists()) else []
+                    log.warning(
+                        "scheduler_postcommit_target_missing",
+                        extra={"target": str(tgt), "parent": str(parent) if parent else None, "parent_files": files},
+                    )
+        except Exception as e:
+            log.warning("scheduler_postcommit_listing_error", extra={"err": str(e)})
+
+        # ---- post-scan side effects (alerts, etc.) ----
         try:
             post_scan_jobs(result.run_id)
         except Exception as e:
             log.exception("post-scan jobs failed for run_id=%s: %s", result.run_id, e)
-        # ---------------------------------------------------------
 
     except Exception as exc:
         log.exception("scheduled scan failed: %s", exc)
@@ -126,11 +166,24 @@ def start_if_enabled() -> Optional[BackgroundScheduler]:
 
     sch.start()
     _scheduler = sch
-    log.info(
-        "scheduler: started (every %s min) universe=%s",
-        interval,
-        sched_universe or "<default>",
-    )
+
+    # Truth log: scheduler config + resolved parquet root once.
+    try:
+        root = datasets.get_parquet_root().resolve()
+        log.info(
+            "scheduler_started",
+            extra={
+                "interval_min": interval,
+                "universe": sched_universe or "<default>",
+                "parquet_root": str(root),
+            },
+        )
+    except Exception:
+        log.info(
+            "scheduler_started",
+            extra={"interval_min": interval, "universe": sched_universe or "<default>"},
+        )
+
     return _scheduler
 
 

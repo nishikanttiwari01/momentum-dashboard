@@ -67,6 +67,11 @@ def _as_of_date_str(as_of_val: Optional[str]) -> Optional[str]:
 def _ensure_parquet_root() -> None:
     root = datasets.get_parquet_root()
     root.mkdir(parents=True, exist_ok=True)
+    # truthy, once per process (datasets.py also logs root; duplicating here is intentional for service logs)
+    try:
+        log.info("parquet_root_resolved(service)", extra={"root": str(root.resolve())})
+    except Exception:
+        pass
 
 
 def _history_df(symbol: str, period: str = "400d") -> pd.DataFrame:
@@ -425,12 +430,10 @@ def _make_scores_row(
 
 def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, Any]) -> Tuple[RunDetail, bool]:
     """
-    Phase 11 → Phase 12 bridge:
-      - Keep legacy single dataset write to scores/run_id=...
-      - ALSO write to new layout:
-          * daily/as_of=YYYY-MM-DD/run_id=...  (when payload.as_of present)
-          * intraday/date=YYYY-MM-DD/run_id=... (otherwise)
-      - When as_of is provided, slice price history to <= as_of for correct EOD.
+    NEW: Write to the **new layout only** (no legacy to avoid confusion):
+      * daily/as_of=YYYY-MM-DD/run_id=...
+      * intraday/date=YYYY-MM-DD/run_id=...
+    When as_of is provided, slice price history to <= as_of for correct EOD.
     """
     _ensure_parquet_root()
     jobs = SqlJobsRepo(session)
@@ -487,12 +490,20 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             or (getattr(cfg.scheduler, "universe", None) or "").strip().upper()
             or (getattr(cfg.screener, "default_universe", "NIFTY50") or "").strip().upper()
         )
+        try:
+            log.info("screening_start", extra={"run_id": job.run_id, "as_of": as_of_iso, "universe": resolved_universe})
+        except Exception:
+            pass
 
         # Load universe
         symbols, _ = UniverseRepo().list_symbols(resolved_universe, page=1, per_page=999_999)
         if not symbols:
             symbols = list(_FALLBACK_NSE)
         symbols_processed = len(symbols)
+        try:
+            log.info("screening_universe", extra={"count": symbols_processed, "sample": symbols[:5]})
+        except Exception:
+            pass
 
         # Name & sector via YahooAdapter (best-effort)
         ya = YahooAdapter()
@@ -518,7 +529,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 except Exception:
                     df_eff = df  # fallback
 
-            # --- REQUIRED FIX: skip symbols with no prices to avoid Pydantic last=None errors ---
+            # --- skip symbols with no prices ---
             if df_eff is None or df_eff.empty:
                 log.warning("no prices for symbol; skipping row", extra={"symbol": sym, "as_of": as_of_iso})
                 continue
@@ -530,12 +541,27 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             )
             rows.append(row)
 
-        # ------------------- WRITE SNAPSHOTS (new layout only) -------------------
-        datasets.write_schema_version("scores", 2)
         rows_written = len(rows)
         try:
+            log.info("scores_rows_built", extra={"rows": rows_written})
+        except Exception:
+            pass
+
+        # ------------------- WRITE SNAPSHOTS (new layout only) -------------------
+        datasets.write_schema_version("scores", 2)
+        try:
+            root = datasets.get_parquet_root().resolve()
+        except Exception:
+            root = None
+
+        try:
             if as_of_date:
-                # DAILY: one snapshot per trading day; writer skips if already committed
+                # DAILY
+                target = (root / "scores" / f"daily" / f"as_of={as_of_date}" / f"run_id={job.run_id}") if root else None
+                log.info(
+                    "scores_daily_precommit",
+                    extra={"as_of": as_of_date, "run_id": job.run_id, "rows": rows_written, "target": str(target) if target else None}
+                )
                 w_daily = datasets.begin_atomic_write_scores_daily(as_of_date, job.run_id)
                 w_daily.write_df(pa.Table.from_pylist(rows))
                 w_daily.commit()
@@ -545,10 +571,22 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                      / f"as_of={as_of_date}"
                      / f"run_id={job.run_id}").resolve()
                 )
-                log.info("scores daily written", extra={"as_of": as_of_date, "run_id": job.run_id})
+                # post-commit quick listing
+                try:
+                    tgt = (datasets.get_parquet_root() / "scores" / "daily" / f"as_of={as_of_date}" / f"run_id={job.run_id}")
+                    files = [p.name for p in tgt.glob("*.parquet")] if tgt.exists() else []
+                    log.info("scores_daily_postcommit", extra={"target": str(tgt), "files": files})
+                except Exception:
+                    pass
+                log.info("scores daily written", extra={"as_of": as_of_date, "run_id": job.run_id, "rows": rows_written})
             else:
-                # INTRADAY: many runs per day (partitioned by date/run_id)
+                # INTRADAY
                 today_str = _utcnow_aware().date().strftime("%Y-%m-%d")
+                target = (root / "scores" / f"intraday" / f"date={today_str}" / f"run_id={job.run_id}") if root else None
+                log.info(
+                    "scores_intraday_precommit",
+                    extra={"date": today_str, "run_id": job.run_id, "rows": rows_written, "target": str(target) if target else None}
+                )
                 w_intra = datasets.begin_atomic_write_scores_intraday(today_str, job.run_id)
                 w_intra.write_df(pa.Table.from_pylist(rows))
                 w_intra.commit()
@@ -558,7 +596,14 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                      / f"date={today_str}"
                      / f"run_id={job.run_id}").resolve()
                 )
-                log.info("scores intraday written", extra={"date": today_str, "run_id": job.run_id})
+                # post-commit quick listing
+                try:
+                    tgt = (datasets.get_parquet_root() / "scores" / "intraday" / f"date={today_str}" / f"run_id={job.run_id}")
+                    files = [p.name for p in tgt.glob("*.parquet")] if tgt.exists() else []
+                    log.info("scores_intraday_postcommit", extra={"target": str(tgt), "files": files})
+                except Exception:
+                    pass
+                log.info("scores intraday written", extra={"date": today_str, "run_id": job.run_id, "rows": rows_written})
         except Exception:
             log.exception("snapshot write failed", extra={"run_id": job.run_id})
             raise

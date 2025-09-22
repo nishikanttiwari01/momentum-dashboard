@@ -5,8 +5,11 @@ cd backend
 set APP_DISABLE_ALEMBIC=1
 uvicorn app.main:app --reload
 
-set APP_DISABLE_ALEMBIC=0
-python run_uvicorn.py  # temporarily change reload=True -> False in the file
+### New way to start application backend
+cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
+.venv\Scripts\activate
+set APP_DISABLE_ALEMBIC=1
+python run_uvicorn.py
 
 ### Option A: run Alembic once, then start dev
 set APP_DISABLE_ALEMBIC=0
@@ -18,11 +21,7 @@ set APP_DISABLE_ALEMBIC=1
 
 (.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>alembic merge -m "Merge heads 20250921_01 & 20250912_0002" 20250921_01 20250912_0002
 
-### New way to start application backend
-cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
-.venv\Scripts\activate
-set APP_DISABLE_ALEMBIC=1
-python run_uvicorn.py
+
 - **Swagger docs:** http://localhost:8000/docs
 
 

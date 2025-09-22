@@ -15,6 +15,9 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 import re
+import os
+import logging
+
 
 # Optional: if you also use Polars in other places
 try:
@@ -25,10 +28,44 @@ except Exception:  # pragma: no cover
 # -----------------------------
 # Configuration helpers
 # -----------------------------
+log = logging.getLogger("app.repos.parquet")
+
+# Log the resolved parquet root once per process (for easy diagnostics)
+_ROOT_LOGGED_ONCE = False
+def _log_resolved_root_once(p: Path) -> None:
+    global _ROOT_LOGGED_ONCE
+    if not _ROOT_LOGGED_ONCE:
+        log.info("parquet_root_resolved", extra={"root": str(p)})
+        _ROOT_LOGGED_ONCE = True
+
+def _parquet_root_abs() -> Path:
+    """
+    Resolve the parquet root:
+      1) If PARQUET_ROOT env is set → use it (expanded + absolute).
+      2) Else anchor to the repository's backend dir:
+         <repo>/backend/parquet   (derived from this file's location)
+    This avoids accidental paths like 'backend/backend/parquet' when the process
+    starts with CWD=backend/.
+    """
+    env_root = os.getenv("PARQUET_ROOT")
+    if env_root:
+        p = Path(env_root).expanduser().resolve()
+    else:
+        # datasets.py is at backend/app/repos/parquet/datasets.py
+        backend_dir = Path(__file__).resolve().parents[3]  # .../backend
+        p = (backend_dir / "parquet").resolve()
+
+    if not p.exists():
+        # Don't mkdir here; writers will create as needed. Just log once.
+        try:
+            log.info("parquet root (resolved; will mkdir on write if missing)", extra={"root": str(p)})
+        except Exception:
+            pass
+    return p
 
 def get_parquet_root() -> Path:
-    # Allow override via env; default to ./parquet
-    return Path(os.getenv("PARQUET_ROOT", "./parquet")).resolve()
+    # Single source of truth
+    return _parquet_root_abs()
 
 # CHANGED: Register Phase-11 enriched dataset "scores_v2" alongside existing tables.
 # Using a set keeps lookups/validation simple.
@@ -155,6 +192,19 @@ class AtomicWriter:
         self.parts_written = 0
         self.rows_written = 0
         self._closed = False
+        # Minimal, high-signal log
+        try:
+            log.info(
+                "writer_init",
+                extra={
+                    "table": table,
+                    "run_id": run_id,
+                    "final_dir": str(self.final_dir),
+                    "root": str(self.root),
+                },
+            )
+        except Exception:
+            pass
 
     def write_df(self, df_or_tab: Union[pa.Table, "pl.DataFrame", "pd.DataFrame"]) -> None:
         assert not self._closed, "Writer closed"
@@ -211,6 +261,10 @@ class AtomicWriter:
         # Safety: must not already exist
         if self.final_dir.exists():
             # If someone already wrote it, treat as success and discard tmp
+            try:
+                log.info("writer_commit_noop_exists", extra={"target": str(self.final_dir)})
+            except Exception:
+                pass
             self.abort()
             return
 
@@ -222,14 +276,34 @@ class AtomicWriter:
         with FileLock(lock_path):
             if self.final_dir.exists():
                 # Another writer beat us; discard tmp
+                try:
+                    log.info("writer_commit_noop_raced", extra={"target": str(self.final_dir)})
+                except Exception:
+                    pass
                 self.abort()
                 return
             # Move tmp to final (atomic on same filesystem)
             os.replace(self.tmp_dir, self.final_dir)
+            try:
+                log.info(
+                    "writer_commit_done",
+                    extra={
+                        "target": str(self.final_dir),
+                        "rows": int(self.rows_written),
+                        "parts": int(self.parts_written),
+                    },
+                )
+            except Exception:
+                pass
 
 def begin_atomic_write(table: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter:
     assert table in TABLES, f"Unknown table {table}"
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
+    # Minimal trace for legacy single-partition writes
+    try:
+        log.info("begin_atomic_write", extra={"table": table, "run_id": run_id, "root": str(get_parquet_root())})
+    except Exception:
+        pass
     return AtomicWriter(table, run_id, cfg or WriterConfig())
 
 # -----------------------------
@@ -273,6 +347,11 @@ class _NullWriter:
         return
 
     def commit(self) -> None:
+        # Trace no-op commits explicitly so it's visible in logs
+        try:
+            log.info("writer_commit_noop_daily_immutable", extra={"target": str(self.final_dir)})
+        except Exception:
+            pass
         return
 
     def abort(self) -> None:
@@ -285,11 +364,19 @@ def begin_atomic_write_scores_daily(as_of: str, run_id: str, cfg: Optional[Write
     """
     as_of_root = scores_daily_dir(as_of)
     if _has_committed_run_under(as_of_root):
+        try:
+            log.info("scores_daily_begin_noop", extra={"as_of": as_of, "target": str(as_of_root)})
+        except Exception:
+            pass
         # Daily is immutable unless a future "force" path is used
         return _NullWriter(final_dir=as_of_root)
 
     final_dir = as_of_root / f"run_id={run_id}"
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
+    try:
+        log.info("scores_daily_begin", extra={"as_of": as_of, "run_id": run_id, "target": str(final_dir)})
+    except Exception:
+        pass
     return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
 
 def begin_atomic_write_scores_intraday(date_str: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter:
@@ -298,6 +385,10 @@ def begin_atomic_write_scores_intraday(date_str: str, run_id: str, cfg: Optional
     Multiple runs per day are allowed.
     """
     final_dir = scores_intraday_run_dir(date_str, run_id)
+    try:
+        log.info("scores_intraday_begin", extra={"date": date_str, "run_id": run_id, "target": str(final_dir)})
+    except Exception:
+        pass
     return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
 
 def latest_intraday(date_str: str) -> Optional[str]:

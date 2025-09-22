@@ -1,7 +1,10 @@
+# backend/app/repos/parquet/scores_repo.py
 from __future__ import annotations
 from typing import Dict, Any, Iterable, List, Optional, Tuple
 
 from datetime import datetime, timezone
+import os
+import logging
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -9,13 +12,17 @@ import pyarrow.compute as pc
 from app.repos.parquet import datasets
 
 # ---------------------------------------------------------------------------
-# Phase-11 → Phase-12 bridge:
+# Phase-11 → Phase-12 reader bridge (minimal changes, better logging):
 #   - Prefer latest INTRADAY (today) when run_id is not provided.
 #   - Otherwise fall back to latest DAILY (≤ today).
-#   - Else fall back to legacy 'scores/run_id=*' latest snapshot.
-#   - If run_id is explicitly given, continue to read legacy 'scores' (unchanged).
+#   - Legacy fallback is NOW DISABLED by default to avoid confusion.
+#       * Set ALLOW_LEGACY_SCORES_READ=1 to re-enable legacy fallback.
+#   - If run_id is explicitly given, continue to read legacy 'scores/run_id=*'.
 #   - Enrich name/sector from 'universe/' if missing.
 # ---------------------------------------------------------------------------
+
+log = logging.getLogger("app.repos.parquet.scores_repo")
+_ALLOW_LEGACY_FALLBACK = os.getenv("ALLOW_LEGACY_SCORES_READ", "0").lower() in ("1", "true", "yes")
 
 def _today_local_str() -> str:
     # Keep minimal dependencies: use UTC date as neutral boundary for now.
@@ -24,7 +31,7 @@ def _today_local_str() -> str:
 
 
 def _resolve_run_legacy(as_of_str: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
-    """Legacy single-dataset resolver (kept for fallback)."""
+    """Legacy single-dataset resolver (kept but gated by env toggle)."""
     rid = datasets.latest_snapshot("scores")
     as_of = None
     return rid, as_of
@@ -36,30 +43,34 @@ def _resolve_snapshot(as_of_str: Optional[str]) -> Tuple[str, Dict[str, str], Op
 
     Returns:
       (kind, locator, resolved_run_id, resolved_as_of)
-      kind ∈ {"intraday", "daily", "legacy"}
+      kind ∈ {"intraday", "daily", "legacy", "none"}
       locator: {"date": "...", "run_id": "..."} for intraday,
                {"as_of": "..."} for daily,
-               {"run_id": "..."} for legacy.
+               {"run_id": "..."} for legacy,
+               {} for none.
     """
     # 1) Prefer latest intraday for today
     today = _today_local_str()
     rid_intra = datasets.latest_intraday(today)
     if rid_intra:
+        log.info("scores_resolve_snapshot", extra={"kind": "intraday", "date": today, "run_id": rid_intra})
         return "intraday", {"date": today, "run_id": rid_intra}, rid_intra, None
 
     # 2) Else choose latest daily at or before today
     as_of = datasets.latest_daily_at_or_before(today)
     if as_of:
-        # We can return as_of; run_id is available inside the files but not required for scanning.
+        log.info("scores_resolve_snapshot", extra={"kind": "daily", "as_of": as_of})
+        # We can return as_of; run_id is embedded in files but not required for scanning.
         return "daily", {"as_of": as_of}, None, as_of
 
-    # 3) Else fall back to legacy
+    # 3) Else (optionally) fall back to legacy
     rid_legacy, as_of_legacy = _resolve_run_legacy(as_of_str)
-    if rid_legacy:
+    if rid_legacy and _ALLOW_LEGACY_FALLBACK:
+        log.info("scores_resolve_snapshot", extra={"kind": "legacy", "run_id": rid_legacy})
         return "legacy", {"run_id": rid_legacy}, rid_legacy, as_of_legacy
 
-    # No data at all
-    return "legacy", {"run_id": None}, None, None
+    log.warning("scores_resolve_snapshot", extra={"kind": "none"})
+    return "none", {}, None, None
 
 
 def _arrow_filter(tab: pa.Table, filters: Dict[Tuple[str, str], Any]) -> pa.Table:
@@ -179,8 +190,8 @@ class ScoresRepo:
     """
     Screener reader with intraday-first, daily-fallback resolution:
       - When run_id is given → read legacy 'scores/run_id=*' (back-compat).
-      - When run_id is None → prefer latest intraday (today), else latest daily (≤ today),
-        else legacy latest snapshot.
+      - When run_id is None → prefer latest intraday (today), else latest daily (≤ today).
+      - Legacy fallback is disabled by default to avoid confusion (set ALLOW_LEGACY_SCORES_READ=1 to re-enable).
       - Enriches name/sector from universe if missing in snapshot.
       - Canonicalizes 'score' and badges.
     """
@@ -196,36 +207,59 @@ class ScoresRepo:
         per_page: int,
         columns: Optional[Iterable[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int, Optional[str], Optional[str]]:
+        # 0) entry log
+        try:
+            log.info("scores_read_begin", extra={
+                "explicit_run_id": run_id, "as_of": as_of_str,
+                "filters": list(filters.keys()) if filters else None,
+                "sort": sort, "page": page, "per_page": per_page
+            })
+        except Exception:
+            pass
+
         # 1) Resolve what to read
         resolved_as_of: Optional[str] = None
 
         if run_id:
             # Back-compat path: legacy single-dataset read
+            log.info("scores_read_resolve", extra={"kind": "legacy(explicit)", "run_id": run_id})
             tab = datasets.scan("scores", run_id=run_id, columns=None)
             rid_used = run_id
         else:
             kind, locator, rid_used, resolved_as_of = _resolve_snapshot(as_of_str)
+            log.info("scores_read_resolve", extra={"kind": kind, "locator": locator})
 
             if kind == "intraday":
                 tab = datasets.scan_scores_intraday(locator["date"], locator["run_id"], columns=None)
             elif kind == "daily":
                 tab = datasets.scan_scores_daily(locator["as_of"], columns=None)
-            else:
-                # legacy fallback
+            elif kind == "legacy":
                 rid = locator.get("run_id")
                 if rid is None:
+                    log.warning("scores_read_no_legacy_snapshot")
                     return [], 0, None, None
                 tab = datasets.scan("scores", run_id=rid, columns=None)
                 rid_used = rid
+            else:
+                # none
+                log.warning("scores_read_no_snapshot_available")
+                return [], 0, None, None
 
-            # If daily read and we can extract an embedded run_id from metadata later, we'll leave rid_used as-is.
-            # For API contract we return (rid_used, resolved_as_of); rid_used may be None for daily until we inspect rows.
+        # 2) Raw load count
+        try:
+            log.info("scores_read_loaded", extra={"rows": tab.num_rows, "cols": tab.column_names})
+        except Exception:
+            pass
 
-        # 2) Filter first
+        # 3) Filter first
         tab = _arrow_filter(tab, filters)
         total = tab.num_rows
+        try:
+            log.info("scores_read_after_filter", extra={"rows": total})
+        except Exception:
+            pass
 
-        # 3) Capture as_of (first row)
+        # 4) Capture as_of (first row)
         as_of_value = None
         if total > 0 and "as_of" in tab.column_names:
             try:
@@ -233,16 +267,16 @@ class ScoresRepo:
             except Exception:
                 as_of_value = None
 
-        # 4) Projection
+        # 5) Projection
         tab = _ensure_projection(tab, columns)
 
-        # 5) Sort + slice
+        # 6) Sort + slice
         tab = _arrow_sort_slice(tab, sort, page, per_page)
 
-        # 6) Universe enrichment
+        # 7) Universe enrichment
         uni_meta = _load_universe_meta()
 
-        # 7) Materialize rows + aliasing/derivations
+        # 8) Materialize rows + aliasing/derivations
         out: List[Dict[str, Any]] = []
         arrays = {name: tab[name] for name in tab.column_names}
         for i in range(tab.num_rows):
@@ -308,19 +342,22 @@ class ScoresRepo:
 
             # Capture run_id if we don't have one yet (daily path)
             nonlocal_rid = row.get("run_id")
-            if not run_id and nonlocal_rid and not (isinstance(nonlocal_rid, float) and pa.scalar(nonlocal_rid).is_valid is False):
-                # trust embedded run_id if present in rows
+            if not run_id and isinstance(nonlocal_rid, str) and nonlocal_rid:
                 rid_used = rid_used or nonlocal_rid
 
             out.append(row)
+
         # Drop rows that violate API contract (e.g., last must be a number)
-        # Keeps behavior stable without touching pydantic models.
         out = [r for r in out if isinstance(r.get("last"), (int, float))]
         total = len(out)
 
-
         if resolved_as_of is None:
             resolved_as_of = as_of_value
+
+        try:
+            log.info("scores_read_complete", extra={"total": total, "rid_used": rid_used, "as_of": resolved_as_of})
+        except Exception:
+            pass
 
         return out, total, rid_used, resolved_as_of
 
@@ -329,27 +366,42 @@ class ScoresRepo:
         Return the latest available snapshot:
           - intraday(today) if present,
           - else daily(≤ today),
-          - else legacy latest.
+          - else (optionally) legacy latest if ALLOW_LEGACY_SCORES_READ=1.
         """
         today = _today_local_str()
         rid_intra = datasets.latest_intraday(today)
         if rid_intra:
+            log.info("scores_latest_run", extra={"kind": "intraday", "date": today, "run_id": rid_intra})
             return rid_intra, None
 
         as_of = datasets.latest_daily_at_or_before(today)
         if as_of:
+            log.info("scores_latest_run", extra={"kind": "daily", "as_of": as_of})
             # We don't need run_id to identify daily partitions; report as_of.
             return None, as_of
 
-        return _resolve_run_legacy(None)
+        rid_legacy, as_of_legacy = _resolve_run_legacy(None)
+        if rid_legacy and _ALLOW_LEGACY_FALLBACK:
+            log.info("scores_latest_run", extra={"kind": "legacy", "run_id": rid_legacy})
+            return rid_legacy, as_of_legacy
+
+        log.warning("scores_latest_run", extra={"kind": "none"})
+        return None, None
 
     def read_one(self, *, symbol: str, run_id: str) -> Optional[Dict[str, Any]]:
-        """Return a single row for `symbol` using legacy 'scores' path (back-compat)."""
+        """Return a single row for `symbol` using legacy 'scores' path (explicit run_id)."""
+        try:
+            log.info("scores_read_one_begin", extra={"symbol": symbol, "run_id": run_id})
+        except Exception:
+            pass
+
         tab = datasets.scan("scores", run_id=run_id, columns=None)
         if "symbol" not in tab.column_names or tab.num_rows == 0:
+            log.warning("scores_read_one_empty", extra={"symbol": symbol, "run_id": run_id})
             return None
         t2 = tab.filter(pc.equal(tab["symbol"], symbol))
         if t2.num_rows == 0:
+            log.warning("scores_read_one_not_found", extra={"symbol": symbol, "run_id": run_id})
             return None
         row = {name: t2[name][0].as_py() for name in t2.column_names}
 
@@ -380,4 +432,5 @@ class ScoresRepo:
                 out_b.append({"code": "near_uc", "text": "Near UC", "color": "warning"})
             row["badges"] = out_b
 
+        log.info("scores_read_one_ok", extra={"symbol": symbol, "run_id": run_id})
         return row

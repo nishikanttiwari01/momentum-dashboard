@@ -9,31 +9,29 @@ from zoneinfo import ZoneInfo
 
 log = logging.getLogger("app.services.detail")
 
-
 _TZ_DEFAULT = "Asia/Singapore"
 
 def _as_of_from_run_id(run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
-    """
-    Parse run_id like 'YYYYMMDDHHMMSS' to a timezone-aware datetime.
-    Safe fallback to 'now' if parsing fails.
-    """
+    """Parse 'YYYYMMDDHHMMSS' run_id to tz-aware datetime; fallback to now."""
     try:
         dt = datetime.strptime((run_id or "")[:14], "%Y%m%d%H%M%S")
     except Exception:
         return datetime.now(ZoneInfo(tz_name))
     return dt.replace(tzinfo=ZoneInfo(tz_name))
 
-def _coerce_as_of(value, *, run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
+def _coerce_as_of(value, *, run_id: Optional[str], tz_name: str = _TZ_DEFAULT) -> datetime:
     """
     Accepts datetime/date/str/None and returns a tz-aware datetime.
     - date -> midnight local tz
     - 'YYYY-MM-DD' -> midnight local tz
     - naive datetime -> attach local tz
     - aware datetime -> return as-is
-    - None/'' -> derive from run_id
+    - None/'' -> derive from run_id (if provided) else 'now'
     """
     if value in (None, "", " "):
-        return _as_of_from_run_id(run_id, tz_name)
+        if run_id:
+            return _as_of_from_run_id(run_id, tz_name)
+        return datetime.now(ZoneInfo(tz_name))
 
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=ZoneInfo(tz_name))
@@ -41,24 +39,21 @@ def _coerce_as_of(value, *, run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime
     if isinstance(value, date):
         return datetime(value.year, value.month, value.day, tzinfo=ZoneInfo(tz_name))
 
-    # string cases
     s = str(value).strip()
-    # Try ISO first
     try:
         dt = datetime.fromisoformat(s)
         return dt if dt.tzinfo else dt.replace(tzinfo=ZoneInfo(tz_name))
     except Exception:
         pass
 
-    # Try YYYY-MM-DD
     try:
         d = datetime.strptime(s, "%Y-%m-%d").date()
         return datetime(d.year, d.month, d.day, tzinfo=ZoneInfo(tz_name))
     except Exception:
         pass
 
-    # Last resort: from run_id
-    return _as_of_from_run_id(run_id, tz_name)
+    # Last resort
+    return _as_of_from_run_id(run_id or "", tz_name)
 
 
 # Optional external rule engine (kept)
@@ -94,9 +89,16 @@ class DetailDeps:
 
 
 def _resolve_run_id(symbol: str, run_id: Optional[str], deps: DetailDeps) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Resolve a run context **without any legacy fallback**:
+      1) Use pinned run_id if available.
+      2) Else use repo.latest_run() (which prefers intraday(today) → daily(≤today)).
+    Returns (run_id, as_of). For daily snapshots, run_id may be None and as_of non-empty.
+    """
     rid = (run_id or "").strip() or None
     as_of: Optional[str] = None
 
+    # 1) Pin (if present)
     if not rid and deps.snapshot_pins_repo:
         try:
             row = None
@@ -110,27 +112,43 @@ def _resolve_run_id(symbol: str, run_id: Optional[str], deps: DetailDeps) -> Tup
                 rid = row.get("pinned_run_id") or row.get("run_id")
             elif row is not None and hasattr(row, "pinned_run_id"):
                 rid = getattr(row, "pinned_run_id")
+            if rid:
+                log.info("resolve_run_id: pin HIT for %s → %s", symbol, rid)
         except Exception:
             log.exception("resolve_run_id: pin lookup failed for %s", symbol)
 
+    # 2) Latest new-layout snapshot (intraday → daily)
     if not rid and deps.scores_repo and hasattr(deps.scores_repo, "latest_run"):
         try:
             rid2, as_of2 = deps.scores_repo.latest_run()
             rid = rid or rid2
             as_of = as_of2 or as_of
+            log.info("resolve_run_id: latest_run() → run_id=%s as_of=%s", rid, as_of)
         except Exception:
             log.exception("resolve_run_id: latest_run() failed")
 
-    log.info("resolve_run_id: symbol=%s → rid=%s as_of=%s", symbol, rid, as_of)
-    if not rid:
+    log.info("resolve_run_id: final symbol=%s → rid=%s as_of=%s", symbol, rid, as_of)
+    if not rid and not as_of:
         return None, None
     return rid, as_of
 
 
-def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str, Any]:
+def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Dict[str, Any]:
+    """
+    Build drawer detail using **new parquet layout only**:
+      - If run_id is provided: try intraday at that run_id for the symbol; if not found, fall back to daily (as_of).
+      - If run_id is None: rely on repo.new-layout resolution (intraday(today) → daily(≤today)) for the symbol.
+    """
     sym_in = (symbol or "").upper()
-    row, canon = _read_row_with_symbol_normalization(deps.scores_repo, run_id, sym_in)
-    log.info("build: symbol=%s run_id=%s canon=%s has_row=%s", sym_in, run_id, canon, bool(row))
+    # Read one row using the repo's new-layout resolver (intraday → daily), filtered by symbol.
+    row, canon, rid_used, as_of_used = _read_row_new_layout(deps.scores_repo, sym_in, run_id_hint=run_id)
+
+    log.info(
+        "build: symbol=%s canon=%s req_run_id=%s kind=%s resolved_run_id=%s resolved_as_of=%s has_row=%s",
+        sym_in, canon, run_id,
+        ("intraday" if rid_used else ("daily" if as_of_used else "none")),
+        rid_used, as_of_used, bool(row)
+    )
     if row:
         log.info("build: row keys: %s", sorted(list(row.keys())))
 
@@ -140,7 +158,8 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
     sector_snapshot = (row or {}).get("sector")
     name = name_snapshot if name_snapshot not in (None, "") else sym_in
     sector = sector_snapshot if sector_snapshot is not None else ""
-    as_of = (row or {}).get("as_of") or ""
+    # Prefer the row's as_of; else the repo-resolved as_of; else None (fixed below)
+    as_of = (row or {}).get("as_of") or as_of_used or ""
     pct_today = _f((row or {}).get("pct_today") or (row or {}).get("change_pct"))
     score_raw = (row or {}).get("score")
     score = score_raw if isinstance(score_raw, int) else _f(score_raw)
@@ -177,7 +196,7 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
     atr_pct = indicators["atr14_pct"]
     atr_abs = price_now * (atr_pct / 100.0) if atr_pct else 0.0
 
-    # --- position (locked) ---
+    # --- positions (unchanged behavior) ---
     position: Dict[str, Any] = {
         "entry_price": 0.0,
         "entry_price_locked": 0.0,
@@ -221,7 +240,7 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
             "note": g("note") if g("note") is not None else "",
         })
 
-    # --- Entry Suggestion (when no locked entry) ---
+    # --- entry suggestion ---
     needs_suggestion = (position["entry_price"] == 0.0 and position["entry_price_locked"] == 0.0)
     entry_suggestion = _compute_entry_suggestion(
         price_now=price_now,
@@ -236,15 +255,13 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
         atr_abs=atr_abs,
     )
     log.info("build: entry_suggestion=%s", entry_suggestion)
-
     if needs_suggestion and entry_suggestion.get("price"):
         position["entry_price"] = float(entry_suggestion["price"])
 
-    # --- meters + next-action ---
+    # --- meters + next action (unchanged) ---
     meters, next_action = _compute_meters_and_next(price_now, indicators, position)
-    meters = _normalize_meters_to_contract(meters, indicators)  # ensure score_0_100 + thresholds
+    meters = _normalize_meters_to_contract(meters, indicators)
 
-    # Enforce numeric-only refs per model
     if isinstance(next_action, dict):
         refs = next_action.get("refs") or {}
         numeric_refs = {k: float(v) for k, v in refs.items() if _is_number(v)}
@@ -257,7 +274,7 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
 
     method_pill = f"EMA{int(indicators['ema_slow'])}" if indicators["ema_slow"] else "EMA"
 
-    # --- NEW contract blocks ---
+    # --- header/sparkline (unchanged) ---
     header = {
         "name": name,
         "sector": sector or None,
@@ -266,7 +283,9 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
         "badges": _header_badges_from_row(row or {}),
     }
 
-    prices_30d, ema10_30d = _sparkline_from_repos(deps.indicators_repo, canon or sym_in, run_id, row or {})
+    # We pass the most specific run_id we have (intraday rid if present), else original hint
+    run_id_for_spark = rid_used or (run_id or "")
+    prices_30d, ema10_30d = _sparkline_from_repos(deps.indicators_repo, canon or sym_in, run_id_for_spark, row or {})
     sparkline = {
         "prices_30d": prices_30d if prices_30d else [price_now],
         "ema10_30d": ema10_30d if ema10_30d else None,
@@ -312,23 +331,23 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
         "drawer_contract_version": "1.0.0",
         "scoring_rules_version": (row or {}).get("rules_version") or "scores_v2",
         "symbol": sym_in,
-        "trading_day": trading_day,
-        "intraday_numerator_used": False,
+        "trading_day": _derive_trading_day(as_of),
+        "intraday_numerator_used": bool(rid_used),  # mark if we used an intraday snapshot
         "header": header,
         "sparkline": sparkline,
         "score_breakdown": score_breakdown,
         "position": {
             "entry_price_locked": position.get("entry_price_locked") or None,
             "qty": position.get("qty") or None
-        } if position else None,
+        },
         "action_block": action_block,
         "meters": meters,
         "next_action": next_action,
         "alerts": {"suggestions": []},
         "diagnostics": diagnostics,
 
-        # Legacy fields (kept for FE compatibility)
-        "run_id": run_id,
+        # FE compatibility fields (kept)
+        "run_id": rid_used or (run_id or ""),
         "as_of": as_of,
         "name": name,
         "sector": sector,
@@ -343,193 +362,100 @@ def build_drawer_detail(symbol: str, run_id: str, deps: DetailDeps) -> Dict[str,
         "symbol_canon": (canon or sym_in),
     }
 
-    # --- ONLY CHANGE ADDED: ensure as_of is a tz-aware datetime (fixes empty-string/date-only cases) ---
-    payload["as_of"] = _coerce_as_of(payload.get("as_of"), run_id=run_id, tz_name=_TZ_DEFAULT)
+    # Ensure tz-aware 'as_of' (works for either intraday ISO or daily YYYY-MM-DD)
+    payload["as_of"] = _coerce_as_of(payload.get("as_of"), run_id=rid_used or run_id, tz_name=_TZ_DEFAULT)
 
-    log.info("build: payload %s@%s price=%s", sym_in, run_id, payload["price"])
+    log.info("build: payload %s@%s as_of=%s price=%s", sym_in, payload["run_id"], payload["as_of"], payload["price"])
     return payload
 
 
-# ---------- Helpers ----------
+# ---------- New-layout read helper (no legacy) ----------
 
-def _header_badges_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _read_row_new_layout(scores_repo: Any, symbol: str, *, run_id_hint: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], Optional[str]]:
     """
-    Map legacy parquet badges (code/text) to new header.Badge {category,label}.
+    Read exactly one row for `symbol` from **new layout**:
+      - If run_id_hint provided → try intraday(date=today, run_id=hint). If not found, fall back to daily (≤ today).
+      - If run_id_hint not provided → use repo's latest resolution (intraday(today) → daily(≤ today)).
+    Returns: (row, canonical_symbol, run_id_used, as_of_used)
     """
-    out: List[Dict[str, Any]] = []
-    badges = row.get("badges") or []
-    for b in badges:
-        code = (b or {}).get("code") or ""
-        text = (b or {}).get("text") or ""
-        category = None
-        c = code.upper()
-        if c in ("VERY_HIGH_BREAKOUT", "NEW_HIGH", "BREAKOUT", "HIGH_BREAKOUT"):
-            category = "BREAKOUT"
-        elif c in ("HIGH_MOMENTUM", "MOMENTUM"):
-            category = "MOMENTUM"
-        elif c in ("WATCH", "DATA_INCOMPLETE", "WATCH_INCOMPLETE"):
-            category = "WATCH"
-        elif c in ("IGNORE",):
-            category = "IGNORE"
-        # fallback by text
-        if category is None:
-            t = text.lower()
-            if "breakout" in t or "new 52w" in t:
-                category = "BREAKOUT"
-            elif "momentum" in t:
-                category = "MOMENTUM"
-            elif "watch" in t:
-                category = "WATCH"
-        if category:
-            out.append({"category": category, "label": text or code})
-    return out
+    if not scores_repo or not hasattr(scores_repo, "read") or not hasattr(scores_repo, "latest_run"):
+        log.warning("read_new_layout: repo missing required interfaces")
+        return None, None, None, None
 
-def _normalize_meters_to_contract(meters: Dict[str, Any], ind: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Ensure meters have the quantitative fields required by the model:
-    - score_0_100
-    - thresholds
-    Works with both upgraded domain meters and legacy meters.
-    """
-    def add_fields(kind: str, m: Dict[str, Any]) -> Dict[str, Any]:
-        m = dict(m or {})
-        # thresholds
-        if "thresholds" not in m:
-            m["thresholds"] = {"low_lt": 33, "medium_gte": 33, "high_gte": 66}
-        # score
-        if m.get("score_0_100") is None:
-            if kind == "risk":
-                atr = m.get("basis", {}).get("atr14_pct")
-                if atr is None:
-                    atr = m.get("basis", {}).get("atr_pct")
-                try:
-                    s = max(0.0, min(100.0, (float(atr) / 8.0) * 100.0)) if atr is not None else None
-                except Exception:
-                    s = None
-                m["score_0_100"] = int(round(s)) if s is not None else 0
-            else:
-                rsi = ind.get("rsi14"); adx = ind.get("adx14"); slope = ind.get("adx_slope_5") or 0.0
-                try:
-                    rsi_part = max(0.0, min(70.0, ((float(rsi) - 55.0) / 25.0) * 70.0)) if rsi is not None else 0.0
-                except Exception:
-                    rsi_part = 0.0
-                try:
-                    adx_part = max(0.0, min(30.0, ((float(adx) - 20.0) / 25.0) * 30.0)) if adx is not None else 0.0
-                except Exception:
-                    adx_part = 0.0
-                slope_bonus = 5.0 if (slope or 0.0) > 0 else 0.0
-                s = max(0.0, min(100.0, rsi_part + adx_part + slope_bonus))
-                m["score_0_100"] = int(round(s))
-        return m
+    # Candidates for symbol normalization
+    candidates = _symbol_candidates(symbol)
+    log.info("read_new_layout: candidates=%s", candidates)
 
-    meters = dict(meters or {})
-    meters["risk"] = add_fields("risk", meters.get("risk") or {"level":"Low","basis":{}})
-    meters["euphoria"] = add_fields("euphoria", meters.get("euphoria") or {"level":"Low","basis":{}})
-    return meters
-
-def _compute_entry_suggestion(
-    *,
-    price_now: float,
-    ema_fast_n: int,
-    ema_fast_val: float,
-    ema_slow_n: int,
-    ema_slow_val: float,
-    rsi14: float,
-    adx14: float,
-    relvol20: float,
-    prox52: float,
-    atr_abs: float,
-) -> Dict[str, Any]:
-    def strong_momo():
-        return (rsi14 >= 60 and adx14 >= 25) or (prox52 >= -1.0)
-
-    def extended():
-        gap = price_now - ema_slow_val
-        return ema_slow_val > 0 and (gap / ema_slow_val * 100.0) >= 3.0
-
-    if strong_momo() and price_now >= ema_slow_val:
-        if not extended():
-            return {"type": "BREAKOUT", "price": float(price_now), "low": None, "high": None,
-                    "reason": f"Price ≥ EMA{ema_slow_n} and near 52W high / strong momentum"}
-        else:
-            low = float(max(ema_fast_val - 0.5 * atr_abs, 0.0)) if atr_abs else float(ema_fast_val * 0.995)
-            high = float(ema_fast_val)
-            price = float(min(price_now, high))
-            return {"type": "PULLBACK", "price": price, "low": low, "high": high,
-                    "reason": f"Extended; prefer pullback to EMA{ema_fast_n}"}
-
-    if rsi14 >= 55 and adx14 >= 20 and price_now >= ema_slow_val * 0.99:
-        starter = float(max(ema_slow_val, price_now))
-        return {"type": "STARTER", "price": starter, "low": None, "high": None,
-                "reason": f"Momentum building; starter near EMA{ema_slow_n}"}
-
-    return {"type": "WATCH", "price": float(price_now) if price_now else 0.0, "low": None, "high": None,
-            "reason": "No clear entry; watch only"}
-
-
-def _compute_meters_and_next(price_now: Optional[float], ind: Dict[str, Any], pos: Dict[str, Any]):
-    if _domain_compute_meters and _domain_compute_next:
+    # 0) If caller gave a run_id, try intraday path first (symbol-filtered)
+    if run_id_hint:
         try:
-            meters = _domain_compute_meters(indicators=ind, score_row={"atr14_pct": ind.get("atr14_pct"), "atr_pct": ind.get("atr14_pct")})
-            next_action = _domain_compute_next(price=price_now, indicators=ind, position=pos)
-            return meters, next_action
+            from app.repos.parquet import datasets  # for today's UTC date
+            today = datetime.now(ZoneInfo("UTC")).date().isoformat()
+            # Try intraday run folder: read(date=today, run_id=hint) for this symbol
+            # ScoresRepo exposes a helper that scans intraday partition by date+run, but we use its public read API:
+            items, total, rid_used, as_of_used = scores_repo.read(
+                run_id=run_id_hint,     # repo.read will interpret this against new layout (intraday) via its resolver
+                as_of_str=None,
+                filters={( "symbol", "eq"): symbol.upper()},
+                sort=None,
+                page=1,
+                per_page=1,
+            )
+            log.info("read_new_layout: try intraday@%s total=%s rid_used=%s as_of=%s", run_id_hint, total, rid_used, as_of_used)
+            if total and items:
+                row = dict(items[0])
+                return row, symbol.upper(), rid_used or run_id_hint, as_of_used or row.get("as_of")
         except Exception:
-            log.exception("domain meters/next_action failed; trying rules engine fallback")
+            log.exception("read_new_layout: intraday run_id search failed")
 
-    if _HAVE_RULES:
+    # 1) Ask repo for latest (intraday → daily)
+    rid_latest, as_of_latest = None, None
+    try:
+        rid_latest, as_of_latest = scores_repo.latest_run()
+        log.info("read_new_layout: latest_run → rid=%s as_of=%s", rid_latest, as_of_latest)
+    except Exception:
+        log.exception("read_new_layout: latest_run failed")
+
+    # 2) Read by symbol with repo's resolver (no run_id param)
+    for cand in candidates:
         try:
-            meters = _rules_compute_meters(price_now, ind, pos)
-            next_action = _rules_resolve_next_action(price_now, ind, pos)
-            return meters, next_action
+            items, total, rid_used, as_of_used = scores_repo.read(
+                run_id=None,
+                as_of_str=None,
+                filters={( "symbol", "eq"): cand},
+                sort=None,
+                page=1,
+                per_page=1,
+                columns=None,
+            )
+            log.info("read_new_layout: read cand=%s → rows=%s rid_used=%s as_of=%s", cand, total, rid_used, as_of_used)
+            if total and items:
+                row = dict(items[0])
+                # Prefer repo-returned run_id/as_of; otherwise use latest_run hints
+                return row, cand, (rid_used or rid_latest), (as_of_used or row.get("as_of") or as_of_latest)
+        except TypeError:
+            # Very old signature support (page_size)
+            items, total, rid_used, as_of_used = scores_repo.read(
+                run_id=None,
+                as_of_str=None,
+                filters={( "symbol", "eq"): cand},
+                sort=None,
+                page=1,
+                page_size=1,
+                columns=None,
+            )
+            log.info("read_new_layout: read(legacy sig) cand=%s → rows=%s rid_used=%s as_of=%s", cand, total, rid_used, as_of_used)
+            if total and items:
+                row = dict(items[0])
+                return row, cand, (rid_used or rid_latest), (as_of_used or row.get("as_of") or as_of_latest)
         except Exception:
-            log.exception("rules engine failed; falling back to legacy")
+            log.exception("read_new_layout: repo.read failed for cand=%s", cand)
 
-    # Legacy fallback
-    def _risk(x):
-        x = float(x) if x is not None else None
-        if x is None: return "Medium"
-        if x < 1.2:   return "Low"
-        if x < 1.8:   return "Medium"
-        return "High"
-    def _euph(rsi, adx):
-        r = float(rsi or 0); a = float(adx or 0); s = r + 0.5 * a
-        if s < 70: return "Low"
-        if s < 90: return "Medium"
-        return "High"
-    meters = {
-        "risk": {"level": _risk(ind.get("relvol20")), "basis": {"atr_pct": float(ind.get("atr14_pct") or 0.0)}},
-        "euphoria": {"level": _euph(ind.get("rsi14"), ind.get("adx14")),
-                     "basis": {"rsi14": float(ind.get("rsi14") or 0.0), "adx14": float(ind.get("adx14") or 0.0)}},
-    }
-    ema_n = int(ind.get("ema_slow") or ind.get("ema_fast") or 10)
-    ema_val = float(ind.get("ema_slow_value") or ind.get("ema_fast_value") or (price_now or 0.0))
-    if price_now is not None and ema_val and price_now >= ema_val:
-        stop_now = pos.get("stop_now") or 0.0
-        if stop_now:
-            next_action = {"code": "HOLD", "text": f"Hold (trail stop at ₹{float(stop_now):,.1f})",
-                           "reasons": [f"Close ≥ EMA{ema_n}", "Momentum intact"],
-                           "refs": {"stop_now": float(stop_now), "ema_n": int(ema_n), "ema_value": float(ema_val)}}
-        else:
-            next_action = {"code": "HOLD", "text": f"Hold (above EMA{ema_n})",
-                           "reasons": [f"Close ≥ EMA{ema_n}"],
-                           "refs": {"ema_n": int(ema_n), "ema_value": float(ema_val)}}
-    else:
-        next_action = {"code": "WATCH", "text": "Watch (no clear signal)", "reasons": [],
-                       "refs": {"ema_n": int(ema_n), "ema_value": float(ema_val)}}
-    return meters, next_action
+    log.warning("read_new_layout: MISS for symbol=%s", symbol)
+    return None, None, rid_latest, as_of_latest
 
 
-def _read_row_with_symbol_normalization(scores_repo: Any, run_id: str, symbol: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    if not scores_repo or not hasattr(scores_repo, "read_one"):
-        return None, None
-    for cand in _symbol_candidates(symbol):
-        try:
-            row = scores_repo.read_one(symbol=cand, run_id=run_id)
-            if row:
-                return row, cand
-        except Exception:
-            continue
-    return None, None
+# ---------- Helpers (unchanged below) ----------
 
 def _symbol_candidates(symbol: str):
     s = (symbol or "").upper()

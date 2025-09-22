@@ -51,80 +51,83 @@ def get_instrument_detail(
     # Normalize symbol for robustness against case/format drift
     canonical_symbol = (symbol or "").strip().upper()
 
-    log.info("detail GET: symbol=%s, run_id_qp=%s", canonical_symbol, run_id)
+    log.info("detail GET", extra={"symbol": canonical_symbol, "run_id_qp": run_id})
 
-    # Primary resolution path (kept as-is)
+    # 1) Primary resolution path (existing behavior)
     resolved_run_id, _as_of = _resolve_run_id(canonical_symbol, run_id, deps)
-    log.info("detail resolved_run_id(primary)=%s", resolved_run_id)
+    log.info("detail resolved_run_id(primary)", extra={"run_id": resolved_run_id, "as_of": _as_of})
 
-    # Fallback: try to discover a usable run_id from ScoresRepo if none was found.
-    # This is defensive against storage-layout changes (daily/intraday).
+    # 2) Fallbacks when run_id is still not resolved
     if resolved_run_id is None:
+        sr = deps.scores_repo
         try:
-            sr = deps.scores_repo
+            # 2a) Repo-level latest (returns rid or as_of depending on snapshot kind)
+            rid_latest = asof_latest = None
+            if hasattr(sr, "latest_run"):
+                rid_latest, asof_latest = sr.latest_run()  # type: ignore[attr-defined]
+                log.info("detail resolved_latest", extra={"run_id": rid_latest, "as_of": asof_latest})
 
-            # 1) Prefer an explicit helper if present
-            if hasattr(sr, "latest_run_id_for_symbol"):
-                resolved_run_id = sr.latest_run_id_for_symbol(canonical_symbol)  # type: ignore[attr-defined]
-                log.info("detail resolved_run_id(latest_for_symbol)=%s", resolved_run_id)
-
-            # 2) Generic latest if symbol-specific helper isn’t available
-            if resolved_run_id is None and hasattr(sr, "latest_run_id"):
-                resolved_run_id = sr.latest_run_id()  # type: ignore[attr-defined]
-                log.info("detail resolved_run_id(latest_any)=%s", resolved_run_id)
-
-            # 3) As a last resort, try reading a single row filtered by symbol and grab its run_id
-            if resolved_run_id is None and hasattr(sr, "read"):
+            # 2b) If still no run_id, try a symbol-scoped read (new layout resolver inside repo)
+            if resolved_run_id is None:
                 try:
-                    items, *_ = sr.read(
+                    items, total, rid_used, asof_used = sr.read(
                         run_id=None,
                         as_of_str=None,
-                        filters={"symbol": canonical_symbol},
+                        # IMPORTANT: tuple-op filter matches repo API ({("field","op"): value})
+                        filters={( "symbol", "eq"): canonical_symbol},
                         sort=None,
                         page=1,
                         per_page=1,
+                        columns=None,
                     )
-                    if items:
-                        resolved_run_id = items[0].get("run_id")
-                        log.info("detail resolved_run_id(from_read_filter)=%s", resolved_run_id)
                 except TypeError:
-                    # Older signature: use page_size instead of per_page
-                    items, *_ = sr.read(
+                    # Legacy signature (page_size) or older filters — retain compat
+                    items, total, rid_used, asof_used = sr.read(
                         run_id=None,
                         as_of_str=None,
-                        filters={"symbol": canonical_symbol},
+                        filters={( "symbol", "eq"): canonical_symbol},
                         sort=None,
                         page=1,
                         page_size=1,  # legacy arg name
+                        columns=None,
                     )
-                    if items:
-                        resolved_run_id = items[0].get("run_id")
-                        log.info("detail resolved_run_id(from_read_filter_legacy)=%s", resolved_run_id)
+
+                log.info(
+                    "detail resolved_from_repo_read",
+                    extra={"rows": total, "rid_used": rid_used, "as_of": asof_used}
+                )
+
+                # Prefer the repo-resolved run_id if available; otherwise, stick with None
+                if rid_used:
+                    resolved_run_id = rid_used
+                elif items and isinstance(items[0], dict):
+                    # Daily partitions may omit run_id; keep resolved_run_id=None, builder will need to handle via repo
+                    candidate_rid = items[0].get("run_id")
+                    if candidate_rid:
+                        resolved_run_id = candidate_rid
         except Exception:
             log.exception("detail fallback run_id resolution failed")
 
+    # 3) If still nothing resolvable, return a clean 404
     if resolved_run_id is None:
-        log.warning("detail 404: no snapshot for symbol=%s", canonical_symbol)
+        log.warning("detail 404: no snapshot", extra={"symbol": canonical_symbol})
         raise HTTPException(
             status_code=404,
             detail={"title": "Not Found", "detail": "No snapshot available"},
         )
 
-    # Build raw dict first
+    # 4) Build raw dict first (builder currently expects a run_id; daily-only paths should be handled inside builder)
     raw = build_drawer_detail(canonical_symbol, resolved_run_id, deps)
-    log.info("detail built: keys=%s", list(raw.keys()))
+    log.info("detail built", extra={"keys": list(raw.keys())})
 
-    # EXPLICIT validation here so we can log exact mismatch instead of a silent 500
+    # 5) Validate explicitly so we log exact mismatches
     try:
         model = DrawerDetail.model_validate(raw)
     except ValidationError as ve:
         log.exception(
-            "detail response-model validation failed: symbol=%s run_id=%s errors=%s",
-            canonical_symbol,
-            resolved_run_id,
-            ve.errors(),
+            "detail response-model validation failed",
+            extra={"symbol": canonical_symbol, "run_id": resolved_run_id, "errors": ve.errors()},
         )
-        # Return a structured 500 (matches your error contract)
         raise HTTPException(
             status_code=500,
             detail={
@@ -135,7 +138,6 @@ def get_instrument_detail(
             },
         )
 
-    # FastAPI will also validate again against response_model, but we return a model instance
     return model
 
 
