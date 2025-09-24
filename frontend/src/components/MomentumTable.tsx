@@ -382,9 +382,9 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
       { field: 'rsi', headerName: 'RSI', width: 80, type: 'number', renderCell: renderNum },
       { field: 'adx', headerName: 'ADX', width: 80, type: 'number', renderCell: renderNum },
 
-      { field: 'atr_pct', headerName: 'ATR %', width: 80, type: 'number', renderCell: renderPctCell },
+      //{ field: 'atr_pct', headerName: 'ATR %', width: 80, type: 'number', renderCell: renderPctCell },
       { field: 'liquidity', headerName: 'Liquidity (M)', width: 110, type: 'number', renderCell: renderMillions },
-      { field: 'vol_spike', headerName: 'xRel Vol', width: 80, type: 'number', renderCell: renderNum },
+      //{ field: 'vol_spike', headerName: 'xRel Vol', width: 80, type: 'number', renderCell: renderNum },
     ],
     [],
   );

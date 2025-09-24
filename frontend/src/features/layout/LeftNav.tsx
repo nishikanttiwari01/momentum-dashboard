@@ -1,3 +1,4 @@
+// frontend/src/features/layout/LeftNav.tsx
 import * as React from 'react';
 import {
   Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Box, Typography, Divider
@@ -10,6 +11,9 @@ import HistoryIcon from '@mui/icons-material/History';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SchoolIcon from '@mui/icons-material/School';
 import { NavLink } from 'react-router-dom';
+
+// Image placed under frontend/src/assets/
+import ShubhLabhImg from '@/assets/shubh-labh-swastik-stickers.jpg';
 
 export const NAV_WIDTH = 160;
 
@@ -33,27 +37,47 @@ export default function LeftNav() {
         '& .MuiDrawer-paper': { width: NAV_WIDTH, boxSizing: 'border-box' },
       }}
     >
-      {/* Top spacer aligned with AppBar height */}
+      {/* Top spacer aligned with AppBar height (adjust if your header height changes) */}
       <Toolbar sx={{ minHeight: 64 }} />
-      {/* Brand block */}
+
+      {/* Brand block — image on top, text below */}
       <Box sx={{ px: 2, pb: 1 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 1 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            textAlign: 'center',
+            gap: 0.75,
+            mb: 1,
+          }}
+        >
           <Box
+            component="img"
+            src={ShubhLabhImg}
+            alt="Shubh Labh"
             sx={{
-              width: 32, height: 32, borderRadius: '10px',
-              display: 'grid', placeItems: 'center',
-              bgcolor: 'primary.main', color: 'black', fontWeight: 800, fontSize: 14,
+              width: 40,
+              height: 40,
+              borderRadius: '10px',
+              objectFit: 'contain',
+              bgcolor: 'common.white',
+              p: 0.5,
+              border: '1px solid rgba(0,0,0,0.06)',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
             }}
-          >
-            MS
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" sx={{ lineHeight: 1.1 }}>Momentum Suite</Typography>
-            <Typography variant="caption" color="text.secondary">Scanner</Typography>
-          </Box>
+          />
+          <Typography variant="subtitle2" sx={{ lineHeight: 1.1 }}>
+            Sree Ganeshaya<br />Namah
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Subh Labh
+          </Typography>
         </Box>
       </Box>
+
       <Divider />
+
       {/* Nav items */}
       <List sx={{ pt: 1 }}>
         {items.map((it) => (
@@ -63,7 +87,7 @@ export default function LeftNav() {
             to={it.to}
             sx={{
               mx: 1,
-              mb: .5,
+              mb: 0.5,
               '&.active': { bgcolor: '#dfe5efff' },
             }}
           >
