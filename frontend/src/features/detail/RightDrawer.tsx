@@ -176,7 +176,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
       {/* BODY */}
       <Box sx={{ px: 3, py: 2, overflowY: 'auto' }}>
         {/* Sparkline (fixed: use d?.sparkline instead of undefined detail) */}
-        <Sparkline data={d?.sparkline as any} height={150} />
+        <Sparkline data={d?.sparkline as any} height={200} />
 
         <ScoreBreakdown
           score={

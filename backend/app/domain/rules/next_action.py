@@ -40,8 +40,7 @@ def _breakeven_active(pos: Dict[str, Any], price: Optional[float]) -> bool:
         return False
     if stop_f is not None and stop_f >= entry_f:
         return True
-    if price_f is not None and price_f >= entry_f * 1.05:
-        return True
+
     return False
 
 def _exit_close_threshold(ind: Dict[str, Any], eup_on: bool) -> Optional[float]:
@@ -239,7 +238,8 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
             }
 
     # ---------- 1) SELL_NOW (intraday stop touched) ----------
-    if price is not None and stop_now is not None:
+    # ✅ Only when in position
+    if in_pos and price is not None and stop_now is not None:
         try:
             if float(price) <= float(stop_now):
                 msg = f"Sell now (stop hit at ₹{_fmt_price(stop_now)})"
@@ -254,9 +254,9 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
             log.exception("SELL_NOW check failed: %s", e)
 
     # ---------- 2) SELL_TOMORROW (EOD close < threshold) ----------
-    # Only trigger this when the bar is complete. Expect the caller to pass an EOD flag if needed.
+    # ✅ Only when in position; only when bar is complete
     is_eod = _bool(indicators.get("is_eod")) or _bool(indicators.get("market_closed"))
-    if is_eod and price is not None and exit_threshold is not None:
+    if in_pos and is_eod and price is not None and exit_threshold is not None:
         try:
             if float(price) < float(exit_threshold):
                 n = 8 if eup_on else 10
@@ -270,19 +270,6 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
                 }
         except Exception as e:
             log.exception("SELL_TOMORROW check failed: %s", e)
-
-    # ---------- 2.5) Soft gates for non-position → WATCH ----------
-    if not in_pos:
-        failed = _gates_failed(indicators)
-        if failed:
-            msg = "Watch — weak momentum/volume/structure"
-            log.info("next_action=WATCH gates_failed=%s", failed)
-            return {
-                "code": "WATCH",
-                "text": msg,
-                "reasons": failed,
-                "refs": {"failed_gates": failed, "ema_n": 8 if eup_on else 10, "ema_value": exit_threshold}
-            }
 
     # ---------- 3) In-trade holds ----------
     if in_pos:
@@ -354,13 +341,20 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
             msg = f"Buy on pullback (₹{_fmt_price(a)}–₹{_fmt_price(b)})"
         else:
             msg = "Buy on pullback (near EMA10)"
-        log.info("next_action=BUY_PULLBACK zone_low=%s zone_high=%s", _fmt_price(a), _fmt_price(b))
-        return {
-            "code": "BUY_PULLBACK",
-            "text": msg,
-            "reasons": ["extended" if extended else "rsi_hot"],
-            "refs": {"entry_low": a, "entry_high": b, "ema_n": 10, "ema_value": indicators.get("ema10")}
-        }
+        # Guard: do NOT suggest pullback if price is still below the breakout pivot.
+        try:
+            below_pivot = pivot is not None and price is not None and float(price) < float(pivot)
+        except Exception:
+            below_pivot = False
+        if not below_pivot:
+            log.info("next_action=BUY_PULLBACK zone_low=%s zone_high=%s", _fmt_price(a), _fmt_price(b))
+            return {
+                "code": "BUY_PULLBACK",
+                "text": msg,
+                "reasons": ["extended" if extended else "rsi_hot"],
+                "refs": {"entry_low": a, "entry_high": b, "ema_n": 10, "ema_value": indicators.get("ema10")}
+            }
+        # else: fall through; soft gates after entry attempts will cleanly return WATCH
 
     # 4c) Starter position (early)
     adx14 = indicators.get("adx14")
@@ -376,6 +370,18 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
             "reasons": ["early_strength"],
             "refs": {"ema_n": 10, "ema_value": indicators.get("ema10")}
         }
+    # ---------- 4.9) Soft gates AFTER entry attempts ----------
+    if not in_pos:
+        failed = _gates_failed(indicators)
+        if failed:
+            msg = "Watch — weak momentum/volume/structure"
+            log.info("next_action=WATCH gates_failed=%s", failed)
+            return {
+                "code": "WATCH",
+                "text": msg,
+                "reasons": failed,
+                "refs": {"failed_gates": failed, "ema_n": 8 if eup_on else 10, "ema_value": exit_threshold}
+            }
 
     # ---------- 5) Default: WATCH ----------
     log.info("next_action=WATCH default")
@@ -387,4 +393,21 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
     }
 
 def method_pill_for(indicators: Dict[str, Any], _score_row: Dict[str, Any]) -> str:
+    # Prefer EMA8 when euphoria is on; else the configured slow EMA (fallback 10)
+    rsi = indicators.get("rsi14")
+    adx = indicators.get("adx14")
+    adx_slope_5 = indicators.get("adx_slope_5") or 0
+    eup = False
+    try:
+        rsi_f = float(rsi) if rsi is not None else None
+        adx_f = float(adx) if adx is not None else None
+        eup = (rsi_f is not None and adx_f is not None) and (
+            (rsi_f >= 75 and adx_f >= 30) or (rsi_f >= 70 and adx_f >= 25 and adx_slope_5 > 0)
+        )
+    except Exception:
+        eup = False
+
+    if eup:
+        return "EMA8"
     return f"EMA{indicators.get('ema_slow') or 10}"
+

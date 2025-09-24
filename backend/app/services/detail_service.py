@@ -207,7 +207,8 @@ def _compute_entry_suggestion(
 
     # 2) Starter position if momentum is brewing and price is not far below slow EMA
     if rsi14 >= 55 and adx14 >= 20 and (ema_slow_val == 0 or price_now >= ema_slow_val * 0.99):
-        starter = float(max(ema_slow_val, price_now))
+        # Prefer current price for a starter; anchor remain “near EMA{n}” in the copy
+        starter = float(price_now)
         return {
             "type": "STARTER",
             "price": starter,
@@ -289,7 +290,7 @@ def _compute_meters_and_next(price_now: Optional[float], ind: Dict[str, Any], po
             if s < 90: return "Medium"
             return "High"
         meters = {
-            "risk": {"level": _risk(ind.get("relvol20")), "basis": {"atr_pct": float(ind.get("atr14_pct") or 0.0)}},
+            "risk": {"level": _risk(ind.get("atr14_pct")), "basis": {"atr_pct": float(ind.get("atr14_pct") or 0.0)}},
             "euphoria": {"level": _euph(ind.get("rsi14"), ind.get("adx14")),
                          "basis": {"rsi14": float(ind.get("rsi14") or 0.0), "adx14": float(ind.get("adx14") or 0.0)}},
         }
@@ -395,8 +396,24 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
         "pivot_20d": _f((row or {}).get("pivot_20d")),
         "pivot_clear_pct": _f((row or {}).get("pivot_clear_pct")),
         "base_len_bars": _i((row or {}).get("base_len_bars")),
-    }
 
+    
+    }
+    try:
+        indicators["score"] = float(score) if score is not None else None
+    except Exception:
+        indicators["score"] = None
+
+    
+    # 👉 Normalize EMA placeholders: never keep zeros
+    if indicators.get("ema8") == 0.0:
+        indicators["ema8"] = None
+    if indicators.get("ema10") == 0.0:
+        indicators["ema10"] = None
+    if indicators.get("ema_fast_value") == 0.0:
+        indicators["ema_fast_value"] = None
+    if indicators.get("ema_slow_value") == 0.0:
+        indicators["ema_slow_value"] = None
     atr_pct = indicators["atr14_pct"]
     atr_abs = price_now * (atr_pct / 100.0) if atr_pct else 0.0
 
@@ -488,21 +505,48 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
     if needs_suggestion and entry_suggestion.get("price"):
         position["entry_price"] = float(entry_suggestion["price"])
 
+    # ✅ Normalize entry lock to None when not set (prevents false in-position in resolver)
+    position["entry_price_locked"] = entry_locked_val  # <-- minimal, critical fix
+    # ---------- EOD flag so SELL_TOMORROW can trigger on daily snapshots ----------
+    # If we resolved an intraday run_id (rid_used), it's NOT EOD. If we fell back to daily (no rid_used), it IS EOD.
+    indicators["is_eod"] = not bool(rid_used)
+    indicators["market_closed"] = indicators["is_eod"]
     # --- meters + next action (unchanged) ---
     meters, next_action = _compute_meters_and_next(price_now, indicators, position)
     meters = _normalize_meters_to_contract(meters, indicators)
 
     if isinstance(next_action, dict):
-        refs = next_action.get("refs") or {}
-        numeric_refs = {k: float(v) for k, v in refs.items() if _is_number(v)}
-        if entry_suggestion:
+        code = (next_action.get("code") or "").upper()
+        refs_in = next_action.get("refs") or {}
+        numeric_refs = {k: float(v) for k, v in refs_in.items() if _is_number(v)}
+        # Only attach entry bands/suggestion for pullback or starter
+        if code in ("BUY_PULLBACK", "BUY_STARTER") and entry_suggestion:
             for k in ("price", "low", "high"):
                 v = entry_suggestion.get(k)
                 if _is_number(v):
-                    numeric_refs[f"entry_{k if k!='price' else 'suggested'}"] = float(v)
+                    key = "entry_suggested" if k == "price" else f"entry_{k}"
+                    numeric_refs[key] = float(v)
+        # For BREAKOUT: keep it crisp → ensure pivot 'level', drop pullback bands if any
+        if code == "BUY_BREAKOUT":
+            for k in ("entry_suggested", "entry_low", "entry_high"):
+                numeric_refs.pop(k, None)
+            if "level" not in numeric_refs and _is_number(indicators.get("pivot_20d")):
+                numeric_refs["level"] = float(indicators["pivot_20d"])
+        # For WATCH: strip any accidental entry refs
+        if code == "WATCH":
+            for k in ("entry_suggested", "entry_low", "entry_high"):
+                numeric_refs.pop(k, None)
         next_action["refs"] = numeric_refs
 
-    method_pill = f"EMA{int(indicators['ema_slow'])}" if indicators["ema_slow"] else "EMA"
+    # --- euphoria from indicators → affects method pill & exits (even pre-entry, informational) ---
+    try:
+        _rsi = float(indicators.get("rsi14") or 0.0)
+        _adx = float(indicators.get("adx14") or 0.0)
+        _slope = float(indicators.get("adx_slope_5") or 0.0)
+        eup_on = (_rsi >= 75 and _adx >= 30) or (_rsi >= 70 and _adx >= 25 and _slope > 0)
+    except Exception:
+        eup_on = False
+    method_pill = "EMA8" if eup_on else (f"EMA{int(indicators['ema_slow'])}" if indicators["ema_slow"] else "EMA")
 
     # --- header/sparkline (unchanged) ---
     header = {
@@ -544,7 +588,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
         "stale": bool((row or {}).get("stale")) if (row or {}).get("stale") is not None else None,
     }
 
-    eup_on = bool(next_action.get("code") in ("HOLD_TIGHT",)) or bool(position.get("euphoria_on"))
+    # Use the euphoria flag computed above for exit threshold
     exit_thr = _choose_exit_threshold(indicators, eup_on)
     action_block = {
         "stop_now": position.get("stop_now") if position.get("stop_now") not in (0, 0.0) else None,
@@ -554,7 +598,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
             (position.get("entry_price_locked") and position.get("stop_now") and position.get("stop_now") >= position.get("entry_price_locked"))
             or bool(position.get("breakeven_active"))
         ) else "Pending",
-        "euphoria_state": True if eup_on else False,
+        "euphoria_state": bool(eup_on),
     }
     log.info("action_block=%s", action_block)
 
@@ -565,6 +609,19 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
         "rules_version": (row or {}).get("rules_version") or "scores_v2",
         "blocked_reason": None,
     }
+
+    # Align diagnostics tone with BUY actions (remove "No — ..." contradictions)
+    if isinstance(next_action, dict):
+        _act = (next_action.get("code") or "").upper()
+        _diag = (diagnostics.get("reason") or diagnostics.get("reason_text") or "").strip()
+        if _act.startswith("BUY") and _diag.lower().startswith("no"):
+            if _act == "BUY_BREAKOUT":
+                diagnostics["reason"] = "Yes — breakout setup: pivot cleared, momentum/volume supportive"
+            elif _act == "BUY_PULLBACK":
+                diagnostics["reason"] = "Setup — extended; prefer pullback toward EMA band"
+            elif _act == "BUY_STARTER":
+                diagnostics["reason"] = "Setup — early strength; small starter size"
+            diagnostics["reason_text"] = diagnostics["reason"]
 
     payload = {
         "drawer_contract_version": "1.0.0",
@@ -594,62 +651,20 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
         "pct_today": pct_today,
         "score": score,
         "indicators": indicators,
-        "badges": (row or {}).get("badges") if isinstance((row or {}).get("badges"), list) else [],
+        # Use normalized header badges to avoid leaking legacy/null codes
+        "badges": header["badges"],
         "method_pill": method_pill,
         "alert_templates": [],
         "channels": None,
         "symbol_canon": (canon or sym_in),
     }
 
-    # Ensure tz-aware 'as_of' (works for either intraday ISO or daily YYYY-MM-DD)
-    payload["as_of"] = _coerce_as_of(payload.get("as_of"), run_id=rid_used or run_id, tz_name=_TZ_DEFAULT)
+    # Ensure tz-aware 'as_of' and serialize to ISO8601 string
+    _asof_dt = _coerce_as_of(payload.get("as_of"), run_id=rid_used or run_id, tz_name=_TZ_DEFAULT)
+    payload["as_of"] = _asof_dt.isoformat()
 
     log.info("build: payload %s@%s as_of=%s price=%s", sym_in, payload["run_id"], payload["as_of"], payload["price"])
     return payload
-
-def _normalize_meters_to_contract(meters: Dict[str, Any], ind: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Ensure meters have the quantitative fields required by the model:
-    - score_0_100
-    - thresholds
-    Works with both upgraded domain meters and legacy meters.
-    """
-    def add_fields(kind: str, m: Dict[str, Any]) -> Dict[str, Any]:
-        m = dict(m or {})
-        # thresholds
-        if "thresholds" not in m:
-            m["thresholds"] = {"low_lt": 33, "medium_gte": 33, "high_gte": 66}
-        # score
-        if m.get("score_0_100") is None:
-            if kind == "risk":
-                atr = (m.get("basis", {}) or {}).get("atr14_pct")
-                if atr is None:
-                    atr = (m.get("basis", {}) or {}).get("atr_pct")
-                try:
-                    s = max(0.0, min(100.0, (float(atr) / 8.0) * 100.0)) if atr is not None else None
-                except Exception:
-                    s = None
-                m["score_0_100"] = int(round(s)) if s is not None else 0
-            else:
-                rsi = ind.get("rsi14"); adx = ind.get("adx14"); slope = ind.get("adx_slope_5") or 0.0
-                try:
-                    rsi_part = max(0.0, min(70.0, ((float(rsi) - 55.0) / 25.0) * 70.0)) if rsi is not None else 0.0
-                except Exception:
-                    rsi_part = 0.0
-                try:
-                    adx_part = max(0.0, min(30.0, ((float(adx) - 20.0) / 25.0) * 30.0)) if adx is not None else 0.0
-                except Exception:
-                    adx_part = 0.0
-                slope_bonus = 5.0 if (slope or 0.0) > 0 else 0.0
-                # ✅ correct clamp: clamp the SUM between 0 and 100
-                s = max(0.0, min(100.0, rsi_part + adx_part + slope_bonus))
-                m["score_0_100"] = int(round(s))
-        return m
-
-    meters = dict(meters or {})
-    meters["risk"] = add_fields("risk", meters.get("risk") or {"level": "Low", "basis": {}})
-    meters["euphoria"] = add_fields("euphoria", meters.get("euphoria") or {"level": "Low", "basis": {}})
-    return meters
 
 
 # ---------- New-layout read helper (no legacy) ----------

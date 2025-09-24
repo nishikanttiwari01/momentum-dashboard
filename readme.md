@@ -47,6 +47,9 @@ set APP_DEFAULT_UNIVERSE=NIFTY50
 set LIVE_TEST=1
 pytest -q tests\integration\test_live_scan.py
 
+### To get all the detail JSON of stocks in one go
+(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\app\api>python fetch_details.py
+
 # Frontend Run
 cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\frontend
 npm run dev
@@ -63,5 +66,6 @@ python -m app.cli.backfill --days 252 --universe NIFTY500
 
 # This is to auto generate code from open API frontend. 
 D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\frontend>npx orval --config .\orval.config.ts
+
 
 

@@ -4,14 +4,14 @@ from typing import Dict, Any
 
 # Single source of truth for codes and default copy.
 CATALOG: Dict[str, Dict[str, Any]] = {
-    "EXIT_NOW": {
+    "SELL_NOW": {
         "template": "Sell now (stop hit at ₹{stop})",
         "refs": ["stop_now"],
         "priority": 100,
     },
-    "EXIT_EOD": {
+    "SELL_TOMORROW": {
         "template": "Exit at close if < EMA{n} (₹{ema_value})",
-        "refs": ["ema_n", "ema_value", "tolerance_pct"],
+        "refs": ["ema_n", "ema_value"],
         "priority": 90,
     },
     "HOLD_TIGHT": {
@@ -36,7 +36,7 @@ CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "BUY_BREAKOUT": {
         "template": "Buy on breakout (≥ ₹{level})",
-        "refs": ["breakout_level", "delta_pct", "relvol20"],
+        "refs": ["level", "relvol20", "ema_n", "ema_value"],
         "priority": 40,
     },
     "BUY_PULLBACK": {

@@ -6,11 +6,15 @@ import {
   GridPaginationModel,
   GridRenderCellParams,
   GridSortModel,
+  GridLoadingOverlayProps,
+  GridOverlay,
 } from '@mui/x-data-grid';
 import { Box, Alert, LinearProgress, Tooltip, Chip, alpha } from '@mui/material';
 import { useGetApiV1Screener } from '@/lib/api/client';
 import type { GetApiV1ScreenerParams } from '@/lib/api/types';
 import RightDrawer from '@/features/detail/RightDrawer';
+
+const MAX_PAGE_SIZE = 100; // MUI X MIT cap
 
 // ---------- helpers ----------
 const normalizeNumber = (v: unknown): number | null => {
@@ -40,10 +44,8 @@ const signClass = (v: unknown) => {
 const PriceDeltaCell = (params: GridRenderCellParams) => {
   const last = normalizeNumber(params?.row?.last);
   const pctRaw = normalizeNumber(params?.row?.pct_today);
-  const pctAsRatio =
-    pctRaw == null ? null : Math.abs(pctRaw) <= 1 ? pctRaw : pctRaw / 100;
-  const absChange =
-    last != null && pctAsRatio != null ? last * pctAsRatio : null;
+  const pctAsRatio = pctRaw == null ? null : Math.abs(pctRaw) <= 1 ? pctRaw : pctRaw / 100;
+  const absChange = last != null && pctAsRatio != null ? last * pctAsRatio : null;
 
   const priceStr = fmtNum(last);
   const pctStr = pctRaw == null ? '' : fmtPct(pctRaw);
@@ -66,12 +68,12 @@ const PriceDeltaCell = (params: GridRenderCellParams) => {
     </Box>
   );
 };
+
 type Badge = { label: string; category: 'BREAKOUT' | 'MOMENTUM' | 'WATCH' | 'IGNORE' | 'ACTION' };
 
-// only keep supported categories, normalize to UPPER
 const normalizeBadges = (row: any): Badge[] => {
   const raw = Array.isArray(row?.badges) ? row.badges : [];
-  const allowed = new Set(['BREAKOUT','MOMENTUM','WATCH','IGNORE']);
+  const allowed = new Set(['BREAKOUT', 'MOMENTUM', 'WATCH', 'IGNORE']);
   return raw
     .map((b: any) => ({
       label: String(b?.label ?? '').trim(),
@@ -80,7 +82,6 @@ const normalizeBadges = (row: any): Badge[] => {
     .filter((b: Badge) => b.label && allowed.has(b.category));
 };
 
-// nice colors (purple & vermilion theme) + subtle backgrounds
 const chipSx = (cat: Badge['category']) => (theme: any) => {
   const base = {
     fontWeight: 700,
@@ -91,34 +92,34 @@ const chipSx = (cat: Badge['category']) => (theme: any) => {
 
   switch (cat) {
     case 'MOMENTUM': {
-      const c = '#7C4DFF'; // purple
-      return { ...base, color: c, borderColor: alpha(c, .35), bgcolor: alpha(c, .10) };
+      const c = '#7C4DFF';
+      return { ...base, color: c, borderColor: alpha(c, 0.35), bgcolor: alpha(c, 0.1) };
     }
     case 'BREAKOUT': {
       const c = theme.palette.success.main;
-      return { ...base, color: c, borderColor: alpha(c, .35), bgcolor: alpha(c, .10) };
+      return { ...base, color: c, borderColor: alpha(c, 0.35), bgcolor: alpha(c, 0.1) };
     }
     case 'WATCH': {
       const c = theme.palette.info.main;
-      return { ...base, color: c, borderColor: alpha(c, .35), bgcolor: alpha(c, .10) };
+      return { ...base, color: c, borderColor: alpha(c, 0.35), bgcolor: alpha(c, 0.1) };
     }
     case 'IGNORE': {
       const c = theme.palette.text.secondary;
-      return { ...base, color: c, borderColor: alpha(c, .25), bgcolor: alpha(c, .08) };
+      return { ...base, color: c, borderColor: alpha(c, 0.25), bgcolor: alpha(c, 0.08) };
     }
     default:
       return base;
   }
 };
 
-// optional priority: show most actionable first
-const BADGE_ORDER: Badge['category'][] = ['ACTION','BREAKOUT','MOMENTUM','WATCH','IGNORE'];
+const BADGE_ORDER: Badge['category'][] = ['ACTION', 'BREAKOUT', 'MOMENTUM', 'WATCH', 'IGNORE'];
 
 const BadgesCell = (params: any) => {
-  const badges = normalizeBadges(params?.row)
-    .sort((a, b) => BADGE_ORDER.indexOf(a.category) - BADGE_ORDER.indexOf(b.category));
+  const badges = normalizeBadges(params?.row).sort(
+    (a, b) => BADGE_ORDER.indexOf(a.category) - BADGE_ORDER.indexOf(b.category),
+  );
 
-  const max = 2; // show up to 2; rest go in a "+N" chip
+  const max = 2;
   const shown = badges.slice(0, max);
   const extra = badges.length - shown.length;
 
@@ -128,7 +129,7 @@ const BadgesCell = (params: any) => {
         <Chip key={`${b.category}-${i}`} size="small" label={b.label} variant="outlined" sx={chipSx(b.category)} />
       ))}
       {extra > 0 && (
-        <Tooltip title={badges.slice(max).map(b => b.label).join(', ')}>
+        <Tooltip title={badges.slice(max).map((b) => b.label).join(', ')}>
           <Chip size="small" label={`+${extra}`} variant="outlined" sx={{ height: 22, fontWeight: 700 }} />
         </Tooltip>
       )}
@@ -136,8 +137,6 @@ const BadgesCell = (params: any) => {
   );
 };
 
-// ---------- combined 1W: Price + Δ + % ----------
-// ---------- Common period cell: shows PRIOR price + "±Δ (±%)" ----------
 const makePeriodCell =
   (absKey?: string, pctKey?: string) =>
   (params: GridRenderCellParams) => {
@@ -146,11 +145,8 @@ const makePeriodCell =
     const absRaw = absKey ? normalizeNumber(params?.row?.[absKey as any]) : null;
     const pctRaw = pctKey ? normalizeNumber(params?.row?.[pctKey as any]) : null;
 
-    // percent may come as 0.12 or 12 → normalize to decimal
-    const pctDec =
-      pctRaw == null ? null : Math.abs(pctRaw) <= 1 ? pctRaw : pctRaw / 100;
+    const pctDec = pctRaw == null ? null : Math.abs(pctRaw) <= 1 ? pctRaw : pctRaw / 100;
 
-    // compute prior price (price at start of period)
     let prior: number | null = null;
     let deltaAbs: number | null = null;
 
@@ -159,9 +155,8 @@ const makePeriodCell =
         deltaAbs = absRaw;
         prior = last - deltaAbs;
       } else if (pctDec != null && isFinite(pctDec) && pctDec > -0.9999) {
-        // prior * (1 + pct) = last  => prior = last / (1 + pct)
         prior = last / (1 + pctDec);
-        deltaAbs = last - prior; // exact absolute change derived from pct
+        deltaAbs = last - prior;
       }
     }
 
@@ -169,10 +164,10 @@ const makePeriodCell =
     const sign = pos ? '+' : '';
     const colorClass = pos ? 'text-pos' : 'text-neg';
 
-    const priorStr = prior == null ? '—'
-      : new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(prior);
-    const absStr = deltaAbs == null ? ''
-      : new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(deltaAbs);
+    const priorStr =
+      prior == null ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(prior);
+    const absStr =
+      deltaAbs == null ? '' : new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(deltaAbs);
     const pctStr = pctRaw == null ? '' : fmtPct(pctRaw);
 
     return (
@@ -180,12 +175,16 @@ const makePeriodCell =
         <span>{priorStr}</span>
         {(absStr || pctStr) && (
           <span className={colorClass} style={{ fontSize: 12 }}>
-            {sign}{absStr}{absStr ? ' ' : ''}{pctStr ? `(${pctStr})` : ''}
+            {sign}
+            {absStr}
+            {absStr ? ' ' : ''}
+            {pctStr ? `(${pctStr})` : ''}
           </span>
         )}
       </Box>
     );
   };
+
 const fmtMillions = (v: unknown): string => {
   const n = normalizeNumber(v);
   if (n === null) return '—';
@@ -194,6 +193,21 @@ const fmtMillions = (v: unknown): string => {
 };
 const renderMillions = (p: any) => <span>{fmtMillions(p?.value)}</span>;
 
+// Custom loading overlay
+function LinearLoadingOverlay(_: GridLoadingOverlayProps) {
+  return (
+    <GridOverlay>
+      <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0 }}>
+        <LinearProgress />
+      </Box>
+    </GridOverlay>
+  );
+}
+
+const num = (v: any): number | null => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 export default function MomentumTable({ refetchIntervalMs = false }: { refetchIntervalMs?: number | false }) {
   const [pagination, setPagination] = React.useState<GridPaginationModel>({ page: 0, pageSize: 25 });
@@ -202,63 +216,130 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
   // Drawer
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [drawerSymbol, setDrawerSymbol] = React.useState<string | null>(null);
-  const openDrawerFor = (symbol: string) => { setDrawerSymbol(symbol); setDrawerOpen(true); };
-  const closeDrawer = () => { setDrawerOpen(false); setDrawerSymbol(null); };
-
-  // --- query + server-side pagination/sort params
-  const apiParams: GetApiV1ScreenerParams = {
-    page: pagination.page + 1,
-    page_size: pagination.pageSize,
+  const openDrawerFor = (symbol: string) => {
+    setDrawerSymbol(symbol);
+    setDrawerOpen(true);
   };
-  const s0 = sortModel[0];
-  if (s0?.field) {
-    (apiParams as any).sort_by = s0.field;
-    (apiParams as any).sort_dir = s0.sort ?? 'asc';
-  }
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setDrawerSymbol(null);
+  };
+
+  // --- query params (memoized) ---
+  const apiParams: GetApiV1ScreenerParams = React.useMemo(() => {
+    const size = Math.min(MAX_PAGE_SIZE, Math.max(1, pagination.pageSize));
+    const p: GetApiV1ScreenerParams = {
+      page: pagination.page + 1, // 1-based
+      per_page: size,
+      // also send common synonyms in case backend expects them
+      // @ts-expect-error
+      page_size: size,
+      // @ts-expect-error
+      limit: size,
+      // @ts-expect-error
+      offset: pagination.page * size,
+    };
+    const s0 = sortModel[0];
+    if (s0?.field) {
+      (p as any).sort_by = s0.field;
+      (p as any).sort_dir = s0.sort ?? 'asc';
+      (p as any).sort = s0.field;
+      (p as any).order = s0.sort ?? 'asc';
+      (p as any).ordering = `${s0.sort === 'desc' ? '-' : ''}${s0.field}`;
+    }
+    return p;
+  }, [pagination.page, pagination.pageSize, sortModel]);
 
   const query = useGetApiV1Screener(apiParams, {
     axios: { baseURL: '' },
     query: {
-      keepPreviousData: true,
+      placeholderData: (prev) => prev, // React Query v5
       refetchInterval: refetchIntervalMs || false,
       retry: 0,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
     },
   });
 
-  // ✅ rows defined here (do not remove)
-  const payload = query.data?.data as any;
-  const rows: any[] = payload?.items ?? payload?.rows ?? [];
-  const rowCount: number = payload?.total ?? rows.length;
+  // rows + totals
+  const axiosResp = query.data; // AxiosResponse | undefined
+  const payload = axiosResp?.data as any;
+
+  const rows: any[] =
+    payload?.items ??
+    payload?.rows ??
+    payload?.data ??
+    payload?.results ??
+    payload?.records ??
+    [];
+
+  // Try headers first (CORS needs Access-Control-Expose-Headers server-side)
+  const h = axiosResp?.headers ?? {};
+  const headerTotal =
+    num(h['x-total-count']) ??
+    num(h['x-total']) ??
+    num(h['x-total-records']) ??
+    num(h['x-count']) ??
+    null;
+
+  // Then typical payload shapes
+  const serverTotalRaw =
+    payload?.pagination?.total ??
+    payload?.pagination?.count ??
+    payload?.pagination?.records ??
+    payload?.pagination?.recordsTotal ??
+    payload?.total ??
+    payload?.count ??
+    payload?.records ??
+    null;
+  const serverTotal = num(serverTotalRaw);
+
+  // ----- Compute effective rowCount (with override if total looks wrong) -----
+  const size = Math.min(MAX_PAGE_SIZE, Math.max(1, pagination.pageSize));
+  const base = pagination.page * size;
+
+  // start from server/header total if available
+  let rowCount: number | null = headerTotal ?? serverTotal ?? null;
+
+  // If no total, go optimistic: if we got a full page, pretend there's at least one more
+  if (rowCount == null) {
+    rowCount = base + rows.length + (rows.length === size ? 1 : 0);
+  } else {
+    // If backend says total <= items we've already shown but we still got a full page,
+    // the "total" is likely the page length, not real total → override to enable Next.
+    if (rows.length === size && rowCount <= base + rows.length) {
+      rowCount = base + rows.length + 1;
+    }
+  }
+
+  // Optional debug
+  // console.debug('pagination', { asked: apiParams, page: pagination.page, size, rows: rows.length, headerTotal, serverTotal: serverTotalRaw, rowCount });
+
   const getId = (r: any) => r.id ?? r.symbol ?? `${r.ticker ?? ''}-${r.symbol ?? ''}`;
 
-  // cell renderers to avoid blanks
   const renderNum = (p: any) => <span>{fmtNum(p?.value)}</span>;
-  const renderPct = (p: any) => <span className={signClass(p?.value)}>{fmtPct(p?.value)}</span>;
+  const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(p?.value)}</span>;
 
-  const columns = React.useMemo<GridColDef[]>(
+  const columns: GridColDef[] = React.useMemo(
     () => [
       { field: 'symbol', headerName: 'Ticker', minWidth: 150 },
 
       { field: 'score', headerName: 'Score', width: 70, type: 'number', renderCell: renderNum, cellClassName: (p) => signClass(p?.value) },
 
-      // Combined Price + %Today
       { field: 'last', headerName: 'Price', minWidth: 130, sortable: true, renderCell: PriceDeltaCell },
 
-      // Weekly change
-      //{ field: 'wk_change', headerName: 'Δ 1W', width: 60, type: 'number', renderCell: renderNum, cellClassName: (p) => signClass(p?.value) },
-      //{ field: 'wk_change_pct', headerName: '% 1W', width: 90, type: 'number', renderCell: renderPct, cellClassName: (p) => signClass(p?.value) },
       {
-        field: 'wk_change',               // keep field for sorting
+        field: 'wk_change',
         headerName: '1W',
         minWidth: 110,
         sortable: true,
         renderCell: makePeriodCell('wk_change', 'wk_change_pct'),
       },
-      // Momentum windows
-      { field: 'ret_1m', headerName: '% 1M', width: 80, type: 'number', renderCell: renderPct, cellClassName: (p) => signClass(p?.value) },
-      { field: 'ret_3m', headerName: '% 3M', width: 80, type: 'number', renderCell: renderPct, cellClassName: (p) => signClass(p?.value) },
-      { field: 'ret_6m', headerName: '% 6M', width: 80, type: 'number', renderCell: renderPct, cellClassName: (p) => signClass(p?.value) },
-      { field: 'ret_12_1m', headerName: '% 12–1M', width: 80, type: 'number', renderCell: renderPct, cellClassName: (p) => signClass(p?.value) },
+
+      { field: 'ret_1m', headerName: '% 1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      { field: 'ret_3m', headerName: '% 3M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      { field: 'ret_6m', headerName: '% 6M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      { field: 'ret_12_1m', headerName: '% 12–1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
 
       {
         field: 'pct_from_52w_high',
@@ -271,19 +352,18 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
           return <span className={cls}>{fmtPct(p?.value)}</span>;
         },
       },
-      { field: 'buy', headerName: 'Buy', width: 70 },
-      // old:
-// { field: 'reason', headerName: 'Reason', flex: 1.2, minWidth: 210 },
-{
-  field: 'badges',
-  headerName: 'Momentum',
-  minWidth: 180,
-  sortable: false,
-  filterable: false,
-  renderCell: BadgesCell,
-},
 
-// new (2-line small text with ellipsis)
+      { field: 'buy', headerName: 'Buy', width: 70 },
+
+      {
+        field: 'badges',
+        headerName: 'Momentum',
+        minWidth: 180,
+        sortable: false,
+        filterable: false,
+        renderCell: BadgesCell,
+      },
+
       {
         field: 'reason',
         headerName: 'Reason',
@@ -302,33 +382,30 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
               whiteSpace: 'normal',
               lineHeight: 1.25,
             }}
-            title={String(p?.value ?? '')} // full text on hover
+            title={String(p?.value ?? '')}
           >
             {String(p?.value ?? '')}
           </span>
         ),
       },
 
-      // Indicators
       { field: 'rsi', headerName: 'RSI', width: 80, type: 'number', renderCell: renderNum },
       { field: 'adx', headerName: 'ADX', width: 80, type: 'number', renderCell: renderNum },
 
-      // Others
-
-      { field: 'atr_pct', headerName: 'ATR %', width: 80, type: 'number', renderCell: renderPct },
+      { field: 'atr_pct', headerName: 'ATR %', width: 80, type: 'number', renderCell: renderPctCell },
       { field: 'liquidity', headerName: 'Liquidity (M)', width: 110, type: 'number', renderCell: renderMillions },
-
       { field: 'vol_spike', headerName: 'xRel Vol', width: 80, type: 'number', renderCell: renderNum },
-
-      
     ],
-    []
+    [],
   );
 
   if (query.isError) {
-    return <Alert severity="error" sx={{ m: 1 }}>Failed to load screener</Alert>;
+    return (
+      <Alert severity="error" sx={{ m: 1 }}>
+        Failed to load screener
+      </Alert>
+    );
   }
-  // ---------- combined 1W Δ + %1W cell ----------
 
   return (
     <Box className="datagrid-elevated" sx={{ height: 720, width: '100%' }}>
@@ -337,12 +414,17 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
         getRowId={getId}
         columns={columns}
         loading={query.isLoading || query.isFetching}
-        slots={{ loadingOverlay: LinearProgress }}
+        slots={{ loadingOverlay: LinearLoadingOverlay }}
         paginationMode="server"
         rowCount={rowCount}
         paginationModel={pagination}
-        onPaginationModelChange={setPagination}
-        pageSizeOptions={[10, 25, 50, 100,500]}
+        onPaginationModelChange={(m) =>
+          setPagination(prev => ({
+            page: m.pageSize !== prev.pageSize ? 0 : m.page,           // reset page if pageSize changed
+            pageSize: Math.min(MAX_PAGE_SIZE, Math.max(1, m.pageSize)), // clamp to MIT cap
+          }))
+        }
+        pageSizeOptions={[10, 25, 50, 100]} // MIT cap
         sortingMode="server"
         sortModel={sortModel}
         onSortModelChange={setSortModel}
@@ -354,7 +436,6 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
           if (sym) openDrawerFor(sym);
         }}
       />
-
       <RightDrawer symbol={drawerSymbol} open={drawerOpen} onClose={closeDrawer} />
     </Box>
   );

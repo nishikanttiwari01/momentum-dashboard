@@ -183,4 +183,26 @@ alerts:
     min_minutes_between: 60
   dedupe:
     window_minutes: 180
+
+rules:
+  breakeven_gain_pct: 5.0        # % gain to flip breakeven Active
+  atr_chand_mult: 2.0            # chandelier K (normal)
+  atr_chand_mult_euphoria: 1.4   # tighter K when euphoria is on
+  atr_init_mult: 2.0             # pre-entry prospective stop calc
+
+  euphoria:
+    rsi_min: 75
+    adx_min: 30
+    alt_rsi_min: 70
+    alt_adx_min: 25
+    adx_slope5_min: 0            # >0 means rising
+
+  soft_gates:
+    min_score: 35
+    min_relvol20: 0.8
+    min_adx14: 22
+    min_prox52w_pct: -10
+    require_base_len_bars: 15    # used as a soft gate ONLY if breakout gateway fails
+    breakout_overrides_soft_gates: true
+
 BACKFILL_ON_START: 1
