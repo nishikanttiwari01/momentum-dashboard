@@ -58,7 +58,14 @@ def post_scan_jobs(run_id: Optional[str]) -> Dict[str, Any]:
     try:
         fired = evaluate_momentum_crossups(run_id, settings_payload)
         try:
-            logger.info("post_scan_jobs_alerts_fired", extra={"run_id": run_id, "alerts_fired": int(fired)})
+            
+            logger.info(
+                "post_scan_jobs_alerts_fired run_id=%s, fired=%s",
+                run_id,
+                int(fired),
+                extra={"run_id": run_id, "alerts_fired": int(fired)},
+            )
+
         except Exception:
             pass
     except Exception as e:
@@ -70,7 +77,7 @@ def post_scan_jobs(run_id: Optional[str]) -> Dict[str, Any]:
 
     # Done marker
     try:
-        logger.info("post_scan_jobs_done", extra={"run_id": run_id, "alerts_fired": int(fired)})
+        logger.info("post_scan_jobs_done run_id=%s, fired=%s", run_id, fired,extra={"run_id": run_id, "alerts_fired": int(fired)})
     except Exception:
         pass
 

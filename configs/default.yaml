@@ -156,7 +156,7 @@ validation:
   config_schema_enforced: true      # reject unknown keys; validate on boot
 
 screener:
-  default_universe: "NIFTY50" # NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL|CUSTOM
+  default_universe: "ALL" # NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL|CUSTOM
 
 scheduler:
   enabled: true
@@ -177,7 +177,7 @@ alerts:
     token:    # leave empty unless your topic/server is protected
   rules:
     momentum_score_gte:
-      threshold: 55         # accepts 80 or 800 (800 → normalized to 80)
+      threshold: 75         # accepts 80 or 800 (800 → normalized to 80)
       repeat_policy: once_per_day
   throttle:
     min_minutes_between: 60

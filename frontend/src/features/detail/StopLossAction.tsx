@@ -57,7 +57,7 @@ function prettyState(primary?: string, legacyOn?: boolean, legacyActive?: boolea
   return '—';
 }
 
-export default function ActionBlock({
+export default function StopLossAction({
   stop_now,
   stop_method,
   exit_close_threshold,
@@ -66,6 +66,19 @@ export default function ActionBlock({
   breakeven_state,
   euphoria_state,
 }: Props) {
+  // Debug logging for observability (safe, minimal)
+  React.useEffect(() => {
+    try {
+      // only log when something meaningful changes
+      // eslint-disable-next-line no-console
+      console.debug('[StopLossAction]', {
+        stop_now, stop_method, exit_close_threshold,
+        breakeven_state, euphoria_state,
+        breakeven_active, euphoria_on,
+      });
+    } catch { /* no-op */ }
+  }, [stop_now, stop_method, exit_close_threshold, breakeven_state, euphoria_state, breakeven_active, euphoria_on]);
+
   // Derived display strings
   const stopHelp = `Sell if touched${stop_method ? ` (${stop_method})` : ''}`;
   const exitHelp = 'Sell next day if true';
@@ -86,13 +99,13 @@ export default function ActionBlock({
       {/* Rows: label | value | suggestion */}
       <KVRow
         label="Stop-loss (now)"
-        value={typeof stop_now === 'number' ? rup(stop_now) : undefined}
+        value={typeof stop_now === 'number' && stop_now > 0 ? rup(stop_now) : undefined}
         help={stopHelp}
       />
 
       <KVRow
         label="Exit at close if"
-        value={typeof exit_close_threshold === 'number' ? <>Close &lt; {rup(exit_close_threshold)}</> : undefined}
+        value={typeof exit_close_threshold === 'number' && exit_close_threshold > 0 ? <>Close &lt; {rup(exit_close_threshold)}</> : undefined}
         help={exitHelp}
       />
 

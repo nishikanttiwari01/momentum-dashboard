@@ -7,11 +7,11 @@ import { drawerPaperSx } from './styles';
 
 // modular pieces
 import DrawerHeader from './DrawerHeader';
-import Sparkline from './Sparkline';
+import Sparkline from './SparklineRe';
 import IndicatorsGrid from './IndicatorsGrid';
 import ScoreBreakdown from './ScoreBreakdown';
 import EntryModule from './EntryModule';
-import ActionBlock from './ActionBlock';
+import ActionBlock from './StopLossAction';
 import Meters from './Meters';
 import NextAction from './NextAction';
 import AlertsRow from './AlertsRow';

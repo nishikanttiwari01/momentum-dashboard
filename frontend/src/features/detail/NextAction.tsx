@@ -37,8 +37,24 @@ const Row: React.FC<{ label: string; value?: React.ReactNode }> = ({ label, valu
 };
 
 export default function NextAction({ text, refs = {}, method_pill, method_tooltip, reasons }: Props) {
-  const hasBand = typeof refs.entry_low === 'number' && typeof refs.entry_high === 'number';
-  const hasEma = typeof refs.ema_n === 'number' && typeof refs.ema_value === 'number';
+  React.useEffect(() => {
+    try {
+      // eslint-disable-next-line no-console
+      console.debug('[NextAction]', {
+        text,
+        refs: {
+          ema_n: refs?.ema_n, ema_value: refs?.ema_value,
+          entry_suggested: refs?.entry_suggested,
+          entry_low: refs?.entry_low, entry_high: refs?.entry_high,
+          entry_type: refs?.entry_type
+        },
+        reasons
+      });
+    } catch { /* no-op */ }
+  }, [text, refs?.ema_n, refs?.ema_value, refs?.entry_suggested, refs?.entry_low, refs?.entry_high, refs?.entry_type, reasons]);
+
+  const hasBand = typeof refs.entry_low === 'number' && isFinite(refs.entry_low as number) && typeof refs.entry_high === 'number' && isFinite(refs.entry_high as number);
+  const hasEma = typeof refs.ema_n === 'number' && isFinite(refs.ema_n) && typeof refs.ema_value === 'number' && isFinite(refs.ema_value);
 
   return (
     <Box sx={{ mb: 2 }}>
@@ -61,7 +77,7 @@ export default function NextAction({ text, refs = {}, method_pill, method_toolti
             label="Anchor"
             value={
               <span>
-                EMA{refs.ema_n} @ {num(refs.ema_value, 2)}
+                EMA{refs.ema_n} @ {rup(refs.ema_value)}
               </span>
             }
           />

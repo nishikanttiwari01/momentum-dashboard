@@ -1,3 +1,4 @@
+
 # backend/app/services/alerts.py
 from __future__ import annotations
 from dataclasses import dataclass
@@ -76,21 +77,27 @@ class AlertsConfig:
 def _iter_scores_for_run(run_id: Optional[str]) -> Iterable[Dict[str, Any]]:
     """Fetch all scored rows for a given run (pagination-friendly signature)."""
     repo = ScoresRepo()
+    ymd = f"{run_id[:4]}-{run_id[4:6]}-{run_id[6:8]}" 
     items, *_ = repo.read(
-        run_id=run_id,
-        as_of_str=None,
+        run_id=None,
+        as_of_str=ymd,
         filters=None,
         sort=None,
         page=1,
         per_page=10_000,  # NOTE: repo expects per_page (not page_size)
     )
+    # enable this log to see how many rows were loaded from Parquet
+    #log.info("_iter_scores_for_run items=%s", items)
     return items
 
 
 def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) -> int:
+    run_short = (run_id or "")[:14]
+    log.info("evaluate_momentum_crossups run_id=%s", run_short, extra={"run_id": run_short})
     cfg = AlertsConfig.from_settings(settings)
     if not cfg.enabled:
         return 0
+
     # Pull ntfy config from YAML and expose as env (so app.notifs.ntfy can read it)
     ntfy_cfg = (settings.get("alerts", {}) or {}).get("ntfy", {}) if isinstance(settings, dict) else {}
     if isinstance(ntfy_cfg, dict):
@@ -104,6 +111,23 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
     local_day = now_utc.astimezone(tz).date()
 
     items = list(_iter_scores_for_run(run_id))
+
+    # ---- Diagnostics: how many rows would qualify on pure threshold (independent of cross-up/state)
+    def _num(v):
+        try:
+            return float(v)
+        except Exception:
+            return float("nan")
+    ge_cnt = sum(1 for r in items if _num(r.get("score")) >= threshold)
+    try:
+        max_score = max((_num(r.get("score")) for r in items), default=float("nan"))
+    except Exception:
+        max_score = float("nan")
+    log.info("alerts_threshold_diagnostics max_score=%s", max_score,extra={
+        "run_id": run_short, "loaded": len(items), "threshold": threshold,
+        "ge_threshold_count": ge_cnt, "max_score": (None if max_score != max_score else max_score),
+    })
+
     if not items:
         return 0
 
@@ -133,6 +157,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
             prev = state.last_score if state.last_score is not None else 0
 
             crossed_up = (prev < threshold) and (score >= threshold)
+            '''
             if not crossed_up:
                 # Persist last_score so future crosses evaluate correctly
                 repo.upsert_state(
@@ -145,6 +170,18 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
                 )
                 continue
 
+            '''
+            # MINIMAL FIX: only alert if today's score meets the threshold
+            if score < threshold:
+                repo.upsert_state(
+                    symbol,
+                    RULE_MOMENTUM_GTE,
+                    last_score=score,
+                    last_fired_at_utc=state.last_fired_at_utc,
+                    last_fired_local_date=state.last_fired_local_date,
+                    last_fired_run_id=state.last_fired_run_id,
+                )
+                continue
             # Once-per-day guard
             if state.last_fired_local_date == local_day:
                 repo.upsert_state(
@@ -160,7 +197,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
             # Build notification body
             title = f"Momentum >={int(threshold)}: {symbol}"
             price = row.get("last") or row.get("close") or row.get("price")
-            run_str = (run_id or "")[:14]
+            run_str = run_short
             body_lines = [
                 f"Score: {score}",
                 f"Last: {price:.2f}" if isinstance(price, (float, int)) else f"Last: {price}",
@@ -174,8 +211,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
             try:
                 # NTFY (warn loudly if topic missing)
                 if cfg.channels.get("ntfy", True):
-                    log.info("ntfy about to send",
-                            extra={"symbol": symbol, "run_id": run_str, "title": title})
+                    log.info("ntfy about to send", extra={"symbol": symbol, "run_id": run_str, "title": title})
                     if not os.getenv("NTFY_TOPIC"):
                         log.warning(
                             "ntfy disabled: NTFY_TOPIC not set; skipping send",
@@ -228,5 +264,6 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
         except Exception:
             pass
 
-    log.info("alerts evaluated  run_id=%s fired=%s", extra={"run_id": (run_id or "")[:14], "fired": fired})
+    # FIXED: proper final log (remove stray %s placeholders)
+    log.info("alerts evaluated", extra={"run_id": run_short, "fired": fired, "threshold": threshold, "loaded": len(items)})
     return fired

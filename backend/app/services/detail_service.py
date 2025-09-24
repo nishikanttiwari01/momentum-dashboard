@@ -9,6 +9,28 @@ from zoneinfo import ZoneInfo
 
 log = logging.getLogger("app.services.detail")
 
+
+# --- Minimal stop helpers (additive; safe) ---
+def _atrxk_stop(entry: Optional[float], atr_pct: Optional[float], k: float) -> Optional[float]:
+    """Compute ATR×K stop only when entry & ATR% exist; return None otherwise."""
+    try:
+        if entry is None or float(entry) <= 0: return None
+        if atr_pct is None or float(atr_pct) <= 0: return None
+        stop_val = float(entry) - float(entry) * (float(atr_pct) / 100.0) * float(k)
+        return round(stop_val, 2)
+    except Exception:
+        log.exception("atrxk_stop: failed entry=%s atr_pct=%s k=%s", entry, atr_pct, k)
+        return None
+
+def _ratchet_stop(prev: Optional[float], now: Optional[float]) -> Optional[float]:
+    """Never decrease stop; prefer the higher of (prev, now)."""
+    try:
+        if prev is None: return now
+        if now is None: return prev
+        return max(float(prev), float(now))
+    except Exception:
+        log.exception("ratchet_stop: failed prev=%s now=%s", prev, now)
+        return now or prev
 _TZ_DEFAULT = "Asia/Singapore"
 
 def _as_of_from_run_id(run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
@@ -75,7 +97,7 @@ except Exception:
     _domain_compute_meters = None
 
 try:
-    from app.domain.next_action import compute_next_action as _domain_compute_next
+    from app.domain.rules.next_action import compute_next_action as _domain_compute_next
 except Exception:
     _domain_compute_next = None
 
