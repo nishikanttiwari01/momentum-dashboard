@@ -221,7 +221,6 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
                 last_fired_run_id=run_id,
             )
             fired += 1
-
         s.commit()
     finally:
         try:
@@ -229,5 +228,5 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
         except Exception:
             pass
 
-    log.info("alerts evaluated", extra={"run_id": (run_id or "")[:14], "fired": fired})
+    log.info("alerts evaluated  run_id=%s fired=%s", extra={"run_id": (run_id or "")[:14], "fired": fired})
     return fired

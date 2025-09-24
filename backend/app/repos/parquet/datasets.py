@@ -15,7 +15,6 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 import re
-import os
 import logging
 
 
@@ -35,7 +34,10 @@ _ROOT_LOGGED_ONCE = False
 def _log_resolved_root_once(p: Path) -> None:
     global _ROOT_LOGGED_ONCE
     if not _ROOT_LOGGED_ONCE:
-        log.info("parquet_root_resolved", extra={"root": str(p)})
+        try:
+            log.info("parquet_root_resolved", extra={"parquet_root": str(p)})
+        except Exception:
+            pass
         _ROOT_LOGGED_ONCE = True
 
 def _parquet_root_abs() -> Path:
@@ -55,10 +57,12 @@ def _parquet_root_abs() -> Path:
         backend_dir = Path(__file__).resolve().parents[3]  # .../backend
         p = (backend_dir / "parquet").resolve()
 
+    _log_resolved_root_once(p)
+
     if not p.exists():
         # Don't mkdir here; writers will create as needed. Just log once.
         try:
-            log.info("parquet root (resolved; will mkdir on write if missing)", extra={"root": str(p)})
+            log.info("parquet_root_missing_will_create_on_write", extra={"parquet_root": str(p)})
         except Exception:
             pass
     return p
@@ -67,33 +71,48 @@ def get_parquet_root() -> Path:
     # Single source of truth
     return _parquet_root_abs()
 
-# CHANGED: Register Phase-11 enriched dataset "scores_v2" alongside existing tables.
-# Using a set keeps lookups/validation simple.
-TABLES = {"universe", "prices", "indicators", "scores", "scores_v2", "meta"}  # <-- added "scores_v2"
+# Register known tables (phase-compatible)
+TABLES = {"universe", "prices", "indicators", "scores", "scores_v2", "meta"}
 
 def _table_root(table: str) -> Path:
     assert table in TABLES or table == "meta", f"Unknown table: {table}"
     root = get_parquet_root() / table
     root.mkdir(parents=True, exist_ok=True)
+    try:
+        log.debug("table_root_resolved", extra={"table": table, "target_dir": str(root)})
+    except Exception:
+        pass
     return root
 
 def _run_partition(table: str, run_id: str) -> Path:
     # Partition style: table/run_id=YYYYMMDDTHHMMSSZ
-    return _table_root(table) / f"run_id={run_id}"
+    p = _table_root(table) / f"run_id={run_id}"
+    try:
+        log.debug("run_partition_resolved", extra={"table": table, "run_id": run_id, "target_dir": str(p)})
+    except Exception:
+        pass
+    return p
 
 def _dt_partition(parent: Path, dt: str) -> Path:
     # Used under prices/run_id=.../dt=YYYY-MM-DD
-    return parent / f"dt={dt}"
+    p = parent / f"dt={dt}"
+    try:
+        log.debug("dt_partition_resolved", extra={"dt": dt, "target_dir": str(p)})
+    except Exception:
+        pass
+    return p
 
 
-_RUN_ID_RE = re.compile(r"^\d{8}(T?\d{6}Z?)$")  # accepts YYYYMMDDHHMMSS or YYYYMMDDTHHMMSSZ
+_RUN_ID_RE = re.compile(r"^\d{8}(T?\d{6}Z?)$")  # accepts YYYYMMDDHHMMSS / YYYYMMDDTHHMMSS / ...Z
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 def _is_valid_run_id(run_id: str) -> bool:
     """
     Valid run_id formats:
-      - 'YYYYMMDDHHMMSS'            (e.g., 20250912 034903)
-      - 'YYYYMMDDTHHMMSSZ'          (e.g., 20250912T034903Z)  <-- what the CLI emits
+      - 'YYYYMMDDHHMMSS'
+      - 'YYYYMMDDTHHMMSS'
+      - 'YYYYMMDDHHMMSSZ'
+      - 'YYYYMMDDTHHMMSSZ'   (CLI-friendly ISO-ish)
     """
     return bool(_RUN_ID_RE.match(run_id))
 
@@ -122,17 +141,35 @@ class FileLock:
                 (self.lock_path / "owner.txt").write_text(
                     f"pid={os.getpid()} at={datetime.utcnow().isoformat()}Z\n"
                 )
+                try:
+                    log.debug("file_lock_acquired", extra={"lock_dir": str(self.lock_path)})
+                except Exception:
+                    pass
                 return
             except FileExistsError:
                 if time.time() - start > self.timeout:
+                    try:
+                        log.error("file_lock_timeout", extra={"lock_dir": str(self.lock_path), "timeout_s": self.timeout})
+                    except Exception:
+                        pass
                     raise TimeoutError(f"Lock timeout: {self.lock_path}")
                 time.sleep(self.poll)
 
     def release(self) -> None:
         try:
             shutil.rmtree(self.lock_path)
+            try:
+                log.debug("file_lock_released", extra={"lock_dir": str(self.lock_path)})
+            except Exception:
+                pass
         except FileNotFoundError:
             pass
+        except Exception as e:
+            # Non-fatal; log and continue
+            try:
+                log.warning("file_lock_release_failed", extra={"lock_dir": str(self.lock_path), "error": repr(e)})
+            except Exception:
+                pass
 
     def __enter__(self):
         self.acquire()
@@ -200,7 +237,7 @@ class AtomicWriter:
                     "table": table,
                     "run_id": run_id,
                     "final_dir": str(self.final_dir),
-                    "root": str(self.root),
+                    "parquet_root": str(self.root),
                 },
             )
         except Exception:
@@ -231,6 +268,13 @@ class AtomicWriter:
         )
         self.parts_written += 1
         self.rows_written += tab.num_rows
+        try:
+            log.debug("writer_part_written", extra={
+                "table": self.table, "run_id": self.run_id, "part": int(self.parts_written - 1),
+                "rows": int(tab.num_rows), "tmp_dir": str(self.tmp_dir)
+            })
+        except Exception:
+            pass
 
     def _write_markers(self) -> None:
         (self.tmp_dir / "rowcount.txt").write_text(str(self.rows_written))
@@ -242,8 +286,21 @@ class AtomicWriter:
         self._closed = True
         try:
             shutil.rmtree(self.tmp_dir)
+            try:
+                log.info("writer_abort_cleanup_done", extra={
+                    "table": self.table, "run_id": self.run_id, "tmp_dir": str(self.tmp_dir)
+                })
+            except Exception:
+                pass
         except FileNotFoundError:
             pass
+        except Exception as e:
+            try:
+                log.warning("writer_abort_cleanup_failed", extra={
+                    "table": self.table, "run_id": self.run_id, "tmp_dir": str(self.tmp_dir), "error": repr(e)
+                })
+            except Exception:
+                pass
 
     def commit(self) -> None:
         """
@@ -262,7 +319,7 @@ class AtomicWriter:
         if self.final_dir.exists():
             # If someone already wrote it, treat as success and discard tmp
             try:
-                log.info("writer_commit_noop_exists", extra={"target": str(self.final_dir)})
+                log.info("writer_commit_noop_exists", extra={"target_dir": str(self.final_dir)})
             except Exception:
                 pass
             self.abort()
@@ -277,18 +334,36 @@ class AtomicWriter:
             if self.final_dir.exists():
                 # Another writer beat us; discard tmp
                 try:
-                    log.info("writer_commit_noop_raced", extra={"target": str(self.final_dir)})
+                    log.info("writer_commit_noop_raced", extra={"target_dir": str(self.final_dir)})
                 except Exception:
                     pass
                 self.abort()
                 return
             # Move tmp to final (atomic on same filesystem)
-            os.replace(self.tmp_dir, self.final_dir)
+            try:
+                os.replace(self.tmp_dir, self.final_dir)
+            except Exception as e1:
+                # Fallback for Windows oddities or FS peculiarities
+                try:
+                    shutil.move(str(self.tmp_dir), str(self.final_dir))
+                except Exception as e2:
+                    try:
+                        log.error("writer_commit_move_failed", extra={
+                            "target_dir": str(self.final_dir),
+                            "tmp_dir": str(self.tmp_dir),
+                            "error_primary": repr(e1),
+                            "error_fallback": repr(e2),
+                        })
+                    except Exception:
+                        pass
+                    # Best-effort cleanup
+                    self.abort()
+                    raise
             try:
                 log.info(
                     "writer_commit_done",
                     extra={
-                        "target": str(self.final_dir),
+                        "target_dir": str(self.final_dir),
                         "rows": int(self.rows_written),
                         "parts": int(self.parts_written),
                     },
@@ -301,19 +376,23 @@ def begin_atomic_write(table: str, run_id: str, cfg: Optional[WriterConfig] = No
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
     # Minimal trace for legacy single-partition writes
     try:
-        log.info("begin_atomic_write", extra={"table": table, "run_id": run_id, "root": str(get_parquet_root())})
+        log.info("begin_atomic_write", extra={"table": table, "run_id": run_id, "parquet_root": str(get_parquet_root())})
     except Exception:
         pass
     return AtomicWriter(table, run_id, cfg or WriterConfig())
 
 # -----------------------------
-# NEW: Daily & Intraday helpers for "scores"
+# Daily & Intraday helpers for "scores"
 # -----------------------------
 
 def scores_daily_dir(as_of: str) -> Path:
     assert _is_valid_date(as_of), f"Bad as_of date: {as_of}"
     p = _table_root("scores") / "daily" / f"as_of={as_of}"
     p.mkdir(parents=True, exist_ok=True)
+    try:
+        log.debug("scores_daily_dir_resolved", extra={"as_of": as_of, "target_dir": str(p)})
+    except Exception:
+        pass
     return p
 
 def scores_intraday_run_dir(date_str: str, run_id: str) -> Path:
@@ -321,6 +400,12 @@ def scores_intraday_run_dir(date_str: str, run_id: str) -> Path:
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
     p = _table_root("scores") / "intraday" / f"date={date_str}" / f"run_id={run_id}"
     p.parent.mkdir(parents=True, exist_ok=True)  # ensure date dir exists
+    try:
+        log.debug("scores_intraday_run_dir_resolved", extra={
+            "date": date_str, "run_id": run_id, "target_dir": str(p)
+        })
+    except Exception:
+        pass
     return p
 
 def _has_committed_run_under(path: Path) -> bool:
@@ -332,6 +417,19 @@ def _has_committed_run_under(path: Path) -> bool:
         return False
     for child in path.glob("run_id=*"):
         if child.is_dir() and (child / "_SUCCESS").exists():
+            return True
+    return False
+
+def _has_any_run_under(path: Path) -> bool:
+    """
+    True if 'path' contains any child directory named run_id=* (regardless of _SUCCESS).
+    This satisfies the stricter "do not override if folder for that day already exists"
+    requirement for daily scores.
+    """
+    if not path.exists():
+        return False
+    for child in path.glob("run_id=*"):
+        if child.is_dir():
             return True
     return False
 
@@ -349,7 +447,7 @@ class _NullWriter:
     def commit(self) -> None:
         # Trace no-op commits explicitly so it's visible in logs
         try:
-            log.info("writer_commit_noop_daily_immutable", extra={"target": str(self.final_dir)})
+            log.info("writer_commit_noop_daily_immutable", extra={"target_dir": str(self.final_dir)})
         except Exception:
             pass
         return
@@ -360,21 +458,25 @@ class _NullWriter:
 def begin_atomic_write_scores_daily(as_of: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter | _NullWriter:
     """
     Create a writer under scores/daily/as_of=YYYY-MM-DD/run_id=<run_id>.
-    If that as_of already has a committed run, return a no-op writer (skip/immutability).
+
+    Policy (per user request):
+      - If that as_of ALREADY HAS ANY run folder, skip (immutable per-day).
+        This is stricter than only checking for _SUCCESS markers.
     """
     as_of_root = scores_daily_dir(as_of)
-    if _has_committed_run_under(as_of_root):
+
+    # Strict immutability: skip if any run_id=* exists under as_of
+    if _has_any_run_under(as_of_root):
         try:
-            log.info("scores_daily_begin_noop", extra={"as_of": as_of, "target": str(as_of_root)})
+            log.info("scores_daily_begin_noop_exists", extra={"as_of": as_of, "as_of_dir": str(as_of_root)})
         except Exception:
             pass
-        # Daily is immutable unless a future "force" path is used
         return _NullWriter(final_dir=as_of_root)
 
     final_dir = as_of_root / f"run_id={run_id}"
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
     try:
-        log.info("scores_daily_begin", extra={"as_of": as_of, "run_id": run_id, "target": str(final_dir)})
+        log.info("scores_daily_begin", extra={"as_of": as_of, "run_id": run_id, "target_dir": str(final_dir)})
     except Exception:
         pass
     return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
@@ -386,7 +488,7 @@ def begin_atomic_write_scores_intraday(date_str: str, run_id: str, cfg: Optional
     """
     final_dir = scores_intraday_run_dir(date_str, run_id)
     try:
-        log.info("scores_intraday_begin", extra={"date": date_str, "run_id": run_id, "target": str(final_dir)})
+        log.info("scores_intraday_begin", extra={"date": date_str, "run_id": run_id, "target_dir": str(final_dir)})
     except Exception:
         pass
     return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
@@ -432,6 +534,10 @@ def scan_scores_daily(as_of: str, columns: Optional[Iterable[str]] = None, filte
     """
     root = scores_daily_dir(as_of)
     if not _has_committed_run_under(root):
+        try:
+            log.info("scan_scores_daily_empty_or_uncommitted", extra={"as_of": as_of, "as_of_dir": str(root)})
+        except Exception:
+            pass
         return pa.table({c: [] for c in (columns or [])}) if columns else pa.table({})
     # dataset() scans recursively; will include files under run_id=...
     dataset = ds.dataset(root, format="parquet", partitioning="hive", exclude_invalid_files=True)
@@ -444,6 +550,10 @@ def scan_scores_intraday(date_str: str, run_id: str, columns: Optional[Iterable[
     """
     part_root = scores_intraday_run_dir(date_str, run_id)
     if not (part_root / "_SUCCESS").exists():
+        try:
+            log.info("scan_scores_intraday_empty_or_uncommitted", extra={"date": date_str, "run_id": run_id, "target_dir": str(part_root)})
+        except Exception:
+            pass
         return pa.table({c: [] for c in (columns or [])}) if columns else pa.table({})
     dataset = ds.dataset(part_root, format="parquet", partitioning="hive", exclude_invalid_files=True)
     return dataset.to_table(columns=list(columns) if columns else None, filter=filters)
@@ -492,6 +602,10 @@ def latest_snapshot(table: str) -> Optional[str]:
 def _scan_dataset(path: Path, columns: Optional[Iterable[str]] = None, filters: Optional[ds.Expression] = None) -> pa.Table:
     if not path.exists():
         # Return empty table (no files)
+        try:
+            log.info("scan_dataset_missing_path", extra={"target_dir": str(path)})
+        except Exception:
+            pass
         return pa.table({c: [] for c in (columns or [])}) if columns else pa.table({})
     dataset = ds.dataset(path, format="parquet", partitioning="hive", exclude_invalid_files=True)
     return dataset.to_table(columns=list(columns) if columns else None, filter=filters)
@@ -513,6 +627,10 @@ def scan(
     # Resolve run_id
     rid = run_id or latest_snapshot(table)
     if rid is None:
+        try:
+            log.info("scan_empty_no_snapshot", extra={"table": table})
+        except Exception:
+            pass
         return pl.DataFrame() if (as_polars and pl is not None) else pa.table({})
 
     part_root = _run_partition(table, rid)
@@ -520,6 +638,10 @@ def scan(
     # Verify committed
     if not (part_root / "_SUCCESS").exists():
         # Not committed: treat as empty
+        try:
+            log.info("scan_uncommitted_partition", extra={"table": table, "run_id": rid, "target_dir": str(part_root)})
+        except Exception:
+            pass
         return pl.DataFrame() if (as_polars and pl is not None) else pa.table({})
 
     # Build filter
@@ -567,7 +689,10 @@ def write_atomic_snapshot(
             write_schema_version(table, int(schema_version))
         except Exception:
             # Non-fatal: keep going with whatever meta exists
-            pass
+            try:
+                log.warning("write_schema_version_failed_nonfatal", extra={"table": table, "schema_version": schema_version})
+            except Exception:
+                pass
 
         w = begin_atomic_write(table, run_id)
 

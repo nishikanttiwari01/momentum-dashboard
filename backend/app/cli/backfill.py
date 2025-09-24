@@ -4,40 +4,116 @@ from __future__ import annotations
 import os
 import sys
 import time
+import logging
 from dataclasses import dataclass
-from datetime import date, timedelta, datetime
-from typing import Iterable, Optional
+from datetime import date, timedelta
+from typing import Iterable, Optional, Tuple, Dict, Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from pathlib import Path as _Path
 
-API = os.getenv("MD_API", "http://127.0.0.1:8000")  # avoid localhost DNS on Windows
+API = os.getenv("MD_API", "http://127.0.0.1:8000")
+
+log = logging.getLogger(__name__)
+
+def _setup_logging() -> None:
+    if getattr(_setup_logging, "_configured", False):
+        return
+    handler = logging.StreamHandler(stream=sys.stdout)
+    fmt = "%Y-%m-%d %H:%M:%S %(levelname)s [%(name)s] %(message)s"
+    handler.setFormatter(logging.Formatter(fmt))
+    root = logging.getLogger()
+    if not root.handlers:
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+    log.setLevel(logging.INFO)
+    _setup_logging._configured = True  # type: ignore[attr-defined]
 
 
 def _trading_days(start: date, end: date) -> Iterable[date]:
     d = start
     while d <= end:
-        if d.weekday() < 5:  # Mon–Fri; swap in an exchange calendar if you have one
+        if d.weekday() < 5:
             yield d
         d += timedelta(days=1)
+
+
+# ---------- Resolve parquet root exactly like datasets.py (if importable) ----------
+_ROOT_LOGGED_ONCE = False
+def _parquet_root_abs() -> _Path:
+    try:
+        # Prefer the same resolver as writers
+        from app.repos.parquet.datasets import get_parquet_root  # type: ignore
+        p = get_parquet_root()
+        p = _Path(str(p)).resolve()
+    except Exception:
+        env_root = os.getenv("PARQUET_ROOT")
+        if env_root:
+            p = _Path(env_root).expanduser().resolve()
+        else:
+            # this file: backend/app/cli/backfill.py  → backend/
+            p = _Path(__file__).resolve().parents[3] / "parquet"
+            p = p.resolve()
+    global _ROOT_LOGGED_ONCE
+    if not _ROOT_LOGGED_ONCE:
+        try:
+            log.info("parquet_root_resolved(backfill)", extra={"parquet_root": str(p)})
+        except Exception:
+            pass
+        _ROOT_LOGGED_ONCE = True
+    return p
+
+def _as_of_dir_exists(d: date) -> bool:
+    """
+    True if scores/daily/as_of=DATE already contains ANY data:
+      - any run_id=* subfolder
+      - OR any parquet files anywhere beneath
+      - OR a _SUCCESS marker
+    Daily partitions are immutable, so any presence means 'done'.
+    """
+    root = _parquet_root_abs() / "scores" / "daily" / f"as_of={d.isoformat()}"
+    # If no as_of dir, clearly not done
+    if not root.exists():
+        return False
+    try:
+        # Check run_id subfolders quickly
+        for child in root.iterdir():
+            if child.is_dir() and child.name.startswith("run_id="):
+                log.info("as_of_present(run_id)", extra={"date": d.isoformat(), "path": str(root)})
+                return True
+        # Check markers/files (robust against older layouts)
+        if (root / "_SUCCESS").exists() or (root / "rowcount.txt").exists():
+            log.info("as_of_present(marker)", extra={"date": d.isoformat(), "path": str(root)})
+            return True
+        # Any parquet files at any depth under as_of
+        try:
+            next(root.rglob("*.parquet"))
+            log.info("as_of_present(parquet)", extra={"date": d.isoformat(), "path": str(root)})
+            return True
+        except StopIteration:
+            return False
+    except Exception as e:
+        # If listing fails, be conservative and do not skip (avoid false positives)
+        log.warning("as_of_check_failed", extra={"date": d.isoformat(), "path": str(root), "error": str(e)})
+        return False
 
 
 @dataclass
 class BackfillConfig:
     months_back: int = 12
-    sleep_between_sec: float = 0.5     # be nice to the API
+    sleep_between_sec: float = 0.5
     timeout_connect: float = 5.0
-    timeout_read: float = 180.0
-    max_retries: int = 4               # per request
+    timeout_read: float = 600.0  # allow long runs (10 min) to complete
+    max_retries: int = 4
     backoff_factor: float = 0.8
-    start: Optional[date] = None       # override window
+    start: Optional[date] = None
     end: Optional[date] = None
 
 
 def _session(cfg: BackfillConfig) -> requests.Session:
     sess = requests.Session()
-    # Retries on connection resets/EOFs/5xx; idempotent POST because we use Idempotency-Key
     retry = Retry(
         total=cfg.max_retries,
         connect=cfg.max_retries,
@@ -50,60 +126,106 @@ def _session(cfg: BackfillConfig) -> requests.Session:
     adapter = HTTPAdapter(max_retries=retry, pool_connections=2, pool_maxsize=2)
     sess.mount("http://", adapter)
     sess.mount("https://", adapter)
-    # Some Windows stacks behave better if we disable keep-alive
     sess.headers.update({"Connection": "close", "Accept": "application/json"})
     return sess
 
 
-def _post_scan(session: requests.Session, d: Optional[date], cfg: BackfillConfig) -> dict:
+def _post_scan(session: requests.Session, d: Optional[date], cfg: BackfillConfig) -> Tuple[int, Dict[str, Any]]:
     key = f"BF_{(d or date.today()).isoformat()}"
-    payload = {"as_of": d.isoformat()} if d else {}
+    payload: Dict[str, Any] = {"as_of": d.isoformat()} if d else {}
+    log.info("scan_request", extra={"as_of": payload.get("as_of"), "idempotency_key": key, "api": API})
     r = session.post(
         f"{API}/api/v1/scan",
         json=payload,
         headers={"Idempotency-Key": key, "Content-Type": "application/json"},
         timeout=(cfg.timeout_connect, cfg.timeout_read),
     )
-    if r.status_code not in (200, 201):
-        # Don’t crash the whole run; bubble up a concise error for this day
-        raise RuntimeError(f"{d}: HTTP {r.status_code} {r.text[:200]}")
-    return r.json()
+    log.info("scan_response", extra={"as_of": payload.get("as_of"), "status_code": r.status_code})
+
+    if r.status_code not in (200, 201, 202):
+        snippet = (r.text or "")[:400]
+        log.error("scan_failed", extra={"as_of": payload.get("as_of"), "status_code": r.status_code, "body": snippet})
+        raise RuntimeError(f"{d}: HTTP {r.status_code} {snippet}")
+
+    try:
+        data = r.json() or {}
+    except Exception:
+        data = {}
+
+    counts = data.get("counts") or {}
+    log.info(
+        "scan_success",
+        extra={
+            "as_of": payload.get("as_of"),
+            "status": ("created" if r.status_code == 201 else ("accepted" if r.status_code == 202 else "replayed")),
+            "run_id": data.get("run_id"),
+            "rows_written": counts.get("rows_written"),
+            "snapshot_path": data.get("snapshot_path"),
+        },
+    )
+    return r.status_code, data
 
 
 def main(argv: list[str] | None = None) -> int:
+    _setup_logging()
     argv = argv or sys.argv[1:]
     cfg = BackfillConfig()
 
-    # Optional CLI: backfill.py [YYYY-MM-DD] [YYYY-MM-DD]
-    if len(argv) >= 1:
-        cfg.start = date.fromisoformat(argv[0])
-    if len(argv) >= 2:
-        cfg.end = date.fromisoformat(argv[1])
+    try:
+        if len(argv) >= 1 and argv[0]:
+            cfg.start = date.fromisoformat(argv[0])
+        if len(argv) >= 2 and argv[1]:
+            cfg.end = date.fromisoformat(argv[1])
+    except Exception as e:
+        log.error("bad_date_args", extra={"argv": argv, "error": str(e)})
+        print("Usage: python -m app.cli.backfill [YYYY-MM-DD] [YYYY-MM-DD]", file=sys.stderr)
+        return 64
 
     today = date.today()
     yesterday = today - timedelta(days=1)
 
-    # Default: last ~12 months up to YESTERDAY (not today)
     start = cfg.start or (today - timedelta(days=int(cfg.months_back * 365 / 12) + 30))
     end = cfg.end or yesterday
 
-    # If user passed an end date in the future or today, clamp to yesterday
     if end >= today:
         end = yesterday
 
+    if start > end:
+        log.warning("empty_backfill_window", extra={"start": start.isoformat(), "end": end.isoformat()})
+        print("Empty backfill window; nothing to do.")
+        return 0
+
     sess = _session(cfg)
     failures: list[str] = []
+    total_rows = 0
+    total_days = 0
+    skipped_days = 0
 
+    log.info("backfill_window", extra={"start": start.isoformat(), "end": end.isoformat(), "api": API})
     print(f"Backfill window: {start} → {end}  (API={API})")
+
     for d in _trading_days(start, end):
+        total_days += 1
+        if _as_of_dir_exists(d):
+            skipped_days += 1
+            log.info("day_skip_already_present", extra={"date": d.isoformat()})
+            print("skip", d, "(already present)")
+            continue
+
         try:
             print("scan", d)
-            _post_scan(sess, d, cfg)
+            status, resp = _post_scan(sess, d, cfg)
+            counts = (resp or {}).get("counts") or {}
+            rw = counts.get("rows_written") or 0
+            total_rows += int(rw) if isinstance(rw, int) else 0
+            log.info("day_done", extra={"date": d.isoformat(), "status": ("created" if status == 201 else ("accepted" if status == 202 else "replayed")), "rows_written": rw})
         except Exception as e:
-            # Record and continue; we’ll print a retry command at the end
             print(f"!! failed {d}: {e}", file=sys.stderr)
+            log.exception("day_failed", extra={"date": d.isoformat()})
             failures.append(f"{d}")
         time.sleep(cfg.sleep_between_sec)
+
+    log.info("backfill_done", extra={"days": total_days, "skipped": skipped_days, "failures": len(failures), "total_rows": total_rows})
 
     if failures:
         print("\nSome days failed:")

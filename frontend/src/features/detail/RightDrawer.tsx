@@ -48,7 +48,6 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-
 export default function RightDrawer({ symbol, open, onClose }: Props) {
   const enabled = Boolean(open && symbol);
   const { data, isFetching, error } = useInstrumentDetail(symbol || '', undefined, {
@@ -176,8 +175,8 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
 
       {/* BODY */}
       <Box sx={{ px: 3, py: 2, overflowY: 'auto' }}>
-        {/* Keep your existing sections/components exactly as-is */}
-        <Sparkline />
+        {/* Sparkline (fixed: use d?.sparkline instead of undefined detail) */}
+        <Sparkline data={d?.sparkline as any} height={150} />
 
         <ScoreBreakdown
           score={

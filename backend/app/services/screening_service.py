@@ -74,6 +74,19 @@ def _ensure_parquet_root() -> None:
         pass
 
 
+def _find_committed_run_for_as_of(as_of_date: str) -> Optional[str]:
+    # Return the run_id of a committed daily snapshot for the given as_of, if any.
+    try:
+        as_of_root = datasets.scores_daily_dir(as_of_date)
+        cands = []
+        for child in as_of_root.glob("run_id=*"):
+            if child.is_dir() and (child / "_SUCCESS").exists():
+                rid = child.name.split("run_id=", 1)[-1]
+                cands.append(rid)
+        return sorted(cands)[-1] if cands else None
+    except Exception:
+        return None
+
 def _history_df(symbol: str, period: str = "400d") -> pd.DataFrame:
     """
     Pull ~18 months of daily candles (adj close, ohlc, volume) for indicators.
@@ -531,7 +544,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
 
             # --- skip symbols with no prices ---
             if df_eff is None or df_eff.empty:
-                log.warning("no prices for symbol; skipping row", extra={"symbol": sym, "as_of": as_of_iso})
+                #log.warning("no prices for symbol; skipping row", extra={"symbol": sym, "as_of": as_of_iso})
                 continue
 
             ind = _compute_indicators(df_eff)
@@ -563,22 +576,40 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                     extra={"as_of": as_of_date, "run_id": job.run_id, "rows": rows_written, "target": str(target) if target else None}
                 )
                 w_daily = datasets.begin_atomic_write_scores_daily(as_of_date, job.run_id)
-                w_daily.write_df(pa.Table.from_pylist(rows))
-                w_daily.commit()
-                snapshot_path = str(
-                    (datasets.get_parquet_root()
-                     / "scores" / "daily"
-                     / f"as_of={as_of_date}"
-                     / f"run_id={job.run_id}").resolve()
-                )
-                # post-commit quick listing
-                try:
-                    tgt = (datasets.get_parquet_root() / "scores" / "daily" / f"as_of={as_of_date}" / f"run_id={job.run_id}")
-                    files = [p.name for p in tgt.glob("*.parquet")] if tgt.exists() else []
-                    log.info("scores_daily_postcommit", extra={"target": str(tgt), "files": files})
-                except Exception:
-                    pass
-                log.info("scores daily written", extra={"as_of": as_of_date, "run_id": job.run_id, "rows": rows_written})
+                # Detect immutable/no-op writer (from datasets) to avoid misleading logs/paths
+                is_noop_daily = getattr(w_daily, "_closed", False) and not hasattr(w_daily, "tmp_dir")
+                if is_noop_daily:
+                    # Skip writing; point snapshot_path to existing committed run or the as_of dir
+                    existing_rid = _find_committed_run_for_as_of(as_of_date)
+                    if existing_rid:
+                        snapshot_path = str((
+                            datasets.get_parquet_root() / "scores" / "daily" / f"as_of={as_of_date}" / f"run_id={existing_rid}"
+                        ).resolve())
+                    else:
+                        snapshot_path = str((
+                            datasets.get_parquet_root() / "scores" / "daily" / f"as_of={as_of_date}"
+                        ).resolve())
+                    log.info(
+                        "scores_daily_skip_immutable",
+                        extra={"as_of": as_of_date, "existing_run_id": existing_rid, "snapshot_path": snapshot_path}
+                    )
+                else:
+                    w_daily.write_df(pa.Table.from_pylist(rows))
+                    w_daily.commit()
+                    snapshot_path = str(
+                        (datasets.get_parquet_root()
+                         / "scores" / "daily"
+                         / f"as_of={as_of_date}"
+                         / f"run_id={job.run_id}").resolve()
+                    )
+                    # post-commit quick listing
+                    try:
+                        tgt = (datasets.get_parquet_root() / "scores" / "daily" / f"as_of={as_of_date}" / f"run_id={job.run_id}")
+                        files = [p.name for p in tgt.glob("*.parquet")] if tgt.exists() else []
+                        log.info("scores_daily_postcommit", extra={"target": str(tgt), "files": files})
+                    except Exception:
+                        pass
+                    log.info("scores daily written", extra={"as_of": as_of_date, "run_id": job.run_id, "rows": rows_written})
             else:
                 # INTRADAY
                 today_str = _utcnow_aware().date().strftime("%Y-%m-%d")

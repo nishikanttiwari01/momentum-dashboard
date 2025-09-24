@@ -1,6 +1,9 @@
 # backend/app/domain/next_action.py
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple, Optional
+import logging
+
+log = logging.getLogger("app.domain.next_action")
 
 def _fmt_price(x: Optional[float]) -> str:
     try:
@@ -44,7 +47,7 @@ def _breakeven_active(pos: Dict[str, Any], price: Optional[float]) -> bool:
 def _exit_close_threshold(ind: Dict[str, Any], eup_on: bool) -> Optional[float]:
     """
     Exit at close if Close < EMA{n}, where n = 10 normally, 8 if euphoria.
-    We accept either explicit ema values or fall back to the 'ema_slow_value' that your FE used.
+    Accept either explicit EMA fields or fall back to 'ema_slow_value' if needed.
     """
     if eup_on:
         val = ind.get("ema8") or ind.get("ema_8")
@@ -66,7 +69,7 @@ def _in_position(pos: Dict[str, Any]) -> bool:
 def _prefilter_ignore(ind: Dict[str, Any]) -> Tuple[bool, str]:
     """
     Hard blocks: too volatile, illiquid, or explicitly flagged.
-    - Volatility: ATR14% > 8 (personal style)
+    - Volatility: ATR14% > 8
     - Liquidity: turnover_cr (if present) < 10
     - Any explicit block flag (e.g., 'blocked_reason')
     """
@@ -151,6 +154,45 @@ def _pullback_zone(ind: Dict[str, Any]) -> Tuple[Optional[float], Optional[float
     high = e
     return low, high
 
+def _gates_failed(ind: Dict[str, Any]) -> List[str]:
+    """
+    Soft gates that decide WATCH for non-positions:
+    - score < 35
+    - relvol20 < 0.8
+    - proximity to 52W high < -10%
+    - pivot_clear_pct < 0
+    - base_len_bars < 15
+    - adx14 < 22
+    """
+    reasons: List[str] = []
+    def _f(x): 
+        try: return float(x)
+        except Exception: return None
+
+    score = _f(ind.get("score"))
+    if score is None or score < 35: reasons.append("score<35")
+
+    relvol = _f(ind.get("relvol20"))
+    if relvol is None or relvol < 0.8: reasons.append("relvol20<0.8")
+
+    prox = _f(ind.get("proximity_52w_high_pct"))
+    if prox is not None and prox < -10.0: reasons.append("far_from_52w")
+
+    pivot_clear = _f(ind.get("pivot_clear_pct"))
+    if pivot_clear is not None and pivot_clear < 0.0: reasons.append("pivot_not_cleared")
+
+    base_len = ind.get("base_len_bars")
+    try:
+        if int(base_len or 0) < 15:
+            reasons.append("base_len<15")
+    except Exception:
+        reasons.append("base_len<15")
+
+    adx = _f(ind.get("adx14"))
+    if adx is None or adx < 22.0: reasons.append("adx<22")
+
+    return reasons
+
 def compute_next_action(*, price: float | None, indicators: Dict[str, Any], position: Dict[str, Any]) -> Dict[str, Any]:
     """
     Deterministic resolver with priority:
@@ -174,14 +216,24 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
     eup_on = _euphoria_on(indicators)
     exit_threshold = _exit_close_threshold(indicators, eup_on)
 
+    # Log snapshot of inputs
+    log.debug(
+        "next_action inputs | price=%s entry_locked=%s stop_now=%s eup=%s ema_val=%s score=%s relvol20=%s adx14=%s prox52w=%s pivot_clear=%s base_len=%s",
+        price, entry_locked, stop_now, eup_on, exit_threshold,
+        indicators.get("score"), indicators.get("relvol20"), indicators.get("adx14"),
+        indicators.get("proximity_52w_high_pct"), indicators.get("pivot_clear_pct"), indicators.get("base_len_bars")
+    )
+
     # ---------- 0) Hard prefilters (only if NOT already in a trade) ----------
     in_pos = _in_position(position)
     if not in_pos:
         blocked, why = _prefilter_ignore(indicators)
         if blocked:
+            msg = f"Ignore — does not meet basic filters ({why})"
+            log.info("next_action=IGNORE reason=%s", why)
             return {
                 "code": "IGNORE",
-                "text": f"Ignore — {why}",
+                "text": msg,
                 "reasons": [why],
                 "refs": {"stop_now": stop_now, "ema_n": ema_n, "ema_value": ema_val, "exit_close_threshold": exit_threshold}
             }
@@ -190,14 +242,16 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
     if price is not None and stop_now is not None:
         try:
             if float(price) <= float(stop_now):
+                msg = f"Sell now (stop hit at ₹{_fmt_price(stop_now)})"
+                log.info("next_action=SELL_NOW price<=stop stop=%s", _fmt_price(stop_now))
                 return {
                     "code": "SELL_NOW",
-                    "text": f"Sell now — Stop-loss ₹{_fmt_price(stop_now)} touched",
-                    "reasons": ["Price ≤ stop_now"],
+                    "text": msg,
+                    "reasons": ["price<=stop_now"],
                     "refs": {"stop_now": stop_now, "ema_n": ema_n, "ema_value": ema_val, "exit_close_threshold": exit_threshold}
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            log.exception("SELL_NOW check failed: %s", e)
 
     # ---------- 2) SELL_TOMORROW (EOD close < threshold) ----------
     # Only trigger this when the bar is complete. Expect the caller to pass an EOD flag if needed.
@@ -206,69 +260,89 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
         try:
             if float(price) < float(exit_threshold):
                 n = 8 if eup_on else 10
+                msg = f"Exit at close if < EMA{n} (₹{_fmt_price(exit_threshold)})"
+                log.info("next_action=SELL_TOMORROW close<EMA%s ema=%s", n, _fmt_price(exit_threshold))
                 return {
                     "code": "SELL_TOMORROW",
-                    "text": f"Sell tomorrow at open — Close < EMA{n} (₹{_fmt_price(exit_threshold)})",
-                    "reasons": [f"Close < EMA{n}"],
+                    "text": msg,
+                    "reasons": [f"close<EMA{n}"],
                     "refs": {"stop_now": stop_now, "ema_n": n, "ema_value": exit_threshold}
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            log.exception("SELL_TOMORROW check failed: %s", e)
+
+    # ---------- 2.5) Soft gates for non-position → WATCH ----------
+    if not in_pos:
+        failed = _gates_failed(indicators)
+        if failed:
+            msg = "Watch — weak momentum/volume/structure"
+            log.info("next_action=WATCH gates_failed=%s", failed)
+            return {
+                "code": "WATCH",
+                "text": msg,
+                "reasons": failed,
+                "refs": {"failed_gates": failed, "ema_n": 8 if eup_on else 10, "ema_value": exit_threshold}
+            }
 
     # ---------- 3) In-trade holds ----------
     if in_pos:
         if eup_on:
+            log.info("next_action=HOLD_TIGHT reason=euphoria_on")
             return {
                 "code": "HOLD_TIGHT",
-                "text": "Hold — Tight protection active (Euphoria)",
-                "reasons": ["Euphoria=On"],
-                "refs": {"stop_now": stop_now, "ema_n": 8 if eup_on else 10, "ema_value": exit_threshold}
+                "text": "Hold (trend strong)",
+                "reasons": ["euphoria_on"],
+                "refs": {"stop_now": stop_now, "ema_n": 8, "ema_value": exit_threshold}
             }
         if _breakeven_active(position, price):
+            msg = "Hold (breakeven active)"
+            log.info("next_action=HOLD_BREAKEVEN")
             return {
                 "code": "HOLD_BREAKEVEN",
-                "text": f"Hold — Stop moved to breakeven (₹{_fmt_price(entry_locked)})",
-                "reasons": ["Breakeven active"],
-                "refs": {"stop_now": stop_now, "entry": entry_locked}
+                "text": msg,
+                "reasons": ["breakeven_active"],
+                "refs": {"stop_now": stop_now, "entry_price_locked": entry_locked}
             }
         # default in-trade hold
+        if stop_now is not None:
+            msg = f"Hold (trail stop at ₹{_fmt_price(stop_now)})"
+        else:
+            msg = f"Hold (above EMA{8 if eup_on else 10})"
+        log.info("next_action=HOLD")
         return {
             "code": "HOLD",
-            "text": f"Hold — Trail stop at ₹{_fmt_price(stop_now)}" if stop_now else "Hold — Trail",
-            "reasons": ["In position"],
+            "text": msg,
+            "reasons": ["in_position"],
             "refs": {"stop_now": stop_now, "ema_n": 8 if eup_on else 10, "ema_value": exit_threshold}
         }
 
     # ---------- 4) Not in trade: entry logic ----------
     # 4a) Clean breakout
     pivot = indicators.get("pivot_20d")
-    pivot_clear_pct = indicators.get("pivot_clear_pct")
     relvol20 = indicators.get("relvol20")
-    adx14 = indicators.get("adx14")
-    rsi14 = indicators.get("rsi14")
-
     if _gateway_breakout(indicators):
         try:
             if pivot is not None and price is not None and float(price) >= float(pivot):
-                # limit chasing if > +5% over pivot
                 extended = _extended_over_pivot(indicators)
                 if not extended:
+                    msg = f"Buy on breakout (≥ ₹{_fmt_price(pivot)})"
+                    log.info("next_action=BUY_BREAKOUT pivot=%s", _fmt_price(pivot))
                     return {
                         "code": "BUY_BREAKOUT",
-                        "text": f"Buy now — Breakout above ₹{_fmt_price(pivot)}",
-                        "reasons": ["Gateway passed", "Pivot cleared", "Volume/momentum adequate"],
+                        "text": msg,
+                        "reasons": ["gateway_passed", "pivot_cleared"],
                         "refs": {
-                            "entry": price,
-                            "pivot": pivot,
-                            "stop_now": stop_now,
+                            "level": pivot,
+                            "relvol20": relvol20,
                             "ema_n": 10,
                             "ema_value": indicators.get("ema10") or indicators.get("ema_slow_value")
                         }
                     }
-        except Exception:
-            pass
+        except Exception as e:
+            log.exception("BUY_BREAKOUT check failed: %s", e)
 
     # 4b) Pullback entry after extension or hot RSI
+    rsi14 = indicators.get("rsi14")
     extended = _extended_over_pivot(indicators)
     try:
         rsi_hot = rsi14 is not None and float(rsi14) > 75.0
@@ -276,32 +350,39 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
         rsi_hot = False
     if extended or rsi_hot:
         a, b = _pullback_zone(indicators)
-        txt = f"Buy on pullback ₹{_fmt_price(a)}–₹{_fmt_price(b)}" if a and b else "Buy on pullback (near EMA10)"
+        if a is not None and b is not None:
+            msg = f"Buy on pullback (₹{_fmt_price(a)}–₹{_fmt_price(b)})"
+        else:
+            msg = "Buy on pullback (near EMA10)"
+        log.info("next_action=BUY_PULLBACK zone_low=%s zone_high=%s", _fmt_price(a), _fmt_price(b))
         return {
             "code": "BUY_PULLBACK",
-            "text": txt,
-            "reasons": ["Extended" if extended else "RSI hot"],
-            "refs": {"A": a, "B": b, "pivot": pivot, "ema_n": 10, "ema_value": indicators.get("ema10")}
+            "text": msg,
+            "reasons": ["extended" if extended else "rsi_hot"],
+            "refs": {"entry_low": a, "entry_high": b, "ema_n": 10, "ema_value": indicators.get("ema10")}
         }
 
     # 4c) Starter position (early)
+    adx14 = indicators.get("adx14")
     try:
         early = (adx14 is not None and float(adx14) >= 20.0) and (relvol20 is not None and float(relvol20) >= 2.0)
     except Exception:
         early = False
     if early:
+        log.info("next_action=BUY_STARTER")
         return {
             "code": "BUY_STARTER",
-            "text": "Starter buy (½ size) — Add if close > pivot",
-            "reasons": ["Early strength"],
-            "refs": {"pivot": pivot, "ema_n": 10, "ema_value": indicators.get("ema10")}
+            "text": "Starter position (small size)",
+            "reasons": ["early_strength"],
+            "refs": {"ema_n": 10, "ema_value": indicators.get("ema10")}
         }
 
     # ---------- 5) Default: WATCH ----------
+    log.info("next_action=WATCH default")
     return {
         "code": "WATCH",
         "text": "Watch — Not actionable yet",
-        "reasons": ["Setup incomplete"],
+        "reasons": ["setup_incomplete"],
         "refs": {"stop_now": stop_now, "ema_n": ema_n, "ema_value": ema_val}
     }
 

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.schemas.detail import DrawerDetail
 from app.services.detail_service import DetailDeps, _resolve_run_id, build_drawer_detail
+from app.repos.market_data_repo import MarketDataRepo   
 
 log = logging.getLogger("api.v1.instruments")
 router = APIRouter(tags=["Instruments"])
@@ -27,7 +28,7 @@ def _deps() -> DetailDeps:
 
     return DetailDeps(
         scores_repo=ScoresRepo(),
-        indicators_repo=None,
+        indicators_repo=MarketDataRepo(),  # ← use Yahoo for sparkline
         positions_repo=PositionsRepo() if PositionsRepo else None,
         snapshot_pins_repo=SnapshotPinsRepo() if SnapshotPinsRepo else None,
     )
