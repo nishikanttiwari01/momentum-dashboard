@@ -7,6 +7,8 @@
  */
 
 export interface DrawerSparkline {
+  /** ISO trading dates aligned 1:1 with prices_30d. */
+  dates_30d?: string[];
   /** Optional overlay; same length as prices_30d when present. */
   ema10_30d?: number[];
   /** @minItems 1 */

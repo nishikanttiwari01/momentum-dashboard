@@ -12,7 +12,10 @@ import type { DrawerActionBlockStopMethod } from './drawerActionBlockStopMethod'
 export interface DrawerActionBlock {
   breakeven_state: DrawerActionBlockBreakevenState;
   euphoria_state: DrawerActionBlockEuphoriaState;
-  exit_close_threshold: number;
-  stop_method: DrawerActionBlockStopMethod;
-  stop_now: number;
+  /** @nullable */
+  exit_close_threshold?: number | null;
+  /** @nullable */
+  stop_method?: DrawerActionBlockStopMethod;
+  /** @nullable */
+  stop_now?: number | null;
 }

@@ -31,6 +31,7 @@ def _ratchet_stop(prev: Optional[float], now: Optional[float]) -> Optional[float
     except Exception:
         log.exception("ratchet_stop: failed prev=%s now=%s", prev, now)
         return now or prev
+    
 _TZ_DEFAULT = "Asia/Singapore"
 
 def _as_of_from_run_id(run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
@@ -80,15 +81,15 @@ def _coerce_as_of(value, *, run_id: Optional[str], tz_name: str = _TZ_DEFAULT) -
 
 # Optional external rule engine (kept)
 try:
-    from app.domain.rules.next_action import (
-        compute_meters as _rules_compute_meters,
-        resolve_next_action as _rules_resolve_next_action,
-    )
+    # The rules module exposes compute_next_action (not resolve_next_action)
+    from app.domain.rules.next_action import compute_next_action as _rules_resolve_next_action
     _HAVE_RULES = True
+    _rules_compute_meters = None  # rules module doesn't provide meters; keep symbol for compatibility
 except Exception:  # pragma: no cover
     _HAVE_RULES = False
     _rules_compute_meters = None
     _rules_resolve_next_action = None
+
 
 # Prefer domain implementations
 try:
@@ -258,55 +259,81 @@ def _header_badges_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 def _compute_meters_and_next(price_now: Optional[float], ind: Dict[str, Any], pos: Dict[str, Any]):
-    if _domain_compute_meters and _domain_compute_next:
+    # Prefer domain meters if available; else rules (if provided); else legacy
+    meters = None
+    if _domain_compute_meters:
         try:
             meters = _domain_compute_meters(indicators=ind, score_row={"atr14_pct": ind.get("atr14_pct"), "atr_pct": ind.get("atr14_pct")})
-            next_action = _domain_compute_next(price=price_now, indicators=ind, position=pos)
-            return meters, next_action
+            log.info("meters: domain-computed")
         except Exception:
-            log.exception("domain meters/next_action failed; trying rules engine fallback")
-
-    if _HAVE_RULES:
+            log.exception("meters: domain failed; will fallback")
+            meters = None
+    if meters is None and _rules_compute_meters:
         try:
-            meters = _rules_compute_meters(price_now, ind, pos)
-            next_action = _rules_resolve_next_action(price_now, ind, pos)
-            return meters, next_action
+            meters = _rules_compute_meters(price_now, ind, pos)  # compatibility if you ever add it
+            log.info("meters: rules-computed")
         except Exception:
-            log.exception("rules engine failed; falling back to legacy")
+            log.exception("meters: rules failed; will fallback")
+            meters = None
+    if meters is None:
+        # Legacy meters (kept intact)
+        def _risk(x):
+            x = float(x) if x is not None else None
+            if x is None: return "Medium"
+            if x < 1.2:   return "Low"
+            if x < 1.8:   return "Medium"
+            return "High"
+        def _euph(rsi, adx):
+            r = float(rsi or 0); a = float(adx or 0); s = r + 0.5 * a
+            if s < 70: return "Low"
+            if s < 90: return "Medium"
+            return "High"
+        meters = {
+            "risk": {"level": _risk(ind.get("relvol20")), "basis": {"atr_pct": float(ind.get("atr14_pct") or 0.0)}},
+            "euphoria": {"level": _euph(ind.get("rsi14"), ind.get("adx14")),
+                         "basis": {"rsi14": float(ind.get("rsi14") or 0.0), "adx14": float(ind.get("adx14") or 0.0)}},
+        }
+        log.info("meters: legacy-computed")
 
-    # Legacy fallback
-    def _risk(x):
-        x = float(x) if x is not None else None
-        if x is None: return "Medium"
-        if x < 1.2:   return "Low"
-        if x < 1.8:   return "Medium"
-        return "High"
-    def _euph(rsi, adx):
-        r = float(rsi or 0); a = float(adx or 0); s = r + 0.5 * a
-        if s < 70: return "Low"
-        if s < 90: return "Medium"
-        return "High"
-    meters = {
-        "risk": {"level": _risk(ind.get("relvol20")), "basis": {"atr_pct": float(ind.get("atr14_pct") or 0.0)}},
-        "euphoria": {"level": _euph(ind.get("rsi14"), ind.get("adx14")),
-                     "basis": {"rsi14": float(ind.get("rsi14") or 0.0), "adx14": float(ind.get("adx14") or 0.0)}},
-    }
-    ema_n = int(ind.get("ema_slow") or ind.get("ema_fast") or 10)
-    ema_val = float(ind.get("ema_slow_value") or ind.get("ema_fast_value") or (price_now or 0.0))
-    if price_now is not None and ema_val and price_now >= ema_val:
-        stop_now = pos.get("stop_now") or 0.0
-        if stop_now:
-            next_action = {"code": "HOLD", "text": f"Hold (trail stop at ₹{float(stop_now):,.1f})",
-                           "reasons": [f"Close ≥ EMA{ema_n}", "Momentum intact"],
-                           "refs": {"stop_now": float(stop_now), "ema_n": int(ema_n), "ema_value": float(ema_val)}}
+    # Compute next_action independently: prefer domain next → rules next → legacy
+    next_action = None
+    if _domain_compute_next:
+        try:
+            next_action = _domain_compute_next(price=price_now, indicators=ind, position=pos)
+            log.info("next: domain-computed code=%s", (next_action or {}).get("code"))
+        except Exception:
+            log.exception("next: domain failed; will try rules/legacy")
+            next_action = None
+
+    if next_action is None and _HAVE_RULES and _rules_resolve_next_action:
+        try:
+            next_action = _rules_resolve_next_action(price=price_now, indicators=ind, position=pos)
+            log.info("next: rules-computed code=%s", (next_action or {}).get("code"))
+        except Exception:
+            log.exception("next: rules failed; will use legacy")
+            next_action = None
+
+    if next_action is None:
+        # Legacy fallback (kept)
+        ema_n = int(ind.get("ema_slow") or ind.get("ema_fast") or 10)
+        ema_val = float(ind.get("ema_slow_value") or ind.get("ema_fast_value") or (price_now or 0.0))
+        if price_now is not None and ema_val and price_now >= ema_val:
+            stop_now = pos.get("stop_now") or 0.0
+            if stop_now:
+                next_action = {"code": "HOLD", "text": f"Hold (trail stop at ₹{float(stop_now):,.1f})",
+                               "reasons": [f"Close ≥ EMA{ema_n}", "Momentum intact"],
+                               "refs": {"stop_now": float(stop_now), "ema_n": int(ema_n), "ema_value": float(ema_val)}}
+            else:
+                next_action = {"code": "HOLD", "text": f"Hold (above EMA{ema_n})",
+                               "reasons": [f"Close ≥ EMA{ema_n}"],
+                               "refs": {"ema_n": int(ema_n), "ema_value": float(ema_val)}}
         else:
-            next_action = {"code": "HOLD", "text": f"Hold (above EMA{ema_n})",
-                           "reasons": [f"Close ≥ EMA{ema_n}"],
+            next_action = {"code": "WATCH", "text": "Watch (no clear signal)", "reasons": [],
                            "refs": {"ema_n": int(ema_n), "ema_value": float(ema_val)}}
-    else:
-        next_action = {"code": "WATCH", "text": "Watch (no clear signal)", "reasons": [],
-                       "refs": {"ema_n": int(ema_n), "ema_value": float(ema_val)}}
+        log.info("next: legacy-computed code=%s", next_action.get("code"))
+
     return meters, next_action
+
 
 
 
@@ -432,6 +459,32 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
         atr_abs=atr_abs,
     )
     log.info("build: entry_suggestion=%s", entry_suggestion)
+
+    # --- stop computation (minimal additive; do not remove existing fields) ---
+    try:
+        k = float(position.get("k")) if position.get("k") is not None else 2.0
+    except Exception:
+        k = 2.0
+
+    entry_locked_val = position.get("entry_price_locked") or None
+    entry_locked_val = entry_locked_val if entry_locked_val and entry_locked_val > 0 else None
+
+    prev_stop = position.get("stop_now") or None
+    prev_stop = prev_stop if prev_stop and prev_stop > 0 else None
+
+    computed_stop = _atrxk_stop(entry_locked_val, indicators.get("atr14_pct"), k)
+    stop_final = _ratchet_stop(prev_stop, computed_stop) if entry_locked_val else None
+
+    if entry_locked_val and computed_stop is not None:
+        log.info("stop: computed ATRxK entry=%s atr_pct=%s k=%s -> calc=%s prev=%s final=%s",
+                entry_locked_val, indicators.get("atr14_pct"), k, computed_stop, prev_stop, stop_final)
+    else:
+        log.info("stop: not computed (entry_locked=%s atr_pct=%s)", entry_locked_val, indicators.get("atr14_pct"))
+
+    # Update position for downstream next_action / action_block
+    position["stop_now"] = stop_final
+    position["stop_method"] = "ATRxK" if stop_final is not None else None
+
     if needs_suggestion and entry_suggestion.get("price"):
         position["entry_price"] = float(entry_suggestion["price"])
 
@@ -462,10 +515,14 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
 
     # We pass the most specific run_id we have (intraday rid if present), else original hint
     run_id_for_spark = rid_used or (run_id or "")
-    prices_30d, ema10_30d = _sparkline_from_repos(deps.indicators_repo, canon or sym_in, run_id_for_spark, row or {})
+    #prices_30d, ema10_30d = _sparkline_from_repos(deps.indicators_repo, canon or sym_in, run_id_for_spark, row or {})
+    prices_30d, ema10_30d, dates_30d = _sparkline_from_repos(
+    deps.indicators_repo, canon or sym_in, run_id_for_spark, row or {}
+    )
     sparkline = {
         "prices_30d": prices_30d if prices_30d else [price_now],
         "ema10_30d": ema10_30d if ema10_30d else None,
+        "dates_30d": dates_30d if dates_30d else None,
     }
 
     trend_rank = _trend_rank_from_adx(indicators["adx14"])
@@ -490,12 +547,17 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
     eup_on = bool(next_action.get("code") in ("HOLD_TIGHT",)) or bool(position.get("euphoria_on"))
     exit_thr = _choose_exit_threshold(indicators, eup_on)
     action_block = {
-        "stop_now": _f(position.get("stop_now")),
-        "stop_method": "ATRxK",
-        "exit_close_threshold": _f(exit_thr),
-        "breakeven_state": "Active" if bool(position.get("breakeven_active")) else "Pending",
+        "stop_now": position.get("stop_now") if position.get("stop_now") not in (0, 0.0) else None,
+        "stop_method": position.get("stop_method") if position.get("stop_now") else None,
+        "exit_close_threshold": (exit_thr if exit_thr not in (0, 0.0) else None),
+        "breakeven_state": "Active" if (
+            (position.get("entry_price_locked") and position.get("stop_now") and position.get("stop_now") >= position.get("entry_price_locked"))
+            or bool(position.get("breakeven_active"))
+        ) else "Pending",
         "euphoria_state": True if eup_on else False,
     }
+    log.info("action_block=%s", action_block)
+
 
     diagnostics = {
         "reason": (row or {}).get("reason") or "",
@@ -816,31 +878,63 @@ def _choose_exit_threshold(ind: Dict[str, Any], eup_on: bool) -> float:
     v = ind.get("ema10") or ind.get("ema_slow_value")
     return _f(v)
 
-def _sparkline_from_repos(ind_repo: Any, symbol: str, run_id: str, row: Dict[str, Any]) -> Tuple[List[float], Optional[List[float]]]:
+def _sparkline_from_repos(
+    ind_repo: Any,
+    symbol: str,
+    run_id: str,
+    row: Dict[str, Any]
+) -> Tuple[List[float], Optional[List[float]], Optional[List[str]]]:
     prices: List[float] = []
     ema10: Optional[List[float]] = None
+    dates: Optional[List[str]] = None
+
     if not ind_repo:
-        return prices, ema10
+        log.info("sparkline: indicators_repo missing for %s", symbol)
+        return prices, ema10, dates
+
     for meth in ("last_n_closes", "last_n_prices", "get_prices_30d", "get_sparkline"):
         if hasattr(ind_repo, meth):
             try:
                 fn = getattr(ind_repo, meth)
-                if "n" in fn.__code__.co_varnames:
-                    data = fn(symbol=symbol, run_id=run_id, n=30)
-                else:
-                    data = fn(symbol=symbol, run_id=run_id)
+                # Prefer n=30 if supported
+                data = fn(symbol=symbol, run_id=run_id, n=30) if "n" in fn.__code__.co_varnames else fn(symbol=symbol, run_id=run_id)
+
                 if isinstance(data, dict):
+                    # Prices
                     if "prices" in data and isinstance(data["prices"], list):
                         prices = [float(x) for x in data["prices"] if x is not None]
+                    if not prices and "prices_30d" in data and isinstance(data["prices_30d"], list):
+                        prices = [float(x) for x in data["prices_30d"] if x is not None]
+
+                    # EMA
                     if "ema10" in data and isinstance(data["ema10"], list):
                         ema10 = [float(x) for x in data["ema10"] if x is not None]
+                    if ema10 is None and "ema10_30d" in data and isinstance(data["ema10_30d"], list):
+                        ema10 = [float(x) for x in data["ema10_30d"] if x is not None]
+
+                    # Dates (ISO)
+                    if "dates" in data and isinstance(data["dates"], list):
+                        dates = [str(x) for x in data["dates"] if x is not None]
+                    if (dates is None) and "dates_30d" in data and isinstance(data["dates_30d"], list):
+                        dates = [str(x) for x in data["dates_30d"] if x is not None]
+
                 elif isinstance(data, list):
+                    # Legacy list-only return: closes without dates/ema
                     prices = [float(x) for x in data if x is not None]
+
                 if prices:
+                    log.info(
+                        "sparkline: %s via %s → points=%d (ema=%s, dates=%s)",
+                        symbol, meth, len(prices),
+                        "yes" if (ema10 and len(ema10) == len(prices)) else "no",
+                        "yes" if (dates and len(dates) == len(prices)) else "no",
+                    )
                     break
             except Exception:
-                log.exception("sparkline fetch via %s failed", meth)
-    return prices, ema10
+                log.exception("sparkline fetch via %s failed for %s", meth, symbol)
+
+    return prices, ema10, dates
+
 
 def _i(x) -> int:
     try: return int(x)

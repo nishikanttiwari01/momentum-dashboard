@@ -15,4 +15,5 @@ export const BadgeCategory = {
   MOMENTUM: 'MOMENTUM',
   WATCH: 'WATCH',
   IGNORE: 'IGNORE',
+  ACTION: 'ACTION',
 } as const;

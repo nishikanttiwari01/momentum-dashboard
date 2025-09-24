@@ -25,7 +25,7 @@ type Props = {
 /** Label + value row, with optional info icon (only shown if hint provided) */
 const Field: React.FC<{ label: string; value: React.ReactNode; hint?: string }> = ({ label, value, hint }) => (
   <Stack direction="row" spacing={1} alignItems="baseline">
-    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ width: 180, color: 'text.secondary', flexShrink: 0 }}>
+    <Stack direction="row" spacing={0.5} alignItems="center" sx={{ width: 100, color: 'text.secondary', flexShrink: 0 }}>
       <Typography variant="body2">{label}:</Typography>
       {hint ? (
         <Tooltip title={hint}>
