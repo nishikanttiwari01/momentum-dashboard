@@ -892,7 +892,8 @@ def _sparkline_from_repos(
         log.info("sparkline: indicators_repo missing for %s", symbol)
         return prices, ema10, dates
 
-    for meth in ("last_n_closes", "last_n_prices", "get_prices_30d", "get_sparkline"):
+    #for meth in ("last_n_closes", "last_n_prices", "get_prices_30d", "get_sparkline"):
+    for meth in ("get_sparkline", "get_prices_30d"):
         if hasattr(ind_repo, meth):
             try:
                 fn = getattr(ind_repo, meth)

@@ -157,18 +157,6 @@ class MarketDataRepo:
 
     # ----------------------- public API -----------------------
 
-    def last_n_closes(
-        self, symbol: str, run_id: Optional[str] = None, n: int = 30
-    ) -> List[float]:
-        """
-        Return last n trading-day closes for a symbol.
-        """
-        _, closes = self._fetch(symbol, max(n, 60))
-        out = closes[-n:] if len(closes) >= n else closes
-        logger.debug(
-            "last_n_closes: symbol=%s n=%d -> %d points", symbol, n, len(out)
-        )
-        return out
 
     def get_sparkline(
         self, symbol: str, run_id: Optional[str] = None, n: int = 30
