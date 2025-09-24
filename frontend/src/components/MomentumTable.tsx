@@ -322,7 +322,7 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
 
   const columns: GridColDef[] = React.useMemo(
     () => [
-      { field: 'symbol', headerName: 'Ticker', minWidth: 150 },
+      { field: 'symbol', headerName: 'Ticker', minWidth: 145 },
 
       { field: 'score', headerName: 'Score', width: 70, type: 'number', renderCell: renderNum, cellClassName: (p) => signClass(p?.value) },
 
@@ -340,25 +340,15 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
       { field: 'ret_3m', headerName: '% 3M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
       { field: 'ret_6m', headerName: '% 6M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
       { field: 'ret_12_1m', headerName: '% 12–1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      { field: 'pct_from_52w_high', headerName: '% 52W H', width: 90, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      
 
-      {
-        field: 'pct_from_52w_high',
-        headerName: '52W H',
-        width: 80,
-        type: 'number',
-        renderCell: (p) => {
-          const n = normalizeNumber(p?.value);
-          const cls = n == null ? '' : n > 0 ? 'text-neg' : n < 0 ? 'text-pos' : '';
-          return <span className={cls}>{fmtPct(p?.value)}</span>;
-        },
-      },
-
-      { field: 'buy', headerName: 'Buy', width: 70 },
+      { field: 'buy', headerName: 'Buy', width: 60 },
 
       {
         field: 'badges',
         headerName: 'Momentum',
-        minWidth: 180,
+        minWidth: 100,
         sortable: false,
         filterable: false,
         renderCell: BadgesCell,
