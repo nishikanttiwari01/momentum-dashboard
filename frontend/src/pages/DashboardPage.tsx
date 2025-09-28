@@ -137,25 +137,6 @@ export default function Dashboard() {
   return (
     <>
       <Paper sx={{ p: 2, width: '100%' }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-          <Typography variant="subtitle2">Screener</Typography>
-          <Typography variant="caption" color="text.secondary">
-            Sorted by score (desc)
-          </Typography>
-        </Stack>
-        <Divider sx={{ mb: 1 }} />
-        <Box sx={{ width: '100%', overflowX: 'auto' }}>
-          <MomentumTable
-            onSelectSymbol={(s) => {
-              setSymbol(s);
-              setDrawerOpen(true);
-            }}
-            refetchIntervalMs={refetchIntervalMs}
-          />
-        </Box>
-      </Paper>
-
-      <Paper sx={{ p: 2, width: '100%', mt: 3 }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
           <Typography variant="subtitle2">Top Movers</Typography>
           <ToggleButtonGroup exclusive value={period} onChange={handlePeriodChange} size="small">
@@ -189,6 +170,26 @@ export default function Dashboard() {
           </Grid>
         )}
       </Paper>
+
+      <Paper sx={{ p: 2, width: '100%', mt: 3 }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+          <Typography variant="subtitle2">Screener</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Sorted by score (desc)
+          </Typography>
+        </Stack>
+        <Divider sx={{ mb: 1 }} />
+        <Box sx={{ width: '100%', overflowX: 'auto' }}>
+          <MomentumTable
+            onSelectSymbol={(s) => {
+              setSymbol(s);
+              setDrawerOpen(true);
+            }}
+            refetchIntervalMs={refetchIntervalMs}
+          />
+        </Box>
+      </Paper>
     </>
   );
 }
+
