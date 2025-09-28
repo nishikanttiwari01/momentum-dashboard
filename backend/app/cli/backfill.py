@@ -14,6 +14,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pathlib import Path as _Path
 
+from backend.util import run_fetch_details, run_fetch_screener_pages
+
 API = os.getenv("MD_API", "http://127.0.0.1:8000")
 
 log = logging.getLogger(__name__)
@@ -53,7 +55,7 @@ def _parquet_root_abs() -> _Path:
         if env_root:
             p = _Path(env_root).expanduser().resolve()
         else:
-            # this file: backend/app/cli/backfill.py  → backend/
+            # this file: backend/app/cli/backfill.py -> backend/
             p = _Path(__file__).resolve().parents[3] / "parquet"
             p = p.resolve()
     global _ROOT_LOGGED_ONCE
@@ -166,6 +168,36 @@ def _post_scan(session: requests.Session, d: Optional[date], cfg: BackfillConfig
     return r.status_code, data
 
 
+def _should_export_utilities(status: int, payload: Dict[str, Any] | None) -> bool:
+    if not payload:
+        return False
+    counts = payload.get('counts') or {}
+    rows_value = counts.get('rows_written')
+    try:
+        rows_written = int(rows_value)
+    except (TypeError, ValueError):
+        rows_written = 0
+    if rows_written > 0:
+        return True
+    snapshot_path = payload.get('snapshot_path')
+    return bool(snapshot_path)
+
+
+def _trigger_util_exports(as_of: date) -> None:
+    extra = {'date': as_of.isoformat()}
+    try:
+        details_path = run_fetch_details(as_of=as_of)
+        log.info('export_details_success', extra={**extra, 'output': str(details_path)})
+    except Exception:
+        log.exception('export_details_failed', extra=extra)
+    try:
+        screener_path = run_fetch_screener_pages(as_of=as_of)
+        log.info('export_screener_success', extra={**extra, 'output': str(screener_path)})
+    except Exception:
+        log.exception('export_screener_failed', extra=extra)
+
+
+
 def main(argv: list[str] | None = None) -> int:
     _setup_logging()
     argv = argv or sys.argv[1:]
@@ -200,9 +232,10 @@ def main(argv: list[str] | None = None) -> int:
     total_rows = 0
     total_days = 0
     skipped_days = 0
+    exported_dates: set[date] = set()
 
     log.info("backfill_window", extra={"start": start.isoformat(), "end": end.isoformat(), "api": API})
-    print(f"Backfill window: {start} → {end}  (API={API})")
+    print(f"Backfill window: {start} -> {end}  (API={API})")
 
     for d in _trading_days(start, end):
         total_days += 1
@@ -216,9 +249,16 @@ def main(argv: list[str] | None = None) -> int:
             print("scan", d)
             status, resp = _post_scan(sess, d, cfg)
             counts = (resp or {}).get("counts") or {}
-            rw = counts.get("rows_written") or 0
-            total_rows += int(rw) if isinstance(rw, int) else 0
-            log.info("day_done", extra={"date": d.isoformat(), "status": ("created" if status == 201 else ("accepted" if status == 202 else "replayed")), "rows_written": rw})
+            rows_value = counts.get("rows_written")
+            try:
+                rows_written = int(rows_value)
+            except (TypeError, ValueError):
+                rows_written = 0
+            total_rows += rows_written
+            log.info("day_done", extra={"date": d.isoformat(), "status": ("created" if status == 201 else ("accepted" if status == 202 else "replayed")), "rows_written": rows_value})
+            if _should_export_utilities(status, resp) and d not in exported_dates:
+                _trigger_util_exports(d)
+                exported_dates.add(d)
         except Exception as e:
             print(f"!! failed {d}: {e}", file=sys.stderr)
             log.exception("day_failed", extra={"date": d.isoformat()})
@@ -235,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  python -m app.cli.backfill {failures[0]}")
         return 2
 
-    print("\nBackfill complete ✔")
+    print("\nBackfill complete :)")
     return 0
 
 

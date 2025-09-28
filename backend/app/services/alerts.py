@@ -200,7 +200,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
             run_str = run_short
             body_lines = [
                 f"Score: {score}",
-                f"Last: {price:.2f}" if isinstance(price, (float, int)) else f"Last: {price}",
+                f"Latest Price: {price:.2f}" if isinstance(price, (float, int)) else f"Latest Price: {price}",
                 f"Run: {run_str}",
                 f"Crossed up from {prev} -> {score}",
             ]

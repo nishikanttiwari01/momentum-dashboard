@@ -68,7 +68,7 @@ export default function LeftNav() {
             }}
           />
           <Typography variant="subtitle2" sx={{ lineHeight: 1.1 }}>
-            Sree Ganeshaya<br />Namah
+            Shree Ganeshaya<br />Namah
           </Typography>
           <Typography variant="caption" color="text.secondary">
             Subh Labh
