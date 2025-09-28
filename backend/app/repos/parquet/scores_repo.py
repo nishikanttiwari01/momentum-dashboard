@@ -5,6 +5,7 @@ from typing import Dict, Any, Iterable, List, Optional, Tuple
 from datetime import datetime, timezone
 import os
 import logging
+import re
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -22,6 +23,23 @@ from app.repos.parquet import datasets
 # ---------------------------------------------------------------------------
 
 log = logging.getLogger("app.repos.parquet.scores_repo")
+
+_RE_RUN_ID_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2})")
+
+
+def _run_id_to_date(run_id: str | None) -> Optional[str]:
+    if not run_id:
+        return None
+    m = _RE_RUN_ID_DATE.match(run_id)
+    if not m:
+        return None
+    try:
+        return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    except Exception:
+        return None
+
+
+
 _ALLOW_LEGACY_FALLBACK = os.getenv("ALLOW_LEGACY_SCORES_READ", "0").lower() in ("1", "true", "yes")
 
 def _today_local_str() -> str:
@@ -189,12 +207,16 @@ _P11_ALIASES = {
 class ScoresRepo:
     """
     Screener reader with intraday-first, daily-fallback resolution:
-      - When run_id is given → read legacy 'scores/run_id=*' (back-compat).
+      - When run_id is given → read explicit snapshot (intraday/daily, legacy as fallback).
       - When run_id is None → prefer latest intraday (today), else latest daily (≤ today).
       - Legacy fallback is disabled by default to avoid confusion (set ALLOW_LEGACY_SCORES_READ=1 to re-enable).
       - Enriches name/sector from universe if missing in snapshot.
       - Canonicalizes 'score' and badges.
     """
+
+    @staticmethod
+    def run_id_to_date(run_id: Optional[str]) -> Optional[str]:
+        return _run_id_to_date(run_id)
 
     def read(
         self,
@@ -221,10 +243,30 @@ class ScoresRepo:
         resolved_as_of: Optional[str] = None
 
         if run_id:
-            # Back-compat path: legacy single-dataset read
-            log.info("scores_read_resolve", extra={"kind": "legacy(explicit)", "run_id": run_id})
-            tab = datasets.scan("scores", run_id=run_id, columns=None)
             rid_used = run_id
+            date_hint = _run_id_to_date(run_id)
+            tab = None
+            resolved_as_of = None
+            if date_hint:
+                try:
+                    tab_candidate = datasets.scan_scores_intraday(date_hint, run_id, columns=None)
+                    if tab_candidate.num_rows > 0:
+                        tab = tab_candidate
+                        log.info("scores_read_resolve", extra={"kind": "intraday(explicit)", "date": date_hint, "run_id": run_id})
+                except Exception:
+                    tab = None
+                if tab is None:
+                    try:
+                        tab_candidate = datasets.scan_scores_daily(date_hint, columns=None)
+                        if tab_candidate.num_rows > 0:
+                            tab = tab_candidate
+                            resolved_as_of = date_hint
+                            log.info("scores_read_resolve", extra={"kind": "daily(explicit)", "as_of": date_hint, "run_id": run_id})
+                    except Exception:
+                        tab = None
+            if tab is None:
+                log.info("scores_read_resolve", extra={"kind": "legacy(explicit)", "run_id": run_id})
+                tab = datasets.scan("scores", run_id=run_id, columns=None)
         else:
             kind, locator, rid_used, resolved_as_of = _resolve_snapshot(as_of_str)
             log.info("scores_read_resolve", extra={"kind": kind, "locator": locator})

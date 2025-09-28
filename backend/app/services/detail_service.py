@@ -7,7 +7,49 @@ from typing import Any, Dict, Optional, Tuple, List
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
+try:
+    from app.core.config import load as load_settings
+except Exception:  # pragma: no cover
+    load_settings = None  # type: ignore
+
+from app.domain.rules.next_action import euphoria_thresholds
+
 log = logging.getLogger("app.services.detail")
+
+def _settings():
+    if load_settings is None:  # pragma: no cover
+        return None
+    try:
+        return load_settings()
+    except Exception:
+        return None
+
+
+def _rules_cfg():
+    settings = _settings()
+    if settings is None:  # pragma: no cover
+        return None
+    try:
+        return settings.rules
+    except Exception:
+        return None
+
+
+def _app_timezone_default() -> str:
+    settings = _settings()
+    if settings and getattr(settings.app, "timezone", None):
+        return settings.app.timezone
+    return "Asia/Singapore"
+
+
+def _atr_init_default() -> float:
+    rules = _rules_cfg()
+    if rules and getattr(rules, "atr_init_mult", None) is not None:
+        try:
+            return float(rules.atr_init_mult)
+        except Exception:
+            return 2.0
+    return 2.0
 
 
 # --- Minimal stop helpers (additive; safe) ---
@@ -32,7 +74,7 @@ def _ratchet_stop(prev: Optional[float], now: Optional[float]) -> Optional[float
         log.exception("ratchet_stop: failed prev=%s now=%s", prev, now)
         return now or prev
     
-_TZ_DEFAULT = "Asia/Singapore"
+_TZ_DEFAULT = _app_timezone_default()
 
 def _as_of_from_run_id(run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
     """Parse 'YYYYMMDDHHMMSS' run_id to tz-aware datetime; fallback to now."""
@@ -478,10 +520,11 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
     log.info("build: entry_suggestion=%s", entry_suggestion)
 
     # --- stop computation (minimal additive; do not remove existing fields) ---
+    default_k = _atr_init_default()
     try:
-        k = float(position.get("k")) if position.get("k") is not None else 2.0
+        k = float(position.get("k")) if position.get("k") is not None else default_k
     except Exception:
-        k = 2.0
+        k = default_k
 
     entry_locked_val = position.get("entry_price_locked") or None
     entry_locked_val = entry_locked_val if entry_locked_val and entry_locked_val > 0 else None
@@ -539,11 +582,14 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
         next_action["refs"] = numeric_refs
 
     # --- euphoria from indicators → affects method pill & exits (even pre-entry, informational) ---
+    thresholds = euphoria_thresholds()
     try:
         _rsi = float(indicators.get("rsi14") or 0.0)
         _adx = float(indicators.get("adx14") or 0.0)
         _slope = float(indicators.get("adx_slope_5") or 0.0)
-        eup_on = (_rsi >= 75 and _adx >= 30) or (_rsi >= 70 and _adx >= 25 and _slope > 0)
+        eup_on = (_rsi >= thresholds["rsi_min"] and _adx >= thresholds["adx_min"]) or (
+            _rsi >= thresholds["alt_rsi_min"] and _adx >= thresholds["alt_adx_min"] and _slope > thresholds["adx_slope5_min"]
+        )
     except Exception:
         eup_on = False
     method_pill = "EMA8" if eup_on else (f"EMA{int(indicators['ema_slow'])}" if indicators["ema_slow"] else "EMA")

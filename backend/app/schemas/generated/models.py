@@ -410,6 +410,27 @@ class ScreenerList(BaseModel):
     run_id: Optional[str] = Field(None, description="Run identifier used for this list")
 
 
+
+
+class TopMoverEntry(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    sector: Optional[str] = None
+    price: float
+    change_pct: float
+    score: Optional[float] = None
+    next_action: DrawerNextAction
+
+
+class TopMovers(BaseModel):
+    period: Literal['1d', '1w', '1m', '3m']
+    generated_at: AwareDatetime
+    run_id: Optional[str] = None
+    as_of: Optional[date] = None
+    gainers: list[TopMoverEntry]
+    losers: list[TopMoverEntry]
+
+
 class DrawerHeader(BaseModel):
     name: str = Field(..., examples=["Tata Consultancy Services"])
     sector: Optional[str] = Field(None, examples=["IT"])

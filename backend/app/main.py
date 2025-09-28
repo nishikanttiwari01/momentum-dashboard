@@ -126,7 +126,13 @@ async def lifespan(app: FastAPI):
     # ------------- NEW: optionally kick off startup backfill -------------
     # Source of truth: env var BACKFILL_ON_START (default true).
     # You can also export it via your YAML -> env pipeline.
-    if _boolish(os.getenv("BACKFILL_ON_START"), default=True):
+    backfill_default = getattr(cfg.app, "backfill_on_start", True)
+    env_backfill = os.getenv("BACKFILL_ON_START")
+    if env_backfill is not None:
+        backfill_enabled = _boolish(env_backfill, default=bool(backfill_default))
+    else:
+        backfill_enabled = bool(backfill_default)
+    if backfill_enabled:
         try:
             asyncio.create_task(_run_startup_backfill(logger))
             logger.info("startup backfill: scheduled (BACKFILL_ON_START=on)")

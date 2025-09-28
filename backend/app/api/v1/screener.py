@@ -1,23 +1,151 @@
 # backend/app/api/v1/screener.py
 from __future__ import annotations
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Request, Query
-from app.schemas.screener import ScreenerList, ScreenerRow
+from fastapi import APIRouter, HTTPException, Query, Request
+from app.schemas.screener import ScreenerList, ScreenerRow, TopMoverEntry, TopMovers
+from app.schemas.generated.models import DrawerNextAction
 from app.repos.parquet.scores_repo import ScoresRepo
+from app.services.detail_service import DetailDeps, build_drawer_detail
+from app.repos.market_data_repo import MarketDataRepo
+
+
+try:
+    from app.repos.sql.positions_repo import PositionsRepo
+except Exception:  # pragma: no cover
+    PositionsRepo = None  # type: ignore
+
+try:
+    from app.repos.sql.snapshot_pins_repo import SnapshotPinsRepo
+except Exception:  # pragma: no cover
+    SnapshotPinsRepo = None  # type: ignore
 
 # ADDED: minimal imports to clean NaN/Inf payloads and log drops
 import math
 import numbers
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from functools import lru_cache
+
+from app.core import config as app_config
+from app.repos.parquet.universe_repo import UniverseRepo, PRESETS as UNIVERSE_PRESETS
 
 router = APIRouter(tags=["Screener"])
 repo = ScoresRepo()
 log = logging.getLogger(__name__)
 
+PERIOD_FIELD_MAP: dict[str, str] = {
+    "1d": "change_pct",
+    "1w": "ret_1w",
+    "1m": "ret_1m",
+    "3m": "ret_3m",
+}
+TOP_LIMIT = 5
+FETCH_MULTIPLIER = 5
+TOP_COLUMNS = [
+    "symbol",
+    "name",
+    "sector",
+    "last",
+    "change_pct",
+    "wk_change_pct",
+    "ret_1w",
+    "ret_1m",
+    "ret_3m",
+    "score",
+    "run_id",
+    "as_of",
+]
+
+_universe_repo: UniverseRepo | None = None
+
+
+
+def _get_universe_repo() -> UniverseRepo:
+    global _universe_repo
+    if _universe_repo is None:
+        _universe_repo = UniverseRepo()
+    return _universe_repo
+
+
+@lru_cache(maxsize=16)
+def _load_universe_symbols(preset: str) -> tuple[str, ...]:
+    repo = _get_universe_repo()
+    symbols, _ = repo.list_symbols(preset, page=1, per_page=1_000_000)
+    return tuple(symbols)
+
+_detail_deps_cache: DetailDeps | None = None
+
+
+def _get_detail_deps() -> DetailDeps:
+    global _detail_deps_cache
+    if _detail_deps_cache is None:
+        try:
+            positions_repo = PositionsRepo() if PositionsRepo else None
+        except Exception:
+            positions_repo = None
+        try:
+            snapshot_repo = SnapshotPinsRepo() if SnapshotPinsRepo else None
+        except Exception:
+            snapshot_repo = None
+        try:
+            indicators_repo = MarketDataRepo()
+        except Exception:
+            indicators_repo = None
+        _detail_deps_cache = DetailDeps(
+            scores_repo=repo,
+            indicators_repo=indicators_repo,
+            positions_repo=positions_repo,
+            snapshot_pins_repo=snapshot_repo,
+        )
+    return _detail_deps_cache
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_as_of(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, date):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except Exception:
+        return None
+
+
+def _fetch_sorted_rows(field: str, descending: bool) -> Tuple[list[tuple[dict[str, Any], float]], Optional[str], Optional[str]]:
+    sort_dir = "desc" if descending else "asc"
+    sort = f"{field}.{sort_dir},score.desc"
+    per_page = max(TOP_LIMIT * FETCH_MULTIPLIER, 20)
+    items, _total, resolved_run_id, resolved_as_of = repo.read(
+        run_id=None,
+        as_of_str=None,
+        filters={},
+        sort=sort,
+        page=1,
+        per_page=per_page,
+        columns=TOP_COLUMNS,
+    )
+    rows: list[tuple[dict[str, Any], float]] = []
+    for row in items or []:
+        value = _to_float(row.get(field))
+        if value is None:
+            continue
+        rows.append((row, value))
+    rows.sort(key=lambda item: item[1], reverse=descending)
+    return rows[:TOP_LIMIT], resolved_run_id, resolved_as_of
+
+
 # Treat these query params as non-filter controls. Everything else maps into filter ops.
-KNOWN_KEYS = {"run_id", "as_of", "sort", "page", "per_page", "universe"}
+KNOWN_KEYS = {"run_id", "as_of", "sort", "page", "per_page", "universe", "symbol"}
 
 
 def _ensure_tz_as_of(v, fallback_dt: datetime) -> datetime:
@@ -175,6 +303,85 @@ def _is_num(v: Any) -> bool:
     return isinstance(v, numbers.Real) and math.isfinite(float(v))
 
 
+@router.get("/screener/top-movers", response_model=TopMovers)
+def get_top_movers(period: str = Query("1d", description="Period for percent change", pattern="^(1d|1w|1m|3m)$")) -> TopMovers:
+    field = PERIOD_FIELD_MAP.get(period)
+    if field is None:
+        raise HTTPException(status_code=400, detail={"code": "invalid_period", "detail": "Supported periods are 1d, 1w, 1m, 3m."})
+
+    gain_rows, run_id_gainers, as_of_gainers = _fetch_sorted_rows(field, True)
+    lose_rows, run_id_losers, as_of_losers = _fetch_sorted_rows(field, False)
+
+    detail_deps = _get_detail_deps()
+    detail_cache: dict[tuple[str, Optional[str]], DrawerNextAction] = {}
+
+    def resolve_next_action(symbol: str, run_id_hint: Optional[str]) -> DrawerNextAction:
+        key = (symbol, run_id_hint)
+        if key not in detail_cache:
+            try:
+                detail = build_drawer_detail(symbol, run_id_hint, detail_deps)
+                action_data = detail.get("next_action") if isinstance(detail, dict) else None
+                if isinstance(action_data, DrawerNextAction):
+                    action = action_data
+                elif isinstance(action_data, dict):
+                    action = DrawerNextAction.model_validate(action_data)
+                else:
+                    action = DrawerNextAction(code="WATCH", text="Watch (no detail)", reasons=[], refs={})
+            except Exception:
+                log.exception("top_movers: unable to build detail", extra={"symbol": symbol, "run_id": run_id_hint})
+                action = DrawerNextAction(code="WATCH", text="Watch (detail unavailable)", reasons=[], refs={})
+            detail_cache[key] = action
+        return detail_cache[key]
+
+    def make_entry(row: dict[str, Any], value: float) -> Optional[TopMoverEntry]:
+        symbol = row.get("symbol")
+        if not symbol:
+            return None
+        price = _to_float(row.get("last"))
+        change = _to_float(value)
+        if change is None:
+            return None
+        score_value = _to_float(row.get("score"))
+        action = resolve_next_action(str(symbol), row.get("run_id"))
+        return TopMoverEntry(
+            symbol=str(symbol),
+            name=row.get("name"),
+            sector=row.get("sector"),
+            price=price if price is not None else 0.0,
+            change_pct=change,
+            score=score_value,
+            next_action=action,
+        )
+
+    gainers: list[TopMoverEntry] = []
+    for row, value in gain_rows:
+        entry = make_entry(row, value)
+        if entry:
+            gainers.append(entry)
+        if len(gainers) >= TOP_LIMIT:
+            break
+
+    losers: list[TopMoverEntry] = []
+    for row, value in lose_rows:
+        entry = make_entry(row, value)
+        if entry:
+            losers.append(entry)
+        if len(losers) >= TOP_LIMIT:
+            break
+
+    run_id = run_id_gainers or run_id_losers
+    as_of_value = _parse_as_of(as_of_gainers) or _parse_as_of(as_of_losers)
+
+    return TopMovers(
+        period=period,
+        generated_at=datetime.now(timezone.utc),
+        run_id=run_id,
+        as_of=as_of_value,
+        gainers=gainers,
+        losers=losers,
+    )
+
+
 @router.get("/screener", response_model=ScreenerList)
 def list_screener(
     request: Request,
@@ -184,10 +391,46 @@ def list_screener(
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=500),
     universe: Optional[str] = Query(None, description="Universe preset (e.g., NIFTY500, NIFTY50, ALL)"),
+    symbol: Optional[str] = Query(None, description="Exact ticker symbol (e.g., SUMEETINDS.NS)"),
 ):
     # Parse filters from the raw query string
     params = dict(request.query_params)
     filters = _parse_filters(params)
+
+    symbol_value = (symbol or '').strip()
+    if symbol_value:
+        filters[("symbol", "eq")] = symbol_value.upper()
+
+    resolved_universe = (universe or "").strip().upper()
+    if not resolved_universe:
+        try:
+            cfg = app_config.load()
+            default_uni = getattr(getattr(cfg, 'screener', None), 'default_universe', None)
+        except Exception:
+            default_uni = None
+        resolved_universe = (default_uni or "").strip().upper()
+
+    if resolved_universe and resolved_universe not in UNIVERSE_PRESETS:
+        raise HTTPException(status_code=400, detail=f"Unknown universe preset '{resolved_universe}'")
+
+    if resolved_universe and resolved_universe != 'ALL':
+        try:
+            universe_symbols = list(_load_universe_symbols(resolved_universe))
+        except Exception as exc:
+            log.exception('screener: failed to load universe preset', extra={'universe': resolved_universe})
+            raise HTTPException(status_code=500, detail='Failed to load universe preset') from exc
+
+        sym_key = ('symbol', 'in')
+        if sym_key in filters:
+            existing_raw = filters.get(sym_key) or []
+            if isinstance(existing_raw, (list, tuple, set)):
+                existing_list = list(existing_raw)
+            else:
+                existing_list = [existing_raw]
+            universe_set = set(universe_symbols)
+            filters[sym_key] = [s for s in existing_list if s in universe_set]
+        else:
+            filters[sym_key] = list(universe_symbols)
 
     try:
         items, total, resolved_run_id, resolved_as_of = repo.read(
@@ -283,3 +526,6 @@ def list_screener(
         as_of=as_of_dt,
         run_id=resolved_run_id,
     )
+
+
+

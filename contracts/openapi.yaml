@@ -132,6 +132,11 @@ paths:
           - MIDCAP
           - SMALLCAP
           - ALL
+      - name: symbol
+        in: query
+        schema:
+          type: string
+        description: Exact ticker symbol (case-insensitive)
       - name: sector_in
         in: query
         schema:
@@ -195,6 +200,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ScreenerList'
+
+  /api/v1/screener/top-movers:
+    get:
+      tags:
+      - Screener
+      summary: Top gainers and losers for the requested period
+      operationId: getTopMovers
+      parameters:
+      - name: period
+        in: query
+        description: Period over which to compute percentage change
+        schema:
+          type: string
+          enum: ["1d", "1w", "1m", "3m"]
+          default: "1d"
+      responses:
+        '200':
+          description: Top movers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopMovers'
+
+
   /api/v1/scan:
     post:
       tags:
@@ -1321,6 +1350,56 @@ components:
           type: string
           nullable: true
           description: Run identifier used for this list
+    TopMovers:
+      type: object
+      required: [period, generated_at, gainers, losers]
+      properties:
+        period:
+          type: string
+          enum: ["1d", "1w", "1m", "3m"]
+        generated_at:
+          type: string
+          format: date-time
+        run_id:
+          type: string
+          nullable: true
+        as_of:
+          type: string
+          format: date
+          nullable: true
+        gainers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMoverEntry'
+        losers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopMoverEntry'
+    TopMoverEntry:
+      type: object
+      required: [symbol, price, change_pct, next_action]
+      properties:
+        symbol:
+          type: string
+        name:
+          type: string
+          nullable: true
+        sector:
+          type: string
+          nullable: true
+        price:
+          type: number
+          format: double
+        change_pct:
+          type: number
+          format: double
+        score:
+          type: number
+          format: double
+          nullable: true
+        next_action:
+          $ref: '#/components/schemas/DrawerNextAction'
+
     NextAction:
       type: object
       properties:

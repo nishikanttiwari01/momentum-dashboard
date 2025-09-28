@@ -8,6 +8,8 @@ import pyarrow as pa
 from fastapi.testclient import TestClient
 
 from app.repos.parquet import datasets as ds
+from app.repos.parquet import scores_repo
+from app.repos.parquet.universe_repo import UniverseRepo
 from app.main import create_app
 
 
@@ -56,6 +58,7 @@ def _seed_scores(tmp_root: Path, run_id: str = "20250912T101500Z", rows: int = 4
 def test_screener_api_happy_path(tmp_path, monkeypatch):
     # Isolate to temp parquet root
     monkeypatch.setenv("PARQUET_ROOT", str(tmp_path / "parquet"))
+    monkeypatch.setattr(scores_repo, "_ALLOW_LEGACY_FALLBACK", True)
     rid = _seed_scores(tmp_path)
 
     app = create_app()
@@ -111,3 +114,61 @@ def test_screener_api_empty_when_no_snapshot(tmp_path, monkeypatch):
     b = r.json()
     assert b["items"] == []
     assert b["pagination"]["total"] == 0
+
+
+def test_screener_api_filters_by_universe(tmp_path, monkeypatch):
+    monkeypatch.setenv("PARQUET_ROOT", str(tmp_path / "parquet"))
+    monkeypatch.setattr(scores_repo, "_ALLOW_LEGACY_FALLBACK", True)
+    _seed_scores(tmp_path, rows=4)
+
+    preset_dir = tmp_path / "presets"
+    preset_dir.mkdir(parents=True, exist_ok=True)
+    (preset_dir / "NIFTY50.csv").write_text("SYM000\nSYM001\n", encoding="utf-8")
+    (preset_dir / "SMALLCAP.csv").write_text("SYM999\n", encoding="utf-8")
+
+    from app.api.v1 import screener as screener_api
+
+    screener_api._universe_repo = UniverseRepo(assets_dir=preset_dir)
+    screener_api._load_universe_symbols.cache_clear()
+
+    app = create_app()
+    client = TestClient(app)
+
+    try:
+        resp = client.get("/api/v1/screener?universe=NIFTY50")
+        assert resp.status_code == 200
+        body = resp.json()
+        symbols = {item["symbol"] for item in body["items"]}
+        assert symbols == {"SYM000", "SYM001"}
+        assert body["pagination"]["total"] == 2
+
+        resp2 = client.get("/api/v1/screener?universe=SMALLCAP")
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2["items"] == []
+        assert body2["pagination"]["total"] == 0
+    finally:
+        screener_api._universe_repo = None
+        screener_api._load_universe_symbols.cache_clear()
+
+
+
+def test_screener_api_filters_by_symbol(tmp_path, monkeypatch):
+    monkeypatch.setenv("PARQUET_ROOT", str(tmp_path / "parquet"))
+    monkeypatch.setattr(scores_repo, "_ALLOW_LEGACY_FALLBACK", True)
+    _seed_scores(tmp_path, rows=4)
+
+    app = create_app()
+    client = TestClient(app)
+
+    resp = client.get("/api/v1/screener?symbol=sym001")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pagination"]["total"] == 1
+    assert [item["symbol"] for item in body["items"]] == ["SYM001"]
+
+    resp_missing = client.get("/api/v1/screener?symbol=ZZZ999")
+    assert resp_missing.status_code == 200
+    body_missing = resp_missing.json()
+    assert body_missing["pagination"]["total"] == 0
+    assert body_missing["items"] == []

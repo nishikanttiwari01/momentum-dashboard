@@ -75,19 +75,30 @@ class AlertsConfig:
 
 
 def _iter_scores_for_run(run_id: Optional[str]) -> Iterable[Dict[str, Any]]:
-    """Fetch all scored rows for a given run (pagination-friendly signature)."""
+    """Fetch scored rows for a run (intraday/daily fallback supported)."""
     repo = ScoresRepo()
-    ymd = f"{run_id[:4]}-{run_id[4:6]}-{run_id[6:8]}" 
+    run_hint = run_id.strip() if isinstance(run_id, str) else None
+    as_of_hint = None
+    if run_hint:
+        as_of_hint = ScoresRepo.run_id_to_date(run_hint)
     items, *_ = repo.read(
-        run_id=None,
-        as_of_str=ymd,
+        run_id=run_hint,
+        as_of_str=as_of_hint,
         filters=None,
         sort=None,
         page=1,
         per_page=10_000,  # NOTE: repo expects per_page (not page_size)
     )
-    # enable this log to see how many rows were loaded from Parquet
-    #log.info("_iter_scores_for_run items=%s", items)
+    if not items and not run_hint:
+        # ensure callers without run_id still get latest snapshot
+        items, *_ = repo.read(
+            run_id=None,
+            as_of_str=None,
+            filters=None,
+            sort=None,
+            page=1,
+            per_page=10_000,
+        )
     return items
 
 

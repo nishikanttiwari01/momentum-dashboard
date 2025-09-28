@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './layouts/AppShell';
-import Dashboard from './pages/Dashboard';
+import Dashboard from './pages/DashboardPage';
 import Screener from './pages/Screener';
 import Watchlist from './pages/Watchlist';
 import History from './pages/History';

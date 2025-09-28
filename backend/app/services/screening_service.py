@@ -467,6 +467,11 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
     else:
         as_of_iso = _utcnow_aware().isoformat().replace("+00:00", "Z")
 
+    intraday_date_override: Optional[str] = None
+    if not as_of_date:
+        override_raw = payload.get("intraday_trading_date")
+        intraday_date_override = _as_of_date_str(override_raw)
+
     universe = None
     if isinstance(payload.get("universe"), str):
         uni = payload["universe"].strip().upper()
@@ -612,29 +617,35 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                     log.info("scores daily written", extra={"as_of": as_of_date, "run_id": job.run_id, "rows": rows_written})
             else:
                 # INTRADAY
-                today_str = _utcnow_aware().date().strftime("%Y-%m-%d")
-                target = (root / "scores" / f"intraday" / f"date={today_str}" / f"run_id={job.run_id}") if root else None
+                intraday_date_str = intraday_date_override or _utcnow_aware().date().strftime("%Y-%m-%d")
+                target = (root / "scores" / f"intraday" / f"date={intraday_date_str}" / f"run_id={job.run_id}") if root else None
                 log.info(
                     "scores_intraday_precommit",
-                    extra={"date": today_str, "run_id": job.run_id, "rows": rows_written, "target": str(target) if target else None}
+                    extra={
+                        "date": intraday_date_str,
+                        "run_id": job.run_id,
+                        "rows": rows_written,
+                        "target": str(target) if target else None,
+                        "date_override": bool(intraday_date_override),
+                    }
                 )
-                w_intra = datasets.begin_atomic_write_scores_intraday(today_str, job.run_id)
+                w_intra = datasets.begin_atomic_write_scores_intraday(intraday_date_str, job.run_id)
                 w_intra.write_df(pa.Table.from_pylist(rows))
                 w_intra.commit()
                 snapshot_path = str(
                     (datasets.get_parquet_root()
                      / "scores" / "intraday"
-                     / f"date={today_str}"
+                     / f"date={intraday_date_str}"
                      / f"run_id={job.run_id}").resolve()
                 )
                 # post-commit quick listing
                 try:
-                    tgt = (datasets.get_parquet_root() / "scores" / "intraday" / f"date={today_str}" / f"run_id={job.run_id}")
+                    tgt = (datasets.get_parquet_root() / "scores" / "intraday" / f"date={intraday_date_str}" / f"run_id={job.run_id}")
                     files = [p.name for p in tgt.glob("*.parquet")] if tgt.exists() else []
                     log.info("scores_intraday_postcommit", extra={"target": str(tgt), "files": files})
                 except Exception:
                     pass
-                log.info("scores intraday written", extra={"date": today_str, "run_id": job.run_id, "rows": rows_written})
+                log.info("scores intraday written", extra={"date": intraday_date_str, "run_id": job.run_id, "rows": rows_written})
         except Exception:
             log.exception("snapshot write failed", extra={"run_id": job.run_id})
             raise

@@ -34,6 +34,7 @@ import type {
   GetInstrumentIndicatorsParams,
   GetInstrumentPricesParams,
   GetLearning200,
+  GetTopMoversParams,
   GetWatchlist200,
   HealthState,
   HistoryRow,
@@ -61,7 +62,8 @@ import type {
   SectorFacet,
   Settings,
   SnapshotPinIn,
-  SnapshotPinOut
+  SnapshotPinOut,
+  TopMovers
 } from './types'
 
 
@@ -353,6 +355,67 @@ export const useGetApiV1Screener = <TData = Awaited<ReturnType<typeof getApiV1Sc
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
   const queryOptions = getGetApiV1ScreenerQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * @summary Top gainers and losers for the requested period
+ */
+export const getTopMovers = (
+    params?: GetTopMoversParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<TopMovers>> => {
+    
+    return axios.default.get(
+      `/api/v1/screener/top-movers`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getGetTopMoversQueryKey = (params?: GetTopMoversParams,) => {
+    return [`/api/v1/screener/top-movers`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getGetTopMoversQueryOptions = <TData = Awaited<ReturnType<typeof getTopMovers>>, TError = AxiosError<unknown>>(params?: GetTopMoversParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTopMovers>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetTopMoversQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTopMovers>>> = ({ signal }) => getTopMovers(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTopMovers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetTopMoversQueryResult = NonNullable<Awaited<ReturnType<typeof getTopMovers>>>
+export type GetTopMoversQueryError = AxiosError<unknown>
+
+/**
+ * @summary Top gainers and losers for the requested period
+ */
+export const useGetTopMovers = <TData = Awaited<ReturnType<typeof getTopMovers>>, TError = AxiosError<unknown>>(
+ params?: GetTopMoversParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTopMovers>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getGetTopMoversQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

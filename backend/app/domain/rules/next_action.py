@@ -3,7 +3,46 @@ from __future__ import annotations
 from typing import Any, Dict, List, Tuple, Optional
 import logging
 
+try:
+    from app.core.config import load as load_settings
+except Exception:  # pragma: no cover
+    load_settings = None  # type: ignore
+
 log = logging.getLogger("app.domain.next_action")
+
+_EUPH_DEFAULTS = {
+    'rsi_min': 75.0,
+    'adx_min': 30.0,
+    'alt_rsi_min': 70.0,
+    'alt_adx_min': 25.0,
+    'adx_slope5_min': 0.0,
+}
+
+
+def _euphoria_cfg():
+    if load_settings is None:  # pragma: no cover
+        return None
+    try:
+        return load_settings().rules.euphoria
+    except Exception:
+        return None
+
+
+def euphoria_thresholds() -> Dict[str, float]:
+    cfg = _euphoria_cfg()
+    if cfg is None:
+        return dict(_EUPH_DEFAULTS)
+    return {
+        'rsi_min': float(getattr(cfg, 'rsi_min', _EUPH_DEFAULTS['rsi_min'])),
+        'adx_min': float(getattr(cfg, 'adx_min', _EUPH_DEFAULTS['adx_min'])),
+        'alt_rsi_min': float(getattr(cfg, 'alt_rsi_min', _EUPH_DEFAULTS['alt_rsi_min'])),
+        'alt_adx_min': float(getattr(cfg, 'alt_adx_min', _EUPH_DEFAULTS['alt_adx_min'])),
+        'adx_slope5_min': float(getattr(cfg, 'adx_slope5_min', _EUPH_DEFAULTS['adx_slope5_min'])),
+    }
+
+
+def is_euphoria_on(ind: Dict[str, Any]) -> bool:
+    return _euphoria_on(ind)
 
 def _fmt_price(x: Optional[float]) -> str:
     try:
@@ -25,7 +64,8 @@ def _euphoria_on(ind: Dict[str, Any]) -> bool:
         return False
     if rsi is None or adx is None:
         return False
-    return (rsi >= 75 and adx >= 30) or (rsi >= 70 and adx >= 25 and adx_slope_5 > 0)
+    thresholds = euphoria_thresholds()
+    return (rsi >= thresholds["rsi_min"] and adx >= thresholds["adx_min"]) or (rsi >= thresholds["alt_rsi_min"] and adx >= thresholds["alt_adx_min"] and adx_slope_5 > thresholds["adx_slope5_min"])
 
 def _breakeven_active(pos: Dict[str, Any], price: Optional[float]) -> bool:
     entry = pos.get("entry_price_locked")
@@ -394,6 +434,7 @@ def compute_next_action(*, price: float | None, indicators: Dict[str, Any], posi
 
 def method_pill_for(indicators: Dict[str, Any], _score_row: Dict[str, Any]) -> str:
     # Prefer EMA8 when euphoria is on; else the configured slow EMA (fallback 10)
+    thresholds = euphoria_thresholds()
     rsi = indicators.get("rsi14")
     adx = indicators.get("adx14")
     adx_slope_5 = indicators.get("adx_slope_5") or 0
@@ -402,7 +443,7 @@ def method_pill_for(indicators: Dict[str, Any], _score_row: Dict[str, Any]) -> s
         rsi_f = float(rsi) if rsi is not None else None
         adx_f = float(adx) if adx is not None else None
         eup = (rsi_f is not None and adx_f is not None) and (
-            (rsi_f >= 75 and adx_f >= 30) or (rsi_f >= 70 and adx_f >= 25 and adx_slope_5 > 0)
+            (rsi_f >= thresholds["rsi_min"] and adx_f >= thresholds["adx_min"]) or (rsi_f >= thresholds["alt_rsi_min"] and adx_f >= thresholds["alt_adx_min"] and adx_slope_5 > thresholds["adx_slope5_min"])
         )
     except Exception:
         eup = False

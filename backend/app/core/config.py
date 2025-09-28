@@ -2,7 +2,7 @@
 from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import os, yaml
 from pydantic import BaseModel, Field, ValidationError
 
@@ -39,10 +39,17 @@ class AppCfg(BaseModel):
     name: str = "Momentum API"
     env: str = Field(default="development")   # effective env after layering
     api_prefix: str = "/api/v1"
+    timezone: str = "Asia/Singapore"
+    backfill_on_start: bool = True
 
 class StorageCfg(BaseModel):
     # default works out-of-the-box; tests can override via env APP_SQLITE_PATH
     sqlite_path: str = "./data/local.db"
+    parquet_root: Optional[str] = None
+    compression: str = "zstd"
+    use_dictionary: bool = True
+    write_statistics: bool = True
+    write_temp_dir: Optional[str] = None
 
 
 # ----------------- NEW sections (Phase 10) -----------------
@@ -64,6 +71,30 @@ class DataCfg(BaseModel):
     adapter: str = "stub"
 
 
+class RulesEuphoriaCfg(BaseModel):
+    rsi_min: float = 75.0
+    adx_min: float = 30.0
+    alt_rsi_min: float = 70.0
+    alt_adx_min: float = 25.0
+    adx_slope5_min: float = 0.0
+
+class RulesSoftGatesCfg(BaseModel):
+    min_score: float = 35.0
+    min_relvol20: float = 0.8
+    min_adx14: float = 22.0
+    min_prox52w_pct: float = -10.0
+    require_base_len_bars: float = 15.0
+    breakout_overrides_soft_gates: bool = True
+
+class RulesCfg(BaseModel):
+    breakeven_gain_pct: float = 5.0
+    atr_chand_mult: float = 2.0
+    atr_chand_mult_euphoria: float = 1.4
+    atr_init_mult: float = 2.0
+    euphoria: RulesEuphoriaCfg = RulesEuphoriaCfg()
+    soft_gates: RulesSoftGatesCfg = RulesSoftGatesCfg()
+
+
 class Settings(BaseModel):
     # Existing sections
     app: AppCfg = AppCfg()
@@ -74,6 +105,7 @@ class Settings(BaseModel):
     screener: ScreenerCfg = ScreenerCfg()
     scheduler: SchedulerCfg = SchedulerCfg()
     data: DataCfg = DataCfg()
+    rules: RulesCfg = RulesCfg()
     # --- Minimal addition for Alerts (non-breaking) ---
     # Keep it as a free-form dict so YAML can evolve (rules, channels, throttle, etc.)
     # The alerts service will parse/normalize it.
@@ -122,8 +154,26 @@ def load() -> Settings:
     if app_config:
         data = _maybe_merge(data, Path(app_config).expanduser().resolve())
 
-    # Ensure effective env is set
-    data = _deep_merge(data, {"app": {"env": env}})
+    # Normalize storage paths to be absolute (respect repo root for relative inputs)
+    storage_cfg = data.get("storage") or {}
+    if isinstance(storage_cfg, dict):
+        parquet_root = storage_cfg.get("parquet_root")
+        if isinstance(parquet_root, str) and parquet_root.strip():
+            p = Path(parquet_root)
+            if not p.is_absolute():
+                p = (REPO_ROOT / p).resolve()
+            else:
+                p = p.resolve()
+            storage_cfg["parquet_root"] = str(p)
+        tmp_dir = storage_cfg.get("write_temp_dir")
+        if isinstance(tmp_dir, str) and tmp_dir.strip():
+            t = Path(tmp_dir)
+            if not t.is_absolute():
+                t = (REPO_ROOT / t).resolve()
+            else:
+                t = t.resolve()
+            storage_cfg["write_temp_dir"] = str(t)
+        data["storage"] = storage_cfg
 
     # 5) Environment variable shims for common nested keys (kept simple & explicit)
     #    This complements, not replaces, YAML files.
@@ -160,3 +210,4 @@ def api_prefix() -> str:
 # Back-compat for modules that still call get_settings()
 def get_settings() -> Settings:
     return load()
+

@@ -14,6 +14,13 @@ import { useGetApiV1Screener } from '@/lib/api/client';
 import type { GetApiV1ScreenerParams } from '@/lib/api/types';
 import RightDrawer from '@/features/detail/RightDrawer';
 
+
+interface MomentumTableProps {
+  refetchIntervalMs?: number | false;
+  onSelectSymbol?: (symbol: string) => void;
+  symbolFilter?: string;
+  height?: number | string;
+}
 const MAX_PAGE_SIZE = 100; // MUI X MIT cap
 
 // ---------- helpers ----------
@@ -209,21 +216,27 @@ const num = (v: any): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-export default function MomentumTable({ refetchIntervalMs = false }: { refetchIntervalMs?: number | false }) {
+export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbol, symbolFilter, height }: MomentumTableProps) {
   const [pagination, setPagination] = React.useState<GridPaginationModel>({ page: 0, pageSize: 25 });
   const [sortModel, setSortModel] = React.useState<GridSortModel>([]);
 
   // Drawer
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [drawerSymbol, setDrawerSymbol] = React.useState<string | null>(null);
-  const openDrawerFor = (symbol: string) => {
-    setDrawerSymbol(symbol);
-    setDrawerOpen(true);
-  };
-  const closeDrawer = () => {
+  const openDrawerFor = React.useCallback(
+    (symbol: string) => {
+      if (onSelectSymbol) {
+        onSelectSymbol(symbol);
+      }
+      setDrawerSymbol(symbol);
+      setDrawerOpen(true);
+    },
+    [onSelectSymbol],
+  );
+  const closeDrawer = React.useCallback(() => {
     setDrawerOpen(false);
     setDrawerSymbol(null);
-  };
+  }, []);
 
   // --- query params (memoized) ---
   const apiParams: GetApiV1ScreenerParams = React.useMemo(() => {
@@ -247,8 +260,16 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
       (p as any).order = s0.sort ?? 'asc';
       (p as any).ordering = `${s0.sort === 'desc' ? '-' : ''}${s0.field}`;
     }
+    const sym = symbolFilter?.trim();
+    if (sym) {
+      p.symbol = sym.toUpperCase();
+    }
     return p;
-  }, [pagination.page, pagination.pageSize, sortModel]);
+  }, [pagination.page, pagination.pageSize, sortModel, symbolFilter]);
+
+  React.useEffect(() => {
+    setPagination((prev) => (prev.page === 0 ? prev : { ...prev, page: 0 }));
+  }, [symbolFilter]);
 
   const query = useGetApiV1Screener(apiParams, {
     axios: { baseURL: '' },
@@ -397,9 +418,19 @@ export default function MomentumTable({ refetchIntervalMs = false }: { refetchIn
     );
   }
 
+  const tableHeight = height ?? 720;
+  const boxSx = React.useMemo(() => ({
+    height: tableHeight,
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    overflowX: 'auto',
+  }), [tableHeight]);
+
   return (
-    <Box className="datagrid-elevated" sx={{ height: 720, width: '100%' }}>
+    <Box className="datagrid-elevated" sx={boxSx}>
       <DataGrid
+        sx={{ flex: 1, minWidth: 1200 }}
         rows={rows}
         getRowId={getId}
         columns={columns}

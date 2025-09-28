@@ -17,6 +17,12 @@ import pyarrow.parquet as pq
 import re
 import logging
 
+try:
+    from app.core.config import load as load_settings
+except Exception:  # pragma: no cover
+    load_settings = None  # type: ignore
+
+
 
 # Optional: if you also use Polars in other places
 try:
@@ -28,6 +34,16 @@ except Exception:  # pragma: no cover
 # Configuration helpers
 # -----------------------------
 log = logging.getLogger("app.repos.parquet")
+
+
+def _storage_settings():
+    if load_settings is None:  # pragma: no cover
+        return None
+    try:
+        return load_settings().storage
+    except Exception:
+        return None
+
 
 # Log the resolved parquet root once per process (for easy diagnostics)
 _ROOT_LOGGED_ONCE = False
@@ -43,7 +59,7 @@ def _log_resolved_root_once(p: Path) -> None:
 def _parquet_root_abs() -> Path:
     """
     Resolve the parquet root:
-      1) If PARQUET_ROOT env is set → use it (expanded + absolute).
+      1) If PARQUET_ROOT env is set â†’ use it (expanded + absolute).
       2) Else anchor to the repository's backend dir:
          <repo>/backend/parquet   (derived from this file's location)
     This avoids accidental paths like 'backend/backend/parquet' when the process
@@ -53,9 +69,13 @@ def _parquet_root_abs() -> Path:
     if env_root:
         p = Path(env_root).expanduser().resolve()
     else:
-        # datasets.py is at backend/app/repos/parquet/datasets.py
-        backend_dir = Path(__file__).resolve().parents[3]  # .../backend
-        p = (backend_dir / "parquet").resolve()
+        storage_cfg = _storage_settings()
+        if storage_cfg and getattr(storage_cfg, "parquet_root", None):
+            p = Path(storage_cfg.parquet_root).expanduser().resolve()
+        else:
+            # datasets.py is at backend/app/repos/parquet/datasets.py
+            backend_dir = Path(__file__).resolve().parents[3]  # .../backend
+            p = (backend_dir / "parquet").resolve()
 
     _log_resolved_root_once(p)
 
@@ -224,7 +244,15 @@ class AtomicWriter:
         self.cfg = cfg
         self.root = _table_root(table)
         self.final_dir = custom_final_dir or _run_partition(table, run_id)
-        self.tmp_dir = self.root / "tmp" / uuid.uuid4().hex
+        storage_cfg = _storage_settings()
+        tmp_base = None
+        if storage_cfg and getattr(storage_cfg, "write_temp_dir", None):
+            tmp_base = Path(storage_cfg.write_temp_dir).expanduser().resolve()
+        if tmp_base:
+            tmp_base.mkdir(parents=True, exist_ok=True)
+            self.tmp_dir = tmp_base / uuid.uuid4().hex
+        else:
+            self.tmp_dir = self.root / "tmp" / uuid.uuid4().hex
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         self.parts_written = 0
         self.rows_written = 0
@@ -304,7 +332,7 @@ class AtomicWriter:
 
     def commit(self) -> None:
         """
-        Atomically promote tmp_dir → final partition:
+        Atomically promote tmp_dir â†’ final partition:
           table/run_id=.../  with parts, _SUCCESS, rowcount.txt
         Uses a directory lock to ensure single-writer to the same run_id.
         """
@@ -371,6 +399,17 @@ class AtomicWriter:
             except Exception:
                 pass
 
+def _writer_config_from_settings() -> WriterConfig:
+    storage_cfg = _storage_settings()
+    if storage_cfg:
+        return WriterConfig(
+            compression=getattr(storage_cfg, "compression", "zstd"),
+            use_dictionary=getattr(storage_cfg, "use_dictionary", True),
+            write_statistics=getattr(storage_cfg, "write_statistics", True),
+        )
+    return WriterConfig()
+
+
 def begin_atomic_write(table: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter:
     assert table in TABLES, f"Unknown table {table}"
     assert _is_valid_run_id(run_id), f"Bad run_id format: {run_id}"
@@ -379,7 +418,7 @@ def begin_atomic_write(table: str, run_id: str, cfg: Optional[WriterConfig] = No
         log.info("begin_atomic_write", extra={"table": table, "run_id": run_id, "parquet_root": str(get_parquet_root())})
     except Exception:
         pass
-    return AtomicWriter(table, run_id, cfg or WriterConfig())
+    return AtomicWriter(table, run_id, cfg or _writer_config_from_settings())
 
 # -----------------------------
 # Daily & Intraday helpers for "scores"
@@ -479,7 +518,7 @@ def begin_atomic_write_scores_daily(as_of: str, run_id: str, cfg: Optional[Write
         log.info("scores_daily_begin", extra={"as_of": as_of, "run_id": run_id, "target_dir": str(final_dir)})
     except Exception:
         pass
-    return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
+    return AtomicWriter("scores", run_id, cfg or _writer_config_from_settings(), custom_final_dir=final_dir)
 
 def begin_atomic_write_scores_intraday(date_str: str, run_id: str, cfg: Optional[WriterConfig] = None) -> AtomicWriter:
     """
@@ -491,7 +530,7 @@ def begin_atomic_write_scores_intraday(date_str: str, run_id: str, cfg: Optional
         log.info("scores_intraday_begin", extra={"date": date_str, "run_id": run_id, "target_dir": str(final_dir)})
     except Exception:
         pass
-    return AtomicWriter("scores", run_id, cfg or WriterConfig(), custom_final_dir=final_dir)
+    return AtomicWriter("scores", run_id, cfg or _writer_config_from_settings(), custom_final_dir=final_dir)
 
 def latest_intraday(date_str: str) -> Optional[str]:
     """
@@ -511,7 +550,7 @@ def latest_intraday(date_str: str) -> Optional[str]:
 
 def latest_daily_at_or_before(date_str: str) -> Optional[str]:
     """
-    Return the latest as_of (YYYY-MM-DD) ≤ date_str with a committed run present.
+    Return the latest as_of (YYYY-MM-DD) â‰¤ date_str with a committed run present.
     """
     root = _table_root("scores") / "daily"
     if not root.exists():
@@ -671,7 +710,7 @@ def write_atomic_snapshot(
 ) -> Path:
     """
     Thin wrapper so services can do a one-shot snapshot write without knowing
-    about AtomicWriter lifecycle. Creates ≥1 part-*.parquet, rowcount.txt, _SUCCESS.
+    about AtomicWriter lifecycle. Creates â‰¥1 part-*.parquet, rowcount.txt, _SUCCESS.
 
     - If root_dir is provided, it temporarily overrides PARQUET_ROOT for this call.
     - rows may be: list[dict], pyarrow.Table, or polars.DataFrame.
@@ -702,7 +741,7 @@ def write_atomic_snapshot(
         else:
             # Assume iterable of dicts (possibly empty)
             try:
-                # from_pylist handles empty list → 0-row table (valid parquet)
+                # from_pylist handles empty list â†’ 0-row table (valid parquet)
                 tab = pa.Table.from_pylist(list(rows))
             except Exception:
                 # Fallback: guaranteed-empty schema
@@ -718,3 +757,4 @@ def write_atomic_snapshot(
                 os.environ.pop("PARQUET_ROOT", None)
             else:
                 os.environ["PARQUET_ROOT"] = prev_env
+

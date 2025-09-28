@@ -8,7 +8,7 @@ Simple in-process scheduler for periodic scans.
 - Triggers the *same* service used by POST /scan to keep behavior consistent.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 from typing import Optional, Dict, Any
 import uuid
 import logging
@@ -34,6 +34,35 @@ def _now_key() -> str:
     return f"sched-{t}-{uuid.uuid4().hex[:8]}"
 
 
+def _current_trading_day(now: Optional[datetime] = None) -> date:
+    dt = now or datetime.now(timezone.utc)
+    d = dt.date()
+    if d.weekday() >= 5:
+        # Saturday (5) -> Friday, Sunday (6) -> Friday
+        d -= timedelta(days=d.weekday() - 4)
+    return d
+
+def _daily_partition_has_parquet(trading_day: date) -> bool:
+    try:
+        partition = datasets.get_parquet_root().resolve() / "scores" / "daily" / f"as_of={trading_day.isoformat()}"
+    except Exception:
+        return False
+    if not partition.exists():
+        return False
+    try:
+        next(partition.rglob("*.parquet"))
+        return True
+    except StopIteration:
+        return False
+    except Exception as exc:
+        log.warning(
+            "scheduler_daily_check_failed",
+            extra={"date": trading_day.isoformat(), "error": str(exc)}
+        )
+        return False
+
+
+
 def _run_once(universe: Optional[str]) -> None:
     """
     Execute one scheduled scan.
@@ -42,30 +71,46 @@ def _run_once(universe: Optional[str]) -> None:
     - Softly passes 'universe' in payload (Phase-10-ready, non-breaking).
     """
     start_ts = time.perf_counter()
+    trading_day = _current_trading_day()
 
     # ---- TRUTH LOGS: where will intraday write land (hint) ----
     try:
         root = datasets.get_parquet_root().resolve()  # writer default is ./parquet unless PARQUET_ROOT is set
-        date_utc = datetime.now(timezone.utc).date().isoformat()  # run_screening uses UTC for intraday date
+        date_str = trading_day.isoformat()
         log.info(
             "scheduler_planned_intraday",
             extra={
                 "universe": universe or "default",
                 "parquet_root": str(root),
-                "date_utc": date_utc,
-                "target_hint": f"{root}/scores/intraday/date={date_utc}/run_id=<to-be-assigned>",
+                "trading_date": date_str,
+                "target_hint": f"{root}/scores/intraday/date={date_str}/run_id=<to-be-assigned>",
             },
         )
     except Exception:
         pass
 
-    log.info("scheduled scan starting", extra={"universe": universe or "default"})
+    log.info(
+        "scheduled scan starting trading_date=%s universe=%s",
+        trading_day.isoformat(),
+        universe or "default",
+        extra={"universe": universe or "default", "trading_date": trading_day.isoformat()},
+    )
+
+    if _daily_partition_has_parquet(trading_day):
+        log.info(
+            "scheduled scan skipped trading_date=%s reason=%s universe=%s",
+            trading_day.isoformat(),
+            "daily_already_committed",
+            universe or "default",
+            extra={"reason": "daily_already_committed", "trading_date": trading_day.isoformat(), "universe": universe or "default"},
+        )
+        return
 
     # Acquire a SQLAlchemy session from the existing dependency
     gen = get_session()
     s = next(gen)
     try:
-        payload: Dict[str, Any] = {}
+        payload: Dict[str, Any] = {"intraday_trading_date": trading_day.isoformat()}
         if universe:
             payload["universe"] = universe
         key = _now_key()

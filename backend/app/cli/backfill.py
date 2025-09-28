@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import logging
+import shutil
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Iterable, Optional, Tuple, Dict, Any
@@ -182,6 +183,50 @@ def _should_export_utilities(status: int, payload: Dict[str, Any] | None) -> boo
     snapshot_path = payload.get('snapshot_path')
     return bool(snapshot_path)
 
+def _daily_partition_has_parquet(as_of: date) -> bool:
+    partition_root = _parquet_root_abs() / "scores" / "daily" / f"as_of={as_of.isoformat()}"
+    if not partition_root.exists():
+        return False
+    try:
+        next(partition_root.rglob("*.parquet"))
+        return True
+    except StopIteration:
+        return False
+    except Exception as exc:
+        log.warning(
+            "daily_partition_check_failed",
+            extra={"date": as_of.isoformat(), "path": str(partition_root), "error": str(exc)},
+        )
+        return False
+
+
+def _delete_intraday_partition(as_of: date) -> None:
+    base = _parquet_root_abs() / "scores" / "intraday"
+    candidates = [
+        base / f"date={as_of.isoformat()}",
+        base / f"as_of={as_of.isoformat()}",
+    ]
+    existing = [p for p in candidates if p.exists()]
+    if not existing:
+        log.info(
+            "intraday_cleanup_missing",
+            extra={"date": as_of.isoformat(), "paths_checked": [str(p) for p in candidates]},
+        )
+        return
+    for intraday_root in existing:
+        try:
+            shutil.rmtree(intraday_root)
+            log.info(
+                "intraday_cleanup_done",
+                extra={"date": as_of.isoformat(), "path": str(intraday_root)},
+            )
+        except Exception:
+            log.exception(
+                "intraday_cleanup_failed",
+                extra={"date": as_of.isoformat(), "path": str(intraday_root)},
+            )
+
+
 
 def _trigger_util_exports(as_of: date) -> None:
     extra = {'date': as_of.isoformat()}
@@ -233,6 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     total_days = 0
     skipped_days = 0
     exported_dates: set[date] = set()
+    cleaned_intraday: set[date] = set()
 
     log.info("backfill_window", extra={"start": start.isoformat(), "end": end.isoformat(), "api": API})
     print(f"Backfill window: {start} -> {end}  (API={API})")
@@ -259,6 +305,9 @@ def main(argv: list[str] | None = None) -> int:
             if _should_export_utilities(status, resp) and d not in exported_dates:
                 _trigger_util_exports(d)
                 exported_dates.add(d)
+            if d not in cleaned_intraday and _daily_partition_has_parquet(d):
+                _delete_intraday_partition(d)
+                cleaned_intraday.add(d)
         except Exception as e:
             print(f"!! failed {d}: {e}", file=sys.stderr)
             log.exception("day_failed", extra={"date": d.isoformat()})
