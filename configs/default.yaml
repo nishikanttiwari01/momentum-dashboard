@@ -68,7 +68,8 @@ alerts:
     # supports list OR comma-separated string
     to_list:
       - nishikantworld@gmail.com
-      # - second@example.com
+      - nishikant.tiwari01@gmail.com
+      - shashikantame@gmail.com 
 
 rules:
   breakeven_gain_pct: 5.0

@@ -67,5 +67,8 @@ python -m app.cli.backfill --days 252 --universe NIFTY500
 # This is to auto generate code from open API frontend. 
 D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\frontend>npx orval --config .\orval.config.ts
 
+# This is to send email for any trading day 
+(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>python -m app.notifs.email_digest -d 2025-09-24 --save-html digest.html
+
 
 

@@ -198,7 +198,7 @@ def _render_html(
     include_trades_html: str
 ) -> Tuple[str, str, str]:
 
-    subj = f"Momentum Suite — Backfill Digest for {as_of_day.isoformat()}"
+    subj = f"Momentum Suite — Summary for {as_of_day.isoformat()}"
 
     GREEN = "#0B8A3C"
     RED = "#C62828"
@@ -250,8 +250,7 @@ def _render_html(
 
     html = f"""
     <div style="font-family:Inter,Arial,sans-serif;font-size:14px;line-height:1.5;color:#222">
-      <h2 style="margin:0 0 8px">Momentum Suite — Backfill Digest</h2>
-      <p>Daily backfill digest for <b>{as_of_day.isoformat()}</b>.</p>
+      <h2 style="margin:0 0 8px">Momentum Suite — Summary <b>{as_of_day.isoformat()}</b></h2>
       <h3>Top 5 Gainers (1D)</h3>{h_gain}
       <h3>Top 5 Losers (1D)</h3>{h_lose}
       <h3>Top 5 by Score</h3>{h_score}
@@ -271,7 +270,7 @@ def _render_html(
     t_lose = rows_plain(losers)
     t_score = rows_plain(scorers)
 
-    text = f"Momentum Suite — Backfill Digest {as_of_day.isoformat()}\n\n"
+    text = f"Momentum Suite — Summary for {as_of_day.isoformat()}\n\n"
     text += txt_block("Top 5 Gainers (1D)", t_gain) + "\n\n"
     text += txt_block("Top 5 Losers (1D)", t_lose) + "\n\n"
     text += txt_block("Top 5 by Score", t_score) + "\n"
