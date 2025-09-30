@@ -54,6 +54,20 @@ alerts:
     min_minutes_between: 60
   dedupe:
     window_minutes: 180
+  email:
+    enabled: true                 # master switch
+    on_backfill_digest: true      # toggle just the backfill summary
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    use_tls: true
+    from_name: Momentum Suite
+    username: nishikantworld@gmail.com
+    password: tzrtcknnvhfqrzly  # use a Gmail App Password
+    from_addr: nishikantworld@gmail.com
+    # supports list OR comma-separated string
+    to_list:
+      - nishikantworld@gmail.com
+      # - second@example.com
 
 rules:
   breakeven_gain_pct: 5.0

@@ -16,6 +16,9 @@ from urllib3.util.retry import Retry
 from pathlib import Path as _Path
 
 from backend.util import run_fetch_details, run_fetch_screener_pages
+# near other imports
+from app.notifs.email_digest import send_backfill_digest_if_enabled
+
 
 API = os.getenv("MD_API", "http://127.0.0.1:8000")
 
@@ -308,6 +311,13 @@ def main(argv: list[str] | None = None) -> int:
             if d not in cleaned_intraday and _daily_partition_has_parquet(d):
                 _delete_intraday_partition(d)
                 cleaned_intraday.add(d)
+            # after cleanup for that day...
+            # ✉️ Send digest email for this day (best-effort, guarded by YAML flags)
+            try:
+                send_backfill_digest_if_enabled(d)
+            except Exception:
+                log.exception("backfill_email_digest_failed", extra={"date": d.isoformat()})
+
         except Exception as e:
             print(f"!! failed {d}: {e}", file=sys.stderr)
             log.exception("day_failed", extra={"date": d.isoformat()})
