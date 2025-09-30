@@ -8,6 +8,7 @@ import ListIcon from '@mui/icons-material/ViewList';
 import BookmarkIcon from '@mui/icons-material/BookmarkBorder';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import HistoryIcon from '@mui/icons-material/History';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SettingsIcon from '@mui/icons-material/Settings';
 import SchoolIcon from '@mui/icons-material/School';
 import { NavLink } from 'react-router-dom';
@@ -15,16 +16,16 @@ import { NavLink } from 'react-router-dom';
 // Image placed under frontend/src/assets/
 import ShubhLabhImg from '@/assets/shubh-labh-swastik-stickers.jpg';
 
-export const NAV_WIDTH = 160;
+export const NAV_WIDTH = 165;
 
 const items = [
   { to: '/', label: 'Dashboard', icon: <DashboardIcon /> },
   { to: '/screener', label: 'Screener', icon: <ListIcon /> },
+  { to: '/history', label: 'Trades On', icon: <TrendingUpIcon  /> }, // ← renamed
+  { to: '/learning', label: 'Learning', icon: <SchoolIcon /> },
   { to: '/watchlist', label: 'Watchlist', icon: <BookmarkIcon /> },
   { to: '/alerts', label: 'Alerts', icon: <NotificationsIcon /> },
-  { to: '/history', label: 'History', icon: <HistoryIcon /> },
   { to: '/settings', label: 'Settings', icon: <SettingsIcon /> },
-  { to: '/learning', label: 'Learning', icon: <SchoolIcon /> },
 ];
 
 export default function LeftNav() {
