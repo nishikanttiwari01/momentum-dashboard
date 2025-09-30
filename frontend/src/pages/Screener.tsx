@@ -69,7 +69,7 @@ export default function Screener() {
         </Stack>
       </Stack>
       <Divider sx={{ mb: 1 }} />
-      <Box sx={{ width: '100%', overflowX: 'auto' }}>
+      <Box sx={{ width: '100%'}}>
         <MomentumTable
           refetchIntervalMs={refetchIntervalMs}
           symbolFilter={symbolFilter}

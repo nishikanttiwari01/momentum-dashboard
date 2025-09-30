@@ -379,7 +379,7 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
         field: 'reason',
         headerName: 'Reason',
         flex: 1.2,
-        minWidth: 200,
+        minWidth: 10,
         sortable: false,
         renderCell: (p) => (
           <span
@@ -400,8 +400,8 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
         ),
       },
 
-      { field: 'rsi', headerName: 'RSI', width: 80, type: 'number', renderCell: renderNum },
-      { field: 'adx', headerName: 'ADX', width: 80, type: 'number', renderCell: renderNum },
+      //{ field: 'rsi', headerName: 'RSI', width: 80, type: 'number', renderCell: renderNum },
+      //{ field: 'adx', headerName: 'ADX', width: 80, type: 'number', renderCell: renderNum },
 
       //{ field: 'atr_pct', headerName: 'ATR %', width: 80, type: 'number', renderCell: renderPctCell },
       { field: 'liquidity', headerName: 'Liquidity (M)', width: 110, type: 'number', renderCell: renderMillions },
@@ -418,19 +418,20 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
     );
   }
 
-  const tableHeight = height ?? 720;
   const boxSx = React.useMemo(() => ({
-    height: tableHeight,
     width: '100%',
+    minWidth: 0,           // let children shrink
     display: 'flex',
     flexDirection: 'column',
-    overflowX: 'auto',
-  }), [tableHeight]);
+    minHeight: 0,          // important for flexbox overflow
+    overflowX: 'hidden',   // avoid page-level horizontal scroll
+  }), []);
 
   return (
     <Box className="datagrid-elevated" sx={boxSx}>
       <DataGrid
-        sx={{ flex: 1, minWidth: 1200 }}
+        autoHeight                
+        sx={{ flex: 1, width: '100%', minWidth: 0 }}
         rows={rows}
         getRowId={getId}
         columns={columns}
