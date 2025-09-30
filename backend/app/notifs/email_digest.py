@@ -41,6 +41,7 @@ def _email_cfg() -> dict:
     return {
         "enabled": bool(e.get("enabled", True)),
         "on_backfill_digest": bool(e.get("on_backfill_digest", True)),
+        "include_trades": bool(e.get("include_trades", True)),
         "smtp_host": e.get("smtp_host"),
         "smtp_port": int(e.get("smtp_port") or 587),
         "use_tls": bool(e.get("use_tls", True)),
@@ -153,7 +154,16 @@ def _active_trades_html() -> str:
     if not HAVE_DB:
         return ""
     try:
-        sm = get_sessionmaker()
+        # Make this fail-safe when DB isn't initialized (e.g., CLI dry-run)
+        try:
+            sm = get_sessionmaker()
+        except RuntimeError:
+            # DB not initialized in this process → skip quietly
+            log.info("active_trades_skipped_db_not_initialized")
+            return ""
+        except Exception:
+            log.exception("active_trades_sessionmaker_failed")
+            return ""        
         with sm() as s:
             repo = PositionsRepo(s)
             pos = repo.list_positions() or []
@@ -170,7 +180,8 @@ def _active_trades_html() -> str:
         table = _build_table_html(["Symbol", "Qty", "Entry"], rows)
         return f"<h3>Active Trades</h3>{table}"
     except Exception:
-        log.exception("active_trades_section_failed")
+        # Keep email clean even if trades section fails
+        log.info("active_trades_section_failed", exc_info=True)
         return ""
 
 
@@ -322,7 +333,7 @@ def send_backfill_digest_if_enabled(as_of_day: date) -> bool:
 
     scores = ScoresRepo()
     gainers, losers, scorers, run_id = _top_lists_for_day(as_of_day, scores)
-    trades_html = _active_trades_html()
+    trades_html = _active_trades_html() if cfg.get("include_trades", True) else ""
     subject, html, text = _render_html(as_of_day, gainers, losers, scorers, run_id, trades_html)
 
     try:
@@ -357,7 +368,7 @@ if __name__ == "__main__":
     cfg = _email_cfg()
     scores = ScoresRepo()
     gainers, losers, scorers, run_id = _top_lists_for_day(as_of_day, scores)
-    trades_html = _active_trades_html()
+    trades_html = _active_trades_html() if cfg.get("include_trades", True) else ""
     subject, html, text = _render_html(as_of_day, gainers, losers, scorers, run_id, trades_html)
 
     if args.override_to:

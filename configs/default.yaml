@@ -57,6 +57,7 @@ alerts:
   email:
     enabled: true                 # master switch
     on_backfill_digest: true      # toggle just the backfill summary
+    include_trades: true
     smtp_host: smtp.gmail.com
     smtp_port: 587
     use_tls: true
