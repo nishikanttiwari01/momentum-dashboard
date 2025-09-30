@@ -91,9 +91,6 @@ export default function EntryModule({
             inputProps={{ inputMode: 'numeric' }}
             disabled={locked}
           />
-          <Button variant="contained" disabled={lockDisabled || !!locked}>
-            Lock entry
-          </Button>
         </Stack>
       )}
     </Box>
