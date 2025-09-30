@@ -6,22 +6,16 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export interface PositionOut {
+export interface PositionUpdate {
   breakeven_active?: boolean;
-  created_at: string;
-  /** @nullable */
-  entry_price_locked?: number | null;
   euphoria_on?: boolean;
   /** @nullable */
   exit_close_threshold?: number | null;
-  id: number;
   /** @nullable */
   note?: string | null;
   /** @nullable */
   qty?: number | null;
   /** @nullable */
   stop_now?: number | null;
-  symbol: string;
-  trade_on: boolean;
-  updated_at: string;
+  trade_on?: boolean;
 }

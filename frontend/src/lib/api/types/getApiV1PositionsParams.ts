@@ -6,8 +6,6 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type PositionOutAllOf = {
-  created_at?: string;
-  id?: number;
-  updated_at?: string;
+export type GetApiV1PositionsParams = {
+symbol?: string;
 };

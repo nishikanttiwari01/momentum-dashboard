@@ -12,10 +12,13 @@ import type { GetApiV1ScreenerUniverse } from './getApiV1ScreenerUniverse';
 export type GetApiV1ScreenerParams = {
 page?: number;
 per_page?: number;
-symbol?: string;
 sort_by?: GetApiV1ScreenerSortBy;
 sort_dir?: GetApiV1ScreenerSortDir;
 universe?: GetApiV1ScreenerUniverse;
+/**
+ * Exact ticker symbol (case-insensitive)
+ */
+symbol?: string;
 sector_in?: string[];
 score_min?: number;
 rsi_min?: number;

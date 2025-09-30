@@ -485,84 +485,90 @@ paths:
                   $ref: '#/components/schemas/IndicatorPoint'
   /api/v1/positions:
     get:
-      tags:
-      - Positions
-      operationId: listPositions
-      summary: List locked positions (optional filter by symbol)
+      tags: [positions]
+      summary: List positions (optionally filter by symbol)
       parameters:
-      - name: symbol
-        in: query
-        schema:
-          $ref: '#/components/schemas/Symbol'
+        - in: query
+          name: symbol
+          required: false
+          schema: { type: string }
       responses:
-        '200':
-          description: Positions
+        "200":
+          description: OK
           content:
             application/json:
               schema:
                 type: array
-                items:
-                  $ref: '#/components/schemas/PositionOut'
-              examples:
-                example:
-                  $ref: '#/components/examples/Positions'
+                items: { $ref: '#/components/schemas/PositionOut' }
+
     post:
-      tags:
-      - Positions
-      operationId: createPosition
-      summary: Lock price / anchor baseline
+      tags: [positions]
+      summary: Lock a position (create-or-lock)
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/PositionIn'
+            schema: { $ref: '#/components/schemas/PositionCreate' }
       responses:
-        '201':
-          description: Created
+        "200":
+          description: Locked
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/PositionOut'
+              schema: { $ref: '#/components/schemas/PositionOut' }
+        "400": { description: Invalid price or payload }
+
+  /api/v1/positions/{symbol}:
+    get:
+      tags: [positions]
+      summary: Get a position by symbol
+      parameters:
+        - in: path
+          name: symbol
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PositionOut' }
+        "404": { description: Not found }
+
   /api/v1/positions/{id}:
     put:
-      tags:
-      - Positions
-      operationId: updatePosition
-      summary: Update note/price/date
+      tags: [positions]
+      summary: Update mutable fields of a position
       parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/PositionIn'
+            schema: { $ref: '#/components/schemas/PositionUpdate' }
       responses:
-        '200':
+        "200":
           description: Updated
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/PositionOut'
+              schema: { $ref: '#/components/schemas/PositionOut' }
+        "404": { description: Not found }
+
     delete:
-      tags:
-      - Positions
-      operationId: deletePosition
-      summary: Remove locked position
+      tags: [positions]
+      summary: Unlock (delete row)
       parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
       responses:
-        '204':
-          description: Deleted
+        "204": { description: Unlocked }
+        "404": { description: Not found }
+
+
   /api/v1/snapshots/pin:
     post:
       tags:
@@ -737,123 +743,6 @@ paths:
               examples:
                 default:
                   $ref: '#/components/examples/DrawerDetailExample'
-# -------------------------
-# POSITIONS (drawer state)
-# -------------------------
-  /api/v1/positions/{symbol}:
-    parameters:
-      - name: symbol
-        in: path
-        required: true
-        description: >
-          Ticker symbol (case-insensitive). Accepts "XYZ" or "XYZ.NS". The server canonicalizes internally
-          and will match common variants (e.g., with/without ".NS").
-        schema:
-          type: string
-    get:
-      tags: [positions]
-      summary: Get saved position (locked drawer state) for a symbol
-      operationId: getPosition
-      responses:
-        '200':
-          description: Saved position found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PositionOut'   # <-- REUSE existing
-              example:
-                symbol: "360ONE.NS"
-                entry_price_locked: 1040.0
-                qty: 100
-                trade_on: true
-                stop_now: 1010.0
-                exit_close_threshold: 1001.5
-                breakeven_active: true
-                euphoria_on: false
-                note: "Locked from drawer"
-                id: 42
-                created_at: "2025-09-15T10:10:00Z"
-                updated_at: "2025-09-15T10:12:05Z"
-        '404':
-          description: No saved position for this symbol
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
-              example:
-                status: 404
-                title: "Not Found"
-                detail: "Position not found"
-                code: "POSITION_NOT_FOUND"
-    put:
-      tags: [positions]
-      summary: Create or update (upsert) locked drawer state for a symbol
-      description: >
-        Upsert endpoint. Send only fields you want to set/update.
-        Typical flow: when user clicks **Lock Entry**, send `entry_price_locked` using the drawer’s suggested
-        entry (`next_action.refs.entry_suggested`) with `qty` and `trade_on=true`.
-      operationId: upsertPosition
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PositionUpsert'  # <-- NEW schema with all-optional fields
-            example:
-              entry_price_locked: 1040.0
-              qty: 100
-              trade_on: true
-              stop_now: 1010.0
-              exit_close_threshold: 1001.5
-              breakeven_active: true
-              euphoria_on: false
-              note: "Locked from drawer"
-      responses:
-        '201':
-          description: Created new position
-          headers:
-            Location:
-              description: Resource URL of the created/updated position
-              schema: { type: string }
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PositionOut'   # <-- REUSE existing
-        '200':
-          description: Updated existing position
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PositionOut'   # <-- REUSE existing
-        '400':
-          description: Validation error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
-              example:
-                status: 400
-                title: "Invalid payload"
-                detail: "qty must be >= 0"
-                code: "VALIDATION_ERROR"
-    delete:
-      tags: [positions]
-      summary: Delete saved position for a symbol
-      operationId: deleteDrawerPosition
-      responses:
-        '204':
-          description: Deleted
-        '404':
-          description: No saved position to delete
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/Problem'
-              example:
-                status: 404
-                title: "Not Found"
-                detail: "Position not found"
-                code: "POSITION_NOT_FOUND"
   /api/v1/watchlist:
     get:
       tags:
@@ -1540,18 +1429,90 @@ components:
       - price
       - as_of
     PositionOut:
-      allOf:
-      - $ref: '#/components/schemas/PositionIn'
-      - type: object
-        properties:
-          id:
-            type: integer
-          created_at:
-            type: string
-            format: date-time
-          updated_at:
-            type: string
-            format: date-time
+      type: object
+      required: [id, symbol, trade_on, created_at, updated_at]
+      properties:
+        id: { type: integer }
+        symbol: { type: string }
+        entry_price_locked:
+          type: number
+          format: double
+          nullable: true         # NULL when unlocked
+        qty:
+          type: integer
+          nullable: true
+        stop_now:
+          type: number
+          format: double
+          nullable: true
+        exit_close_threshold:
+          type: number
+          format: double
+          nullable: true
+        breakeven_active:
+          type: boolean
+          default: false
+        euphoria_on:
+          type: boolean
+          default: false
+        trade_on:
+          type: boolean
+          default: false
+        note:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PositionCreate:              # lock
+      type: object
+      required: [symbol, price]
+      properties:
+        symbol: { type: string }
+        price:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+        qty:
+          type: integer
+          nullable: true
+        note:
+          type: string
+          nullable: true
+        as_of:
+          type: string
+          format: date-time
+          nullable: true
+
+    PositionUpdate:              # partial fields; NOT allowed to change entry_price_locked
+      type: object
+      properties:
+        qty:
+          type: integer
+          nullable: true
+        stop_now:
+          type: number
+          format: double
+          nullable: true
+        exit_close_threshold:
+          type: number
+          format: double
+          nullable: true
+        breakeven_active:
+          type: boolean
+        euphoria_on:
+          type: boolean
+        trade_on:
+          type: boolean
+        note:
+          type: string
+          nullable: true
+
     PositionUpsert:
       type: object
       description: >

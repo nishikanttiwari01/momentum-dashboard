@@ -5,8 +5,18 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
-import type { Symbol } from './symbol';
 
-export type ListPositionsParams = {
-symbol?: Symbol;
-};
+export interface PositionCreate {
+  /** @nullable */
+  as_of?: string | null;
+  /** @nullable */
+  note?: string | null;
+  /**
+   * @minimum 0
+   * @exclusiveMinimum
+   */
+  price: number;
+  /** @nullable */
+  qty?: number | null;
+  symbol: string;
+}

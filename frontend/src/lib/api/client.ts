@@ -30,6 +30,7 @@ import type {
   AlertState,
   DrawerDetail,
   GetApiV1InstrumentsSymbolDetailParams,
+  GetApiV1PositionsParams,
   GetApiV1ScreenerParams,
   GetInstrumentIndicatorsParams,
   GetInstrumentPricesParams,
@@ -42,15 +43,14 @@ import type {
   ListHistoryParams,
   ListInstruments200,
   ListInstrumentsParams,
-  ListPositionsParams,
   ListRuns200,
   ListRunsParams,
   ListSnapshotPinsParams,
   ListUniverse200,
   ListUniverseParams,
-  PositionIn,
+  PositionCreate,
   PositionOut,
-  PositionUpsert,
+  PositionUpdate,
   PreviewAlertDigest200,
   PriceCandle,
   Problem,
@@ -918,10 +918,10 @@ export const useGetInstrumentIndicators = <TData = Awaited<ReturnType<typeof get
 
 
 /**
- * @summary List locked positions (optional filter by symbol)
+ * @summary List positions (optionally filter by symbol)
  */
-export const listPositions = (
-    params?: ListPositionsParams, options?: AxiosRequestConfig
+export const getApiV1Positions = (
+    params?: GetApiV1PositionsParams, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<PositionOut[]>> => {
     
     return axios.default.get(
@@ -932,41 +932,41 @@ export const listPositions = (
   }
 
 
-export const getListPositionsQueryKey = (params?: ListPositionsParams,) => {
+export const getGetApiV1PositionsQueryKey = (params?: GetApiV1PositionsParams,) => {
     return [`/api/v1/positions`, ...(params ? [params]: [])] as const;
     }
 
     
-export const getListPositionsQueryOptions = <TData = Awaited<ReturnType<typeof listPositions>>, TError = AxiosError<unknown>>(params?: ListPositionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPositions>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getGetApiV1PositionsQueryOptions = <TData = Awaited<ReturnType<typeof getApiV1Positions>>, TError = AxiosError<unknown>>(params?: GetApiV1PositionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1Positions>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListPositionsQueryKey(params);
+  const queryKey =  queryOptions?.queryKey ?? getGetApiV1PositionsQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPositions>>> = ({ signal }) => listPositions(params, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApiV1Positions>>> = ({ signal }) => getApiV1Positions(params, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPositions>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApiV1Positions>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type ListPositionsQueryResult = NonNullable<Awaited<ReturnType<typeof listPositions>>>
-export type ListPositionsQueryError = AxiosError<unknown>
+export type GetApiV1PositionsQueryResult = NonNullable<Awaited<ReturnType<typeof getApiV1Positions>>>
+export type GetApiV1PositionsQueryError = AxiosError<unknown>
 
 /**
- * @summary List locked positions (optional filter by symbol)
+ * @summary List positions (optionally filter by symbol)
  */
-export const useListPositions = <TData = Awaited<ReturnType<typeof listPositions>>, TError = AxiosError<unknown>>(
- params?: ListPositionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPositions>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const useGetApiV1Positions = <TData = Awaited<ReturnType<typeof getApiV1Positions>>, TError = AxiosError<unknown>>(
+ params?: GetApiV1PositionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1Positions>>, TError, TData>>, axios?: AxiosRequestConfig}
 
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
-  const queryOptions = getListPositionsQueryOptions(params,options)
+  const queryOptions = getGetApiV1PositionsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -979,32 +979,32 @@ export const useListPositions = <TData = Awaited<ReturnType<typeof listPositions
 
 
 /**
- * @summary Lock price / anchor baseline
+ * @summary Lock a position (create-or-lock)
  */
-export const createPosition = (
-    positionIn: PositionIn, options?: AxiosRequestConfig
+export const postApiV1Positions = (
+    positionCreate: PositionCreate, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<PositionOut>> => {
     
     return axios.default.post(
       `/api/v1/positions`,
-      positionIn,options
+      positionCreate,options
     );
   }
 
 
 
-export const getCreatePositionMutationOptions = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPosition>>, TError,{data: PositionIn}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof createPosition>>, TError,{data: PositionIn}, TContext> => {
+export const getPostApiV1PositionsMutationOptions = <TError = AxiosError<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postApiV1Positions>>, TError,{data: PositionCreate}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof postApiV1Positions>>, TError,{data: PositionCreate}, TContext> => {
 const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPosition>>, {data: PositionIn}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof postApiV1Positions>>, {data: PositionCreate}> = (props) => {
           const {data} = props ?? {};
 
-          return  createPosition(data,axiosOptions)
+          return  postApiV1Positions(data,axiosOptions)
         }
 
         
@@ -1012,55 +1012,114 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type CreatePositionMutationResult = NonNullable<Awaited<ReturnType<typeof createPosition>>>
-    export type CreatePositionMutationBody = PositionIn
-    export type CreatePositionMutationError = AxiosError<unknown>
+    export type PostApiV1PositionsMutationResult = NonNullable<Awaited<ReturnType<typeof postApiV1Positions>>>
+    export type PostApiV1PositionsMutationBody = PositionCreate
+    export type PostApiV1PositionsMutationError = AxiosError<void>
 
     /**
- * @summary Lock price / anchor baseline
+ * @summary Lock a position (create-or-lock)
  */
-export const useCreatePosition = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPosition>>, TError,{data: PositionIn}, TContext>, axios?: AxiosRequestConfig}
+export const usePostApiV1Positions = <TError = AxiosError<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof postApiV1Positions>>, TError,{data: PositionCreate}, TContext>, axios?: AxiosRequestConfig}
 ): UseMutationResult<
-        Awaited<ReturnType<typeof createPosition>>,
+        Awaited<ReturnType<typeof postApiV1Positions>>,
         TError,
-        {data: PositionIn},
+        {data: PositionCreate},
         TContext
       > => {
 
-      const mutationOptions = getCreatePositionMutationOptions(options);
+      const mutationOptions = getPostApiV1PositionsMutationOptions(options);
 
       return useMutation(mutationOptions);
     }
     
 /**
- * @summary Update note/price/date
+ * @summary Get a position by symbol
  */
-export const updatePosition = (
+export const getApiV1PositionsSymbol = (
+    symbol: string, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<PositionOut>> => {
+    
+    return axios.default.get(
+      `/api/v1/positions/${symbol}`,options
+    );
+  }
+
+
+export const getGetApiV1PositionsSymbolQueryKey = (symbol: string,) => {
+    return [`/api/v1/positions/${symbol}`] as const;
+    }
+
+    
+export const getGetApiV1PositionsSymbolQueryOptions = <TData = Awaited<ReturnType<typeof getApiV1PositionsSymbol>>, TError = AxiosError<void>>(symbol: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1PositionsSymbol>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApiV1PositionsSymbolQueryKey(symbol);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApiV1PositionsSymbol>>> = ({ signal }) => getApiV1PositionsSymbol(symbol, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(symbol), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApiV1PositionsSymbol>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetApiV1PositionsSymbolQueryResult = NonNullable<Awaited<ReturnType<typeof getApiV1PositionsSymbol>>>
+export type GetApiV1PositionsSymbolQueryError = AxiosError<void>
+
+/**
+ * @summary Get a position by symbol
+ */
+export const useGetApiV1PositionsSymbol = <TData = Awaited<ReturnType<typeof getApiV1PositionsSymbol>>, TError = AxiosError<void>>(
+ symbol: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1PositionsSymbol>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getGetApiV1PositionsSymbolQueryOptions(symbol,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * @summary Update mutable fields of a position
+ */
+export const putApiV1PositionsId = (
     id: number,
-    positionIn: PositionIn, options?: AxiosRequestConfig
+    positionUpdate: PositionUpdate, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<PositionOut>> => {
     
     return axios.default.put(
       `/api/v1/positions/${id}`,
-      positionIn,options
+      positionUpdate,options
     );
   }
 
 
 
-export const getUpdatePositionMutationOptions = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePosition>>, TError,{id: number;data: PositionIn}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof updatePosition>>, TError,{id: number;data: PositionIn}, TContext> => {
+export const getPutApiV1PositionsIdMutationOptions = <TError = AxiosError<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putApiV1PositionsId>>, TError,{id: number;data: PositionUpdate}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof putApiV1PositionsId>>, TError,{id: number;data: PositionUpdate}, TContext> => {
 const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePosition>>, {id: number;data: PositionIn}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof putApiV1PositionsId>>, {id: number;data: PositionUpdate}> = (props) => {
           const {id,data} = props ?? {};
 
-          return  updatePosition(id,data,axiosOptions)
+          return  putApiV1PositionsId(id,data,axiosOptions)
         }
 
         
@@ -1068,31 +1127,31 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type UpdatePositionMutationResult = NonNullable<Awaited<ReturnType<typeof updatePosition>>>
-    export type UpdatePositionMutationBody = PositionIn
-    export type UpdatePositionMutationError = AxiosError<unknown>
+    export type PutApiV1PositionsIdMutationResult = NonNullable<Awaited<ReturnType<typeof putApiV1PositionsId>>>
+    export type PutApiV1PositionsIdMutationBody = PositionUpdate
+    export type PutApiV1PositionsIdMutationError = AxiosError<void>
 
     /**
- * @summary Update note/price/date
+ * @summary Update mutable fields of a position
  */
-export const useUpdatePosition = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePosition>>, TError,{id: number;data: PositionIn}, TContext>, axios?: AxiosRequestConfig}
+export const usePutApiV1PositionsId = <TError = AxiosError<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putApiV1PositionsId>>, TError,{id: number;data: PositionUpdate}, TContext>, axios?: AxiosRequestConfig}
 ): UseMutationResult<
-        Awaited<ReturnType<typeof updatePosition>>,
+        Awaited<ReturnType<typeof putApiV1PositionsId>>,
         TError,
-        {id: number;data: PositionIn},
+        {id: number;data: PositionUpdate},
         TContext
       > => {
 
-      const mutationOptions = getUpdatePositionMutationOptions(options);
+      const mutationOptions = getPutApiV1PositionsIdMutationOptions(options);
 
       return useMutation(mutationOptions);
     }
     
 /**
- * @summary Remove locked position
+ * @summary Unlock (delete row)
  */
-export const deletePosition = (
+export const deleteApiV1PositionsId = (
     id: number, options?: AxiosRequestConfig
  ): Promise<AxiosResponse<void>> => {
     
@@ -1103,18 +1162,18 @@ export const deletePosition = (
 
 
 
-export const getDeletePositionMutationOptions = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{id: number}, TContext> => {
+export const getDeleteApiV1PositionsIdMutationOptions = <TError = AxiosError<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteApiV1PositionsId>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteApiV1PositionsId>>, TError,{id: number}, TContext> => {
 const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
       
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePosition>>, {id: number}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteApiV1PositionsId>>, {id: number}> = (props) => {
           const {id} = props ?? {};
 
-          return  deletePosition(id,axiosOptions)
+          return  deleteApiV1PositionsId(id,axiosOptions)
         }
 
         
@@ -1122,23 +1181,23 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
 
   return  { mutationFn, ...mutationOptions }}
 
-    export type DeletePositionMutationResult = NonNullable<Awaited<ReturnType<typeof deletePosition>>>
+    export type DeleteApiV1PositionsIdMutationResult = NonNullable<Awaited<ReturnType<typeof deleteApiV1PositionsId>>>
     
-    export type DeletePositionMutationError = AxiosError<unknown>
+    export type DeleteApiV1PositionsIdMutationError = AxiosError<void>
 
     /**
- * @summary Remove locked position
+ * @summary Unlock (delete row)
  */
-export const useDeletePosition = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePosition>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
+export const useDeleteApiV1PositionsId = <TError = AxiosError<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteApiV1PositionsId>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
 ): UseMutationResult<
-        Awaited<ReturnType<typeof deletePosition>>,
+        Awaited<ReturnType<typeof deleteApiV1PositionsId>>,
         TError,
         {id: number},
         TContext
       > => {
 
-      const mutationOptions = getDeletePositionMutationOptions(options);
+      const mutationOptions = getDeleteApiV1PositionsIdMutationOptions(options);
 
       return useMutation(mutationOptions);
     }
@@ -1661,177 +1720,6 @@ export const useGetApiV1InstrumentsSymbolDetail = <TData = Awaited<ReturnType<ty
 
 
 
-/**
- * @summary Get saved position (locked drawer state) for a symbol
- */
-export const getPosition = (
-    symbol: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<PositionOut>> => {
-    
-    return axios.default.get(
-      `/api/v1/positions/${symbol}`,options
-    );
-  }
-
-
-export const getGetPositionQueryKey = (symbol: string,) => {
-    return [`/api/v1/positions/${symbol}`] as const;
-    }
-
-    
-export const getGetPositionQueryOptions = <TData = Awaited<ReturnType<typeof getPosition>>, TError = AxiosError<Problem>>(symbol: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPosition>>, TError, TData>>, axios?: AxiosRequestConfig}
-) => {
-
-const {query: queryOptions, axios: axiosOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetPositionQueryKey(symbol);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPosition>>> = ({ signal }) => getPosition(symbol, { signal, ...axiosOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(symbol), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPosition>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type GetPositionQueryResult = NonNullable<Awaited<ReturnType<typeof getPosition>>>
-export type GetPositionQueryError = AxiosError<Problem>
-
-/**
- * @summary Get saved position (locked drawer state) for a symbol
- */
-export const useGetPosition = <TData = Awaited<ReturnType<typeof getPosition>>, TError = AxiosError<Problem>>(
- symbol: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPosition>>, TError, TData>>, axios?: AxiosRequestConfig}
-
-  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
-
-  const queryOptions = getGetPositionQueryOptions(symbol,options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-/**
- * Upsert endpoint. Send only fields you want to set/update. Typical flow: when user clicks **Lock Entry**, send `entry_price_locked` using the drawer’s suggested entry (`next_action.refs.entry_suggested`) with `qty` and `trade_on=true`.
-
- * @summary Create or update (upsert) locked drawer state for a symbol
- */
-export const upsertPosition = (
-    symbol: string,
-    positionUpsert: PositionUpsert, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<PositionOut>> => {
-    
-    return axios.default.put(
-      `/api/v1/positions/${symbol}`,
-      positionUpsert,options
-    );
-  }
-
-
-
-export const getUpsertPositionMutationOptions = <TError = AxiosError<Problem>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertPosition>>, TError,{symbol: string;data: PositionUpsert}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof upsertPosition>>, TError,{symbol: string;data: PositionUpsert}, TContext> => {
-const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof upsertPosition>>, {symbol: string;data: PositionUpsert}> = (props) => {
-          const {symbol,data} = props ?? {};
-
-          return  upsertPosition(symbol,data,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpsertPositionMutationResult = NonNullable<Awaited<ReturnType<typeof upsertPosition>>>
-    export type UpsertPositionMutationBody = PositionUpsert
-    export type UpsertPositionMutationError = AxiosError<Problem>
-
-    /**
- * @summary Create or update (upsert) locked drawer state for a symbol
- */
-export const useUpsertPosition = <TError = AxiosError<Problem>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof upsertPosition>>, TError,{symbol: string;data: PositionUpsert}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationResult<
-        Awaited<ReturnType<typeof upsertPosition>>,
-        TError,
-        {symbol: string;data: PositionUpsert},
-        TContext
-      > => {
-
-      const mutationOptions = getUpsertPositionMutationOptions(options);
-
-      return useMutation(mutationOptions);
-    }
-    
-/**
- * @summary Delete saved position for a symbol
- */
-export const deleteDrawerPosition = (
-    symbol: string, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<void>> => {
-    
-    return axios.default.delete(
-      `/api/v1/positions/${symbol}`,options
-    );
-  }
-
-
-
-export const getDeleteDrawerPositionMutationOptions = <TError = AxiosError<Problem>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDrawerPosition>>, TError,{symbol: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof deleteDrawerPosition>>, TError,{symbol: string}, TContext> => {
-const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteDrawerPosition>>, {symbol: string}> = (props) => {
-          const {symbol} = props ?? {};
-
-          return  deleteDrawerPosition(symbol,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteDrawerPositionMutationResult = NonNullable<Awaited<ReturnType<typeof deleteDrawerPosition>>>
-    
-    export type DeleteDrawerPositionMutationError = AxiosError<Problem>
-
-    /**
- * @summary Delete saved position for a symbol
- */
-export const useDeleteDrawerPosition = <TError = AxiosError<Problem>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDrawerPosition>>, TError,{symbol: string}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationResult<
-        Awaited<ReturnType<typeof deleteDrawerPosition>>,
-        TError,
-        {symbol: string},
-        TContext
-      > => {
-
-      const mutationOptions = getDeleteDrawerPositionMutationOptions(options);
-
-      return useMutation(mutationOptions);
-    }
-    
 /**
  * @summary Get user watchlists & symbols
  */

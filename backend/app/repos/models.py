@@ -124,23 +124,29 @@ class Position(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), unique=True, index=True)
-    entry_price_locked: Mapped[float] = mapped_column(Float)
+
+    # must be nullable for unlock
+    entry_price_locked: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     qty: Mapped[Optional[int]] = mapped_column(Integer)
     stop_now: Mapped[Optional[float]] = mapped_column(Float)
     exit_close_threshold: Mapped[Optional[float]] = mapped_column(Float)
     breakeven_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     euphoria_on: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # ✅ this is the missing one
+    trade_on: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
     note: Mapped[Optional[str]] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        server_default=func.current_timestamp(),
-        onupdate=func.current_timestamp(),
-        nullable=False,
+        DateTime, server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(), nullable=False
     )
+
 
 
 class SnapshotPin(Base):
