@@ -135,12 +135,12 @@ news:
         weight: 1.00
     media_sites:
       - { domain: "moneycontrol.com",      weight: 0.90 }
-      - { domain: "livemint.com",          weight: 0.90 }
-      - { domain: "economictimes.com",     weight: 0.90 }
-      - { domain: "business-standard.com", weight: 0.90 }
-      - { domain: "financialexpress.com",  weight: 0.90 }
-      - { domain: "cnbctv18.com",          weight: 0.90 }
-      - { domain: "reuters.com",           weight: 0.95 }
+      #- { domain: "livemint.com",          weight: 0.90 }
+      #- { domain: "economictimes.com",     weight: 0.90 }
+      #- { domain: "business-standard.com", weight: 0.90 }
+      #- { domain: "financialexpress.com",  weight: 0.90 }
+      #- { domain: "cnbctv18.com",          weight: 0.90 }
+      #- { domain: "reuters.com",           weight: 0.95 }
     google_news:
       enabled: true
       sites: ["moneycontrol.com","livemint.com","economictimes.com",

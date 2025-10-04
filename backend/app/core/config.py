@@ -140,6 +140,14 @@ class Settings(BaseModel):
     features: Dict[str, Any] = Field(default_factory=dict)
     news: NewsCfg = NewsCfg()
 
+    @property
+    def parquet_root(self) -> str:
+        storage_root = self.storage.parquet_root
+        if storage_root:
+            return storage_root
+        return str((REPO_ROOT / 'backend' / 'parquet').resolve())
+
+
 
 # ----------------- YAML helpers (unchanged) -----------------
 def _read_yaml(path: Path) -> Dict[str, Any]:
