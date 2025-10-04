@@ -11,6 +11,12 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+# ✨ added
+import logging
+import os
+import time
+import uuid
+
 from app.core.config import load
 from app.schemas.generated.models import (
     NewsIngestBatch,
@@ -18,6 +24,39 @@ from app.schemas.generated.models import (
     NewsAttributionItem,
     NewsSourceRef,
 )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Logging (non-invasive; no behavior change)
+# ──────────────────────────────────────────────────────────────────────────────
+
+log = logging.getLogger(__name__)
+
+def _configure_logging_if_needed(default_level: str = "INFO") -> None:
+    """Init root logging only if the app hasn't configured it yet."""
+    root = logging.getLogger()
+    if not root.handlers:
+        level_name = os.getenv("LOG_LEVEL", default_level).upper()
+        level = getattr(logging, level_name, logging.INFO)
+        logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+        log.debug("logging.configured", extra={"level": level_name})
+
+def _runid() -> str:
+    if not hasattr(_runid, "_id"):
+        setattr(_runid, "_id", uuid.uuid4().hex[:12])
+    return getattr(_runid, "_id")
+
+def _t0() -> float:
+    return time.perf_counter()
+
+def _elapsed_ms(t0: float) -> float:
+    return round((time.perf_counter() - t0) * 1000.0, 2)
+
+def _exc(context: str, **extra):
+    extra = {"run_id": _runid(), **extra}
+    log.exception(context, extra=extra)
+
+# Ensure we have basic logging even when used from scripts
+_configure_logging_if_needed()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Paths & storage lifecycle (uses existing global parquet_root)
@@ -40,10 +79,10 @@ def _configured_base_root() -> Path:
         <parquet_root>/news/partition_date=YYYY-MM-DD/clusters.parquet
     """
     cfg = load()
-    # Prefer the same config key you use elsewhere (commonly 'parquet_root').
-    # Fallback to ./backend/parquet to match your existing repo convention.
     base = getattr(cfg, "parquet_root", None) or "./backend/parquet"
-    return Path(base)
+    p = Path(base)
+    log.debug("news.base_root_resolved", extra={"base": str(p), "run_id": _runid()})
+    return p
 
 
 def ensure_news_storage_ready() -> None:
@@ -53,6 +92,7 @@ def ensure_news_storage_ready() -> None:
     news_root = base / "news"
     news_root.mkdir(parents=True, exist_ok=True)
     _paths = _Paths(base_parquet_root=base, news_root=news_root)
+    log.debug("news.storage_ready", extra={"root": str(news_root), "run_id": _runid()})
 
 
 def _partition_dir_from_dt(published: datetime) -> Path:
@@ -61,15 +101,18 @@ def _partition_dir_from_dt(published: datetime) -> Path:
     folder partition reflects IST to align with Indian market/news days.
     """
     assert _paths, "ensure_news_storage_ready() must be called first"
-    # IST is UTC+5:30
     ist = timezone(timedelta(hours=5, minutes=30))
     day = published.astimezone(ist).strftime("%Y-%m-%d")
-    return _paths.news_root / f"partition_date={day}"
+    p = _paths.news_root / f"partition_date={day}"
+    log.debug("news.partition_resolved", extra={"published_utc": published.astimezone(timezone.utc).isoformat(), "partition": str(p), "run_id": _runid()})
+    return p
 
 
 def _parquet_path_for_partition(partition_dir: Path) -> Path:
     # One file per day keeps it simple and fast to scan
-    return partition_dir / "clusters.parquet"
+    p = partition_dir / "clusters.parquet"
+    log.debug("news.parquet_path", extra={"path": str(p), "run_id": _runid()})
+    return p
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -97,6 +140,8 @@ NEWS_SCHEMA = pa.schema([
     ("sources",          pa.list_(_SOURCE_STRUCT)),
 ])
 
+log.debug("news.schema_ready", extra={"fields": NEWS_SCHEMA.names, "run_id": _runid()})
+
 
 def _ingest_item_to_py(obj) -> dict:
     """
@@ -107,7 +152,7 @@ def _ingest_item_to_py(obj) -> dict:
     if pub.tzinfo is None:
         pub = pub.replace(tzinfo=timezone.utc)
     pub_utc = pub.astimezone(timezone.utc)
-    return {
+    d = {
         "cluster_id": obj.cluster_id,
         "symbol": obj.symbol,
         "published": pub_utc,
@@ -124,10 +169,15 @@ def _ingest_item_to_py(obj) -> dict:
             for s in (obj.sources or [])
         ],
     }
+    log.debug("news.ingest_item_normalized", extra={"cluster_id": d["cluster_id"], "symbol": d["symbol"], "run_id": _runid()})
+    return d
 
 
 def _table_from_items(items: Iterable[dict]) -> pa.Table:
-    return pa.Table.from_pylist(list(items), schema=NEWS_SCHEMA)
+    t0 = _t0()
+    tbl = pa.Table.from_pylist(list(items), schema=NEWS_SCHEMA)
+    log.debug("news.arrow_table_built", extra={"rows": tbl.num_rows, "ms": _elapsed_ms(t0), "run_id": _runid()})
+    return tbl
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -141,6 +191,8 @@ def repo_ingest_batch(batch: NewsIngestBatch) -> None:
     """
     ensure_news_storage_ready()
 
+    log.info("news.ingest_begin", extra={"items": len(batch.items), "run_id": _runid()})
+
     # Group incoming items by their partition dir
     buckets: dict[Path, list[dict]] = {}
     for it in batch.items:
@@ -151,8 +203,14 @@ def repo_ingest_batch(batch: NewsIngestBatch) -> None:
     # Upsert per partition
     for pdir, rows in buckets.items():
         ppath = _parquet_path_for_partition(pdir)
+        t0 = _t0()
         if ppath.exists() and ppath.stat().st_size > 0:
-            existing = pq.read_table(ppath)
+            log.debug("news.upsert_read_existing", extra={"path": str(ppath), "run_id": _runid()})
+            try:
+                existing = pq.read_table(ppath)
+            except Exception:
+                _exc("news.parquet_read_failed", path=str(ppath))
+                raise
 
             # Map cluster_id -> row index
             cid_idx: dict[str, int] = {
@@ -168,6 +226,7 @@ def repo_ingest_batch(batch: NewsIngestBatch) -> None:
             name_to_pos = {name: i for i, name in enumerate(existing.schema.names)}
 
             # Upsert/append
+            updated, inserted = 0, 0
             for i in range(new_tbl.num_rows):
                 row = {name: new_tbl[name][i].as_py() for name in new_tbl.schema.names}
                 cid = row["cluster_id"]
@@ -175,25 +234,44 @@ def repo_ingest_batch(batch: NewsIngestBatch) -> None:
                     pos = cid_idx[cid]
                     for name, val in row.items():
                         ex_cols[name_to_pos[name]][pos] = val
+                    updated += 1
                 else:
                     for name, val in row.items():
                         ex_cols[name_to_pos[name]].append(val)
+                    inserted += 1
 
             merged = pa.Table.from_arrays(ex_cols, schema=existing.schema)
-            pq.write_table(
-                merged, ppath,
-                compression="zstd",
-                use_dictionary=True,
-                write_statistics=True,
-            )
+            try:
+                pq.write_table(
+                    merged, ppath,
+                    compression="zstd",
+                    use_dictionary=True,
+                    write_statistics=True,
+                )
+            except Exception:
+                _exc("news.parquet_write_failed", path=str(ppath))
+                raise
+            log.info("news.upsert_done", extra={
+                "path": str(ppath), "existing_rows": existing.num_rows,
+                "updated": updated, "inserted": inserted, "ms": _elapsed_ms(t0),
+                "run_id": _runid(),
+            })
         else:
+            log.debug("news.new_partition_write", extra={"path": str(ppath), "rows": len(rows), "run_id": _runid()})
             tbl = _table_from_items(rows)
-            pq.write_table(
-                tbl, ppath,
-                compression="zstd",
-                use_dictionary=True,
-                write_statistics=True,
-            )
+            try:
+                pq.write_table(
+                    tbl, ppath,
+                    compression="zstd",
+                    use_dictionary=True,
+                    write_statistics=True,
+                )
+            except Exception:
+                _exc("news.parquet_write_failed", path=str(ppath))
+                raise
+            log.info("news.partition_created", extra={"path": str(ppath), "rows": tbl.num_rows, "ms": _elapsed_ms(t0), "run_id": _runid()})
+
+    log.info("news.ingest_complete", extra={"partitions": len(buckets), "run_id": _runid()})
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -217,11 +295,17 @@ def _parquet_glob_between(from_dt: datetime, to_dt: datetime) -> str:
 
     # 'root/{a,b,c}' form for DuckDB
     if not parts:
-        return str(_paths.news_root / "partition_date=*/clusters.parquet")
+        g = str(_paths.news_root / "partition_date=*/clusters.parquet")
+        log.debug("news.glob_auto_all", extra={"glob": g, "run_id": _runid()})
+        return g
     if len(parts) == 1:
-        return str(_paths.news_root / parts[0])
+        g = str(_paths.news_root / parts[0])
+        log.debug("news.glob_single", extra={"glob": g, "run_id": _runid()})
+        return g
     brace = ",".join(parts)
-    return str(_paths.news_root / f"{{{brace}}}")
+    g = str(_paths.news_root / f"{{{brace}}}")
+    log.debug("news.glob_multi", extra={"glob": g, "days": len(parts), "run_id": _runid()})
+    return g
 
 
 def repo_list_news(
@@ -246,46 +330,63 @@ def repo_list_news(
              if to_dt.tzinfo is None else to_dt.astimezone(timezone.utc))
 
     glob = _parquet_glob_between(from_dt, to_dt)
+    log.info("news.query_begin", extra={
+        "symbol": symbol, "from_utc": f_utc.isoformat(), "to_utc": t_utc.isoformat(),
+        "page": page, "per_page": per_page, "min_conf": min_confidence,
+        "events": (event_filter or []), "sort": sort, "glob": glob, "run_id": _runid(),
+    })
+    t0 = _t0()
     con = duckdb.connect(database=":memory:")
-    # (No extensions required; defaults are fine.)
+    try:
+        where = ["symbol = ?", "published BETWEEN ? AND ?"]
+        params: list = [symbol, f_utc, t_utc]
 
-    where = ["symbol = ?", "published BETWEEN ? AND ?"]
-    params: list = [symbol, f_utc, t_utc]
+        if min_confidence:
+            where.append("confidence_stars >= ?")
+            params.append(int(min_confidence))
 
-    if min_confidence:
-        where.append("confidence_stars >= ?")
-        params.append(int(min_confidence))
+        if event_filter:
+            placeholders = ",".join("?" for _ in event_filter)
+            where.append(f"event_type IN ({placeholders})")
+            params.extend(event_filter)
 
-    if event_filter:
-        placeholders = ",".join("?" for _ in event_filter)
-        where.append(f"event_type IN ({placeholders})")
-        params.extend(event_filter)
+        # Sorting
+        if sort == "published_desc":
+            order = "published DESC"
+        elif sort == "confirmed_desc":
+            order = "source_count DESC, confidence_stars DESC, published DESC"
+        else:
+            # impact_desc proxy using consensus + stars + sources + recency(neutralized by published DESC)
+            order = "((coalesce(consensus_score,0)) + 0.15*confidence_stars + 0.05*source_count) DESC, published DESC"
 
-    # Sorting
-    if sort == "published_desc":
-        order = "published DESC"
-    elif sort == "confirmed_desc":
-        order = "source_count DESC, confidence_stars DESC, published DESC"
-    else:
-        # impact_desc proxy using consensus + stars + sources + recency(neutralized by published DESC)
-        order = "((coalesce(consensus_score,0)) + 0.15*confidence_stars + 0.05*source_count) DESC, published DESC"
+        q_base = f"""
+          FROM read_parquet('{glob}')
+          WHERE {" AND ".join(where)}
+        """
 
-    q_base = f"""
-      FROM read_parquet('{glob}')
-      WHERE {" AND ".join(where)}
-    """
+        total = con.execute(f"SELECT COUNT(*) {q_base}", params).fetchone()[0]
 
-    total = con.execute(f"SELECT COUNT(*) {q_base}", params).fetchone()[0]
-
-    offset = max(0, (page - 1) * per_page)
-    q = f"""
-      SELECT cluster_id, symbol, published, title, event_type, bullets, why,
-             sentiment, confidence_stars, consensus_score, source_count, sources
-      {q_base}
-      ORDER BY {order}
-      LIMIT ? OFFSET ?
-    """
-    rows = con.execute(q, params + [per_page, offset]).fetchall()
+        offset = max(0, (page - 1) * per_page)
+        q = f"""
+          SELECT cluster_id, symbol, published, title, event_type, bullets, why,
+                 sentiment, confidence_stars, consensus_score, source_count, sources
+          {q_base}
+          ORDER BY {order}
+          LIMIT ? OFFSET ?
+        """
+        rows = con.execute(q, params + [per_page, offset]).fetchall()
+        log.info("news.query_rows_fetched", extra={
+            "total": int(total), "returned": len(rows), "offset": offset,
+            "ms": _elapsed_ms(t0), "run_id": _runid(),
+        })
+    except Exception:
+        _exc("news.query_failed", symbol=symbol, glob=glob)
+        raise
+    finally:
+        try:
+            con.close()
+        except Exception:
+            log.debug("duckdb.close_failed", extra={"run_id": _runid()})
 
     items: list[NewsCard] = []
     for (cluster_id, _symbol, published, title, event_type, bullets, why,
@@ -328,6 +429,11 @@ def repo_list_news(
         )
 
     next_page = page + 1 if (offset + per_page) < total else None
+    log.info("news.query_complete", extra={
+        "symbol": symbol, "items": len(items), "next_page": next_page,
+        "window_min": round((t_utc - f_utc).total_seconds() / 60.0, 1),
+        "run_id": _runid(),
+    })
     return items, next_page
 
 
@@ -372,8 +478,13 @@ def repo_attribute_move(
     Attribute a price move at 'at' (UTC or tz-aware) to recent news for 'symbol'.
     Returns the top 3 by computed impact.
     """
+    t0 = _t0()
     # Candidates window
     from_dt = at - timedelta(minutes=lookback_min)
+    log.info("news.attrib_begin", extra={
+        "symbol": symbol, "at": at.astimezone(timezone.utc).isoformat(),
+        "lookback_min": lookback_min, "min_conf": min_confidence, "run_id": _runid(),
+    })
     candidates, _ = repo_list_news(
         symbol=symbol,
         from_dt=from_dt,
@@ -431,4 +542,9 @@ def repo_attribute_move(
         )
 
     out.sort(key=lambda x: (x.impact_score or 0.0), reverse=True)
-    return out[:3]
+    result = out[:3]
+    log.info("news.attrib_complete", extra={
+        "symbol": symbol, "candidates": len(candidates), "top": len(result),
+        "ms": _elapsed_ms(t0), "run_id": _runid(),
+    })
+    return result
