@@ -74,4 +74,5 @@ yfinance>=0.2.40
 
 # to generate pydantic models from OpenAPI specs, these pydantic files are used by frontend
 datamodel-code-generator>=0.25
-
+duckdb==1.0.0
+feedparser==6.0.11

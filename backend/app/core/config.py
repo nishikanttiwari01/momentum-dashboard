@@ -95,6 +95,32 @@ class RulesCfg(BaseModel):
     soft_gates: RulesSoftGatesCfg = RulesSoftGatesCfg()
 
 
+# ----------------- NEW: News (flexible, YAML-first) -----------------
+class NewsCfg(BaseModel):
+    """
+    Keep sub-sections as Dict[str, Any] so your YAML can evolve
+    (sources, clustering, consensus, summarizer, attribution, run_modes, etc.).
+    Only a few top-level toggles are typed for convenience.
+    """
+    enabled: bool = True
+    trading_timezone: str = "Asia/Kolkata"
+    storage: Dict[str, Any] = Field(default_factory=dict)
+    ingest: Dict[str, Any] = Field(default_factory=dict)
+    sources: Dict[str, Any] = Field(default_factory=dict)
+    extraction: Dict[str, Any] = Field(default_factory=dict)
+    mapping: Dict[str, Any] = Field(default_factory=dict)
+    clustering: Dict[str, Any] = Field(default_factory=dict)
+    consensus: Dict[str, Any] = Field(default_factory=dict)
+    events: Dict[str, Any] = Field(default_factory=dict)
+    summarizer: Dict[str, Any] = Field(default_factory=dict)
+    attribution: Dict[str, Any] = Field(default_factory=dict)
+    run_modes: Dict[str, Any] = Field(default_factory=dict)
+    backfill: Dict[str, Any] = Field(default_factory=dict)
+    on_demand: Dict[str, Any] = Field(default_factory=dict)
+    trigger: Dict[str, Any] = Field(default_factory=dict)
+    fallbacks: Dict[str, Any] = Field(default_factory=dict)
+
+
 class Settings(BaseModel):
     # Existing sections
     app: AppCfg = AppCfg()
@@ -110,6 +136,9 @@ class Settings(BaseModel):
     # Keep it as a free-form dict so YAML can evolve (rules, channels, throttle, etc.)
     # The alerts service will parse/normalize it.
     alerts: Dict[str, Any] = Field(default_factory=dict)
+    # --- NEW: features & news (keep flexible) ---
+    features: Dict[str, Any] = Field(default_factory=dict)
+    news: NewsCfg = NewsCfg()
 
 
 # ----------------- YAML helpers (unchanged) -----------------
@@ -175,6 +204,44 @@ def load() -> Settings:
             storage_cfg["write_temp_dir"] = str(t)
         data["storage"] = storage_cfg
 
+    # --- NEW: normalize news.storage paths to absolute (if provided) ---
+    news_cfg = data.get("news") or {}
+    if isinstance(news_cfg, dict):
+        news_storage = news_cfg.get("storage") or {}
+        # parquet_root
+        nr = news_storage.get("parquet_root")
+        if isinstance(nr, str) and nr.strip():
+            p = Path(nr)
+            if not p.is_absolute():
+                p = (REPO_ROOT / p).resolve()
+            else:
+                p = p.resolve()
+            news_storage["parquet_root"] = str(p)
+        # duckdb_path
+        nd = news_storage.get("duckdb_path")
+        if isinstance(nd, str) and nd.strip():
+            d = Path(nd)
+            if not d.is_absolute():
+                d = (REPO_ROOT / d).resolve()
+            else:
+                d = d.resolve()
+            news_storage["duckdb_path"] = str(d)
+        news_cfg["storage"] = news_storage
+
+        # backfill.watermark_file (optional path)
+        backfill_cfg = news_cfg.get("backfill") or {}
+        wm = backfill_cfg.get("watermark_file")
+        if isinstance(wm, str) and wm.strip():
+            w = Path(wm)
+            if not w.is_absolute():
+                w = (REPO_ROOT / w).resolve()
+            else:
+                w = w.resolve()
+            backfill_cfg["watermark_file"] = str(w)
+        news_cfg["backfill"] = backfill_cfg
+
+        data["news"] = news_cfg
+
     # 5) Environment variable shims for common nested keys (kept simple & explicit)
     #    This complements, not replaces, YAML files.
     if os.getenv("APP_SQLITE_PATH"):
@@ -197,6 +264,14 @@ def load() -> Settings:
     if os.getenv("APP_DATA_ADAPTER"):
         data = _deep_merge(data, {"data": {"adapter": os.getenv("APP_DATA_ADAPTER")}})
 
+    # --- NEW: News env shims (optional, safe defaults) ---
+    if os.getenv("APP_NEWS_ENABLED") is not None:
+        v = os.getenv("APP_NEWS_ENABLED", "").strip().lower()
+        data = _deep_merge(data, {"news": {"enabled": v in {"1", "true", "yes", "on"}}})
+    # If a token is provided, auto-require it for ingest
+    if os.getenv("NEWS_INGEST_TOKEN"):
+        data = _deep_merge(data, {"news": {"ingest": {"require_token": True, "token_env": "NEWS_INGEST_TOKEN"}}})
+
     try:
         return Settings(**data)
     except ValidationError as e:
@@ -210,4 +285,3 @@ def api_prefix() -> str:
 # Back-compat for modules that still call get_settings()
 def get_settings() -> Settings:
     return load()
-

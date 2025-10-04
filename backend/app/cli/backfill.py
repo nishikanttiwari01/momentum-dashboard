@@ -16,7 +16,6 @@ from urllib3.util.retry import Retry
 from pathlib import Path as _Path
 
 from backend.util import run_fetch_details, run_fetch_screener_pages
-# near other imports
 from app.notifs.email_digest import send_backfill_digest_if_enabled
 
 
@@ -202,6 +201,25 @@ def _daily_partition_has_parquet(as_of: date) -> bool:
         )
         return False
 
+# ---- commit visibility helpers (minimal, used before exports) ----------------
+def _daily_partition_committed(as_of: date) -> bool:
+    """Committed when a marker exists; avoids racing readers/exports."""
+    root = _parquet_root_abs() / "scores" / "daily" / f"as_of={as_of.isoformat()}"
+    return (root / "_SUCCESS").exists() or (root / "rowcount.txt").exists()
+
+def _wait_for_daily_visible(as_of: date, max_wait_sec: int = 25, step_sec: float = 0.5) -> bool:
+    """
+    Wait until the daily snapshot is visible to readers.
+    Prefer a commit marker; fall back to any *.parquet if the repo doesn't drop markers.
+    """
+    waited = 0.0
+    while waited < max_wait_sec:
+        if _daily_partition_committed(as_of) or _daily_partition_has_parquet(as_of):
+            return True
+        time.sleep(step_sec)
+        waited += step_sec
+    return _daily_partition_committed(as_of) or _daily_partition_has_parquet(as_of)
+# -----------------------------------------------------------------------------
 
 def _delete_intraday_partition(as_of: date) -> None:
     base = _parquet_root_abs() / "scores" / "intraday"
@@ -304,10 +322,44 @@ def main(argv: list[str] | None = None) -> int:
             except (TypeError, ValueError):
                 rows_written = 0
             total_rows += rows_written
-            log.info("day_done", extra={"date": d.isoformat(), "status": ("created" if status == 201 else ("accepted" if status == 202 else "replayed")), "rows_written": rows_value})
+            log.info(
+                "day_done",
+                extra={
+                    "date": d.isoformat(),
+                    "status": ("created" if status == 201 else ("accepted" if status == 202 else "replayed")),
+                    "rows_written": rows_value,
+                },
+            )
+
+            # NEWS: run only when backfill actually wrote a new daily snapshot
+            wrote_new = (status == 201) or (rows_written > 0)
+            if wrote_new:
+                provider_cmd_env = (os.getenv("NEWS_PROVIDER_CMD") or "").strip()
+                log.info("news_backfill_provider_resolved", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
+                provider_cmd = provider_cmd_env or None
+                try:
+                    log.info("news_backfill_begin", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
+                    from app.cli.news_pull import run_backfill as run_news_backfill  # local import
+                    run_news_backfill(
+                        api_base=API,
+                        trading_day=d,
+                        provider_cmd=provider_cmd,
+                        extra_env={},
+                        symbols_all_file=None,
+                        symbol_limit=None,
+                    )
+                    log.info("news_backfill_ok", extra={"date": d.isoformat()})
+                except Exception:
+                    log.exception("news_backfill_failed", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
             if _should_export_utilities(status, resp) and d not in exported_dates:
-                _trigger_util_exports(d)
-                exported_dates.add(d)
+                # Always wait briefly for daily snapshot visibility (commit marker or parquet)
+                _wait_for_daily_visible(d)
+                if _daily_partition_committed(d) or _daily_partition_has_parquet(d):
+                    _trigger_util_exports(d)
+                    exported_dates.add(d)
+                else:
+                    log.info("export_skipped_uncommitted", extra={"date": d.isoformat()})
+
             if d not in cleaned_intraday and _daily_partition_has_parquet(d):
                 _delete_intraday_partition(d)
                 cleaned_intraday.add(d)
@@ -340,3 +392,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

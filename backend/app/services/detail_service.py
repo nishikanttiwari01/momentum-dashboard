@@ -201,9 +201,9 @@ def _compute_entry_suggestion(
     *,
     price_now: float,
     ema_fast_n: int,
-    ema_fast_val: float,
+    ema_fast_val: Optional[float],
     ema_slow_n: int,
-    ema_slow_val: float,
+    ema_slow_val: Optional[float],
     rsi14: float,
     adx14: float,
     relvol20: float,   # kept for future use / logging parity
@@ -214,41 +214,63 @@ def _compute_entry_suggestion(
     Simple, explainable entry suggestion used by the drawer when there's no locked entry.
     Returns a dict: {type, price, low, high, reason}
     """
+
+    def _num_pos(x: Any) -> Optional[float]:
+        """Return positive float or None."""
+        try:
+            v = float(x)
+            return v if v > 0 else None
+        except Exception:
+            return None
+
+    slow = _num_pos(ema_slow_val)   # may be None when not available
+    fast = _num_pos(ema_fast_val)   # may be None when not available
+
     def strong_momo() -> bool:
         # bullish momentum OR very close to 52w high
-        return (rsi14 >= 60 and adx14 >= 25) or (prox52 >= -1.0)
+        return (float(rsi14) >= 60 and float(adx14) >= 25) or (float(prox52) >= -1.0)
 
     def extended() -> bool:
-        # % distance above slow EMA
-        if ema_slow_val <= 0:
+        # % distance above slow EMA (only when we actually have slow)
+        if slow is None:
             return False
-        gap_pct = (price_now - ema_slow_val) / ema_slow_val * 100.0
+        gap_pct = (price_now - slow) / slow * 100.0
         return gap_pct >= 3.0
 
     # 1) Breakout / Pullback logic
-    if strong_momo() and price_now >= ema_slow_val:
+    # If slow is missing, treat the condition as satisfied for the purpose of suggesting momentum entries.
+    if strong_momo() and (slow is None or price_now >= slow):
         if not extended():
             return {
                 "type": "BREAKOUT",
                 "price": float(price_now),
                 "low": None,
                 "high": None,
-                "reason": f"Price ≥ EMA{ema_slow_n} and near 52W high / strong momentum",
+                "reason": f"Price ≥ EMA{ema_slow_n} and near 52W high / strong momentum" if slow is not None
+                          else "Strong momentum / near 52W high (slow EMA unavailable)",
             }
-        # extended → prefer pullback toward fast EMA band
-        hi = float(ema_fast_val)
-        lo = float(max(ema_fast_val - 0.5 * atr_abs, 0.0)) if atr_abs else float(ema_fast_val * 0.995)
+        # extended → prefer pullback toward fast EMA band (fallback to price_now if fast missing)
+        hi = float(fast if fast is not None else price_now)
+        if atr_abs and fast is not None:
+            lo = float(max(fast - 0.5 * atr_abs, 0.0))
+        elif atr_abs:
+            lo = float(max(price_now - 0.5 * atr_abs, 0.0))
+        else:
+            base = fast if fast is not None else price_now
+            lo = float(base * 0.995)
         px = float(min(price_now, hi))
         return {
             "type": "PULLBACK",
             "price": px,
             "low": lo,
             "high": hi,
-            "reason": f"Extended; prefer pullback to EMA{ema_fast_n}",
+            "reason": f"Extended; prefer pullback to EMA{ema_fast_n}" if fast is not None
+                      else "Extended; prefer pullback toward rising band",
         }
 
     # 2) Starter position if momentum is brewing and price is not far below slow EMA
-    if rsi14 >= 55 and adx14 >= 20 and (ema_slow_val == 0 or price_now >= ema_slow_val * 0.99):
+    # If slow is missing, allow starter when momentum ok.
+    if float(rsi14) >= 55 and float(adx14) >= 20 and (slow is None or price_now >= slow * 0.99):
         # Prefer current price for a starter; anchor remain “near EMA{n}” in the copy
         starter = float(price_now)
         return {
@@ -256,7 +278,8 @@ def _compute_entry_suggestion(
             "price": starter,
             "low": None,
             "high": None,
-            "reason": f"Momentum building; starter near EMA{ema_slow_n}",
+            "reason": f"Momentum building; starter near EMA{ema_slow_n}" if slow is not None
+                      else "Momentum building; starter (slow EMA unavailable)",
         }
 
     # 3) Default
@@ -267,6 +290,7 @@ def _compute_entry_suggestion(
         "high": None,
         "reason": "No clear entry; watch only",
     }
+
 # ---------- Helpers ----------
 
 def _header_badges_from_row(row: Dict[str, Any]) -> List[Dict[str, Any]]:

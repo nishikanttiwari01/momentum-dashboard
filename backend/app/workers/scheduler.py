@@ -8,7 +8,7 @@ Simple in-process scheduler for periodic scans.
 - Triggers the *same* service used by POST /scan to keep behavior consistent.
 """
 
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta, date, time as dtime
 from typing import Optional, Dict, Any
 import uuid
 import logging
@@ -22,6 +22,7 @@ from app.core.db import get_session
 from app.services.screening_service import run_screening
 from app.workers.jobs import post_scan_jobs
 from app.repos.parquet import datasets  # <-- added (for root + target hint)
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger(__name__)
 _scheduler: Optional[BackgroundScheduler] = None
@@ -41,6 +42,57 @@ def _current_trading_day(now: Optional[datetime] = None) -> date:
         # Saturday (5) -> Friday, Sunday (6) -> Friday
         d -= timedelta(days=d.weekday() - 4)
     return d
+
+def _now_in_trading_window(now_utc: Optional[datetime] = None) -> tuple[bool, Dict[str, Any]]:
+    """
+    Check whether 'now' (UTC) is inside the configured trading window.
+    If no window is configured, return (True, meta) to preserve legacy behavior.
+    """
+    cfg = config.load()
+    tw = getattr(cfg.scheduler, "trading_window", None)
+    meta: Dict[str, Any] = {}
+
+    if not tw:
+        meta.update({"mode": "no_window_config"})
+        return True, meta
+
+    try:
+        tz_name = tw.get("tz", "Asia/Kolkata")
+        start_str = tw.get("start", "09:15")
+        end_str = tw.get("end", "15:30")
+        days = tw.get("days", [0, 1, 2, 3, 4])  # Mon–Fri by default (Monday=0)
+
+        tz = ZoneInfo(tz_name)
+        now_utc = now_utc or datetime.now(timezone.utc)
+        now_local = now_utc.astimezone(tz)
+
+        # Parse HH:MM
+        sh, sm = [int(x) for x in start_str.split(":")]
+        eh, em = [int(x) for x in end_str.split(":")]
+        start_t = dtime(hour=sh, minute=sm)
+        end_t = dtime(hour=eh, minute=em)
+
+        wd = now_local.weekday()  # Monday=0..Sunday=6
+        within_day = wd in days
+        within_clock = (start_t <= now_local.time() < end_t) if start_t <= end_t else (now_local.time() >= start_t or now_local.time() < end_t)  # handles overnight windows
+
+        meta.update({
+            "tz": tz_name,
+            "weekday": wd,
+            "days": days,
+            "start": start_str,
+            "end": end_str,
+            "now_local": now_local.isoformat(),
+            "within_day": within_day,
+            "within_clock": within_clock,
+        })
+        return (within_day and within_clock), meta
+    except Exception as e:
+        # On any parsing/logic error, fail-open to preserve scanning (but log it).
+        meta.update({"error": str(e), "mode": "fail_open"})
+        log.warning("trading_window_check_failed", extra=meta)
+        return True, meta
+
 
 def _daily_partition_has_parquet(trading_day: date) -> bool:
     try:
@@ -72,7 +124,19 @@ def _run_once(universe: Optional[str]) -> None:
     """
     start_ts = time.perf_counter()
     trading_day = _current_trading_day()
-
+    # ---- Trading window gate ----
+    allowed, window_meta = _now_in_trading_window()
+    if not allowed:
+        log.info(
+            "scheduled scan skipped: outside_trading_window",
+            extra={
+                "reason": "outside_trading_window",
+                "universe": universe or "default",
+                "trading_date": trading_day.isoformat(),
+                **window_meta,
+            },
+        )
+        return
     # ---- TRUTH LOGS: where will intraday write land (hint) ----
     try:
         root = datasets.get_parquet_root().resolve()  # writer default is ./parquet unless PARQUET_ROOT is set

@@ -70,5 +70,11 @@ D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\frontend>npx orval --config .\orv
 # This is to send email for any trading day 
 (.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>python -m app.notifs.email_digest -d 2025-09-24 --save-html digest.html
 
+# Backend install
+cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
+.venv\Scripts\activate
+cd backend
+pip install -r requirements.txt
+
 
 

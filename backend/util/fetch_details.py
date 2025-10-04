@@ -13,7 +13,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 BASE = "http://localhost:8000/api/v1/instruments/{sym}/detail"
-CSV_PATH = Path(r"D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\app\assets\presets\ALL.csv")
+#CSV_PATH = Path(r"D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\app\assets\presets\ALL.csv")
+CSV_PATH = Path(r"D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\app\assets\presets\NIFTY50.csv")
 DEFAULT_OUT_NDJSON = Path(r"D:\WORK\NEW_STOCK_DASHBOARD\output\all_instruments_detail.ndjson")
 DEFAULT_FAIL_CSV = Path(r"D:\WORK\NEW_STOCK_DASHBOARD\output\error\failures.csv")
 

@@ -26,6 +26,7 @@ from app.api.v1 import (
     scan,
     universe,
     positions,
+    news_api,
 )
 from app.api.errors import (
     on_validation_error,
@@ -209,6 +210,7 @@ def create_app() -> FastAPI:
     app.include_router(scan.router,        prefix=prefix, tags=["Screener"])
     app.include_router(universe.router,    prefix=prefix, tags=["Universe"])
     app.include_router(positions.router,   prefix=prefix, tags=["Positions"])
+    app.include_router(news_api.router,   prefix=prefix, tags=["News"])
 
     return app
 

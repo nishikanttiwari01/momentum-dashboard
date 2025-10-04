@@ -25,12 +25,18 @@ storage:
   write_statistics: true
 
 screener:
-  default_universe: ALL
+  default_universe: NIFTY50 # or NIFTY50, NIFTY100, ALL
 
 scheduler:
   enabled: true
-  interval_minutes: 15
+  interval_minutes: 5
   universe: null
+  trading_window:
+    tz: "Asia/Kolkata"       # IANA timezone
+    # Python weekday numbers: Monday=0 … Sunday=6
+    days: [0, 1, 2, 3, 4]    # Mon–Fri
+    start: "09:15"           # inclusive
+    end: "15:30"             # exclusive 
 
 data:
   adapter: yahoo
@@ -89,3 +95,199 @@ rules:
     min_prox52w_pct: -10
     require_base_len_bars: 15
     breakout_overrides_soft_gates: true
+# ── UI feature toggle (merge under your existing `features:` if present)
+features:
+  news:
+    enabled: true
+    ui:
+      default_range: trading_day          # trading_day | calendar_day
+      default_sort: impact_desc           # impact_desc | published_desc | confirmed_desc
+      min_confidence_default: 1           # 1..3 stars
+      show_sector_macro: true
+
+# ── News system (NEW top-level block)
+news:
+  # India trading context even if app runtime TZ is Asia/Singapore
+  trading_timezone: "Asia/Kolkata"
+
+  storage:
+    parquet_root: "data/parquet/news_clusters"   # daily partitions by IST publish date
+    duckdb_path:  "data/index/news.duckdb"       # fast symbol+time lookup
+    partition_format: "YYYY-MM-DD"
+    retention_days: 365
+
+  ingest:                                        # how /news/ingest behaves
+    accept_local_only: true                      # bind API ingest to 127.0.0.1
+    require_token: false                         # set true if you want a bearer token
+    token_env: "NEWS_INGEST_TOKEN"
+    upsert_on_cluster_id: true                   # idempotent re-plays
+
+  # Free, high-signal sources + weights for consensus/confidence
+  sources:
+    official:
+      - name: "NSE Announcements"
+        type: "rss"
+        url: "https://www.nseindia.com/api/corporate-announcements?index=equities"
+        weight: 1.00
+      - name: "SEBI Press/Filings"
+        type: "rss"
+        url: "https://www.sebi.gov.in/sebiweb/rss/news.xml"
+        weight: 1.00
+    media_sites:
+      - { domain: "moneycontrol.com",      weight: 0.90 }
+      - { domain: "livemint.com",          weight: 0.90 }
+      - { domain: "economictimes.com",     weight: 0.90 }
+      - { domain: "business-standard.com", weight: 0.90 }
+      - { domain: "financialexpress.com",  weight: 0.90 }
+      - { domain: "cnbctv18.com",          weight: 0.90 }
+      - { domain: "reuters.com",           weight: 0.95 }
+    google_news:
+      enabled: true
+      sites: ["moneycontrol.com","livemint.com","economictimes.com",
+              "business-standard.com","financialexpress.com","cnbctv18.com","reuters.com"]
+      query_template: "site:{site} ({symbol} OR {alias})"
+      max_per_site: 6
+      lookback_minutes: 720
+
+  extraction:
+    user_agent: "MomentumSuiteBot/1.0 (+local)"
+    connect_timeout_sec: 10
+    read_timeout_sec: 15
+    retries: 2
+    allow_languages: ["en"]
+    readabilize: true                             # readability/trafilatura-style parse
+    keep_paywalled_title_only: true               # store title+link, not body, if paywalled
+
+  mapping:                                        # map headlines → tickers
+    nse_master_csv: "config/nse_master.csv"       # symbol, isin, company_name, sector
+    aliases_csv:    "config/symbol_aliases.csv"   # symbol, alias
+    prefer_isin_for_filings: true
+
+  clustering:                                     # dedupe/group similar headlines
+    method: "minhash"                             # minhash | simhash | embed
+    title_shingle_size: 3
+    minhash_threshold: 0.82                       # 0..1 (higher = stricter)
+    time_merge_window_min: 240                    # merge dupes within 4h
+    max_cards_per_symbol_per_day: 24
+
+  consensus:                                      # confidence from recency+citations
+    recency_decay:
+      buckets:
+        - { max_min: 30,   factor: 1.00 }
+        - { max_min: 90,   factor: 0.80 }
+        - { max_min: 240,  factor: 0.50 }
+        - { max_min: 1440, factor: 0.30 }
+    citation_boost:
+      per_unique_publisher: 0.10
+      max_boost: 0.40
+    confidence_stars:                              # consensus → ★
+      strong_official_plus_media: { min_sources: 2, stars: 3 }
+      strong_media_only:          { min_sources: 3, stars: 3 }
+      medium:                     { min_sources: 2, stars: 2 }
+      low:                        { min_sources: 1, stars: 1 }
+
+  events:                                         # normalized tags + impact boosts
+    taxonomy: [results, order_win, pledge, rating_change, regulatory, court, mna, guidance, mgmt_change, macro, other]
+    boosts:
+      results: 1.30
+      regulatory: 1.30
+      mna: 1.30
+      order_win: 1.15
+      pledge: 1.15
+      rating_change: 1.10
+      guidance: 1.10
+      mgmt_change: 1.05
+      macro: 1.05
+      other: 1.00
+
+  summarizer:                                     # local LLM (via Ollama)
+    engine: "ollama"
+    model:  "llama3"                              # or "mistral"
+    max_tokens: 320
+    timeout_sec: 30
+    retries: 2
+    schema_validate: true                         # enforce bullets/why JSON schema
+    adaptive_bullets:
+      min: 2
+      max: 5
+      extend_if: ["has_numbers","multi_source","complex_event"]
+
+  attribution:                                    # reason-for-move scoring
+    lookback_min_default: 240
+    thresholds:
+      likely:   0.65
+      possible: 0.45
+    text_match:
+      method: "bm25"                              # bm25 | cosine
+      min_score: 0.35
+    correlation_band_min: -10                     # minutes (allow slightly after)
+    correlation_band_max: 120                     # minutes before spike considered
+    fallback_if_no_catalyst: "none"               # none | sector | macro
+
+  # ── Intraday selection (configurable cohorts; NO scheduler implied)
+  run_modes:
+    intraday:
+      selection: "watchlist + top_movers + score_threshold"
+
+      cohorts:
+        watchlist:
+          include: true
+          also_include_active_trades: true
+          also_include_visible_symbols: true
+
+        top_movers:
+          include: true
+          from_latest_run: true                   # use the latest screener snapshot
+          top_gainers_count: 10
+          top_losers_count: 10
+          min_abs_change_pct: 1.0                 # ignore tiny moves
+          change_window_min: 15
+
+        score_threshold:
+          include: true
+          score_type: "full"                      # full | basic
+          min_score: 70                           # set 60 or 70 as you like
+          max_symbols: 100
+
+      fetch:
+        since: "10m"                              # intraday refresh window
+        symbol_cooldown_min: 20                   # don't refetch same symbol too soon
+        max_symbols_per_run: 250                  # hard cap per pull
+        max_items_per_symbol: 8
+        prioritize_order:
+          - "is_active_trade"
+          - "is_top_mover"
+          - "score_desc"
+          - "abs_change_pct_desc"
+
+      fallbacks:
+        if_no_latest_run: "use_last_successful_run"   # or "watchlist_only"
+        if_universe_too_large: "raise_thresholds"     # bump min_score / reduce counts
+        stale_minutes_ok: 30
+
+    backfill:                                     # T-day sweep when you choose
+      selection: "all_symbols"
+      window_days: 1                               # default = prior trading day
+      extend_buffer_min: 120
+      max_window_days: 30
+
+  backfill:                                       # optional T+1 alignment helpers
+    enabled_on_app_start: true                    # if your app supports backfill-on-start
+    watermark_file: "data/state/news_backfill.json"
+    holiday_calendar_file: "config/nse_holidays.yaml"
+    retry_on_start_failure: true
+
+  on_demand:                                      # safety valves for manual sweeps
+    max_symbols_per_run: 1200
+    max_items_per_symbol: 50
+
+  # ── Trigger policy: chain after screener/Parquet run; still allow manual pulls
+  trigger:
+    mode: "after_scan"                            # after_scan | independent
+    require_fresh_scores: true
+    max_scores_age_min: 20
+    on_scan_success:
+      run_intraday_news: true
+      use_run_id_from_scan: true                  # bind cohorts to that run
+  fallbacks:
+    if_no_fresh_scores: "manual_only"             # manual_only | use_last_successful_run
