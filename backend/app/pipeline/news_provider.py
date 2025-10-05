@@ -22,7 +22,7 @@ from urllib.parse import quote_plus
 import logging
 import uuid
 
-from app.core.config import load as load_settings
+from app.core.config import REPO_ROOT, load as load_settings
 from app.schemas.generated.models import (
     NewsIngestBatch,
     NewsIngestItem,
@@ -172,6 +172,199 @@ def _build_source_weights() -> Dict[str, float]:
 # Aliases & symbol master
 # ──────────────────────────────────────────────────────────────────────────────
 
+
+_FALLBACK_NEWS_ALIASES: dict[str, tuple[str, ...]] = {
+    "ADANIENT": ("adani enterprises", "adani enterprise"),
+    "ADANIPORTS": (
+        "adani ports",
+        "adani ports and special economic zone",
+        "apsez",
+    ),
+    "APOLLOHOSP": ("apollo hospitals", "apollo hospital"),
+    "ASIANPAINT": ("asian paints", "asian paint"),
+    "AXISBANK": ("axis bank",),
+    "BAJAJ-AUTO": ("bajaj auto",),
+    "BAJAJFINSV": ("bajaj finserv", "bajaj financial services"),
+    "BAJFINANCE": ("bajaj finance",),
+    "BEL": ("bharat electronics", "bharat electronics limited"),
+    "BHARTIARTL": ("bharti airtel", "airtel"),
+    "BPCL": ("bharat petroleum", "bpcl"),
+    "BRITANNIA": ("britannia", "britannia industries"),
+    "CIPLA": ("cipla",),
+    "COALINDIA": ("coal india",),
+    "DIVISLAB": ("divis laboratories", "divis labs", "divi's laboratories"),
+    "DRREDDY": (
+        "dr reddy",
+        "dr reddys",
+        "dr reddy's laboratories",
+        "dr reddys laboratories",
+    ),
+    "EICHERMOT": ("eicher motors",),
+    "ETERNAL": ("eternal", "eternal limited"),
+    "GRASIM": ("grasim industries", "grasim"),
+    "HCLTECH": ("hcl technologies", "hcl tech"),
+    "HDFCBANK": ("hdfc bank",),
+    "HDFCLIFE": ("hdfc life", "hdfc life insurance"),
+    "HEROMOTOCO": ("hero motocorp", "hero moto corp"),
+    "HINDALCO": ("hindalco", "hindalco industries"),
+    "HINDUNILVR": ("hindustan unilever", "hul"),
+    "ICICIBANK": ("icici bank",),
+    "INDUSINDBK": ("indusind bank",),
+    "INFY": ("infosys",),
+    "ITC": ("itc", "itc limited"),
+    "JIOFIN": (
+        "jio financial services",
+        "jio finance",
+        "jio financial",
+    ),
+    "JSWSTEEL": ("jsw steel",),
+    "KOTAKBANK": ("kotak bank", "kotak mahindra bank"),
+    "LT": ("larsen & toubro", "larsen and toubro", "l&t"),
+    "LTIM": ("ltimindtree", "ltim mindtree", "ltim"),
+    "M&M": ("mahindra & mahindra", "mahindra and mahindra", "mahindra"),
+    "MARUTI": ("maruti suzuki", "maruti suzuki india"),
+    "NESTLEIND": ("nestle india",),
+    "NTPC": ("ntpc", "national thermal power"),
+    "ONGC": ("ongc", "oil and natural gas corporation"),
+    "POWERGRID": ("power grid", "power grid corporation"),
+    "RELIANCE": ("reliance", "reliance industries", "ril"),
+    "SBILIFE": ("sbi life", "sbi life insurance"),
+    "SBIN": ("state bank of india", "sbi"),
+    "SHRIRAMFIN": ("shriram finance", "shriram finance limited"),
+    "SUNPHARMA": ("sun pharma", "sun pharmaceutical"),
+    "TATACONSUM": ("tata consumer", "tata consumer products"),
+    "TATAMOTORS": ("tata motors",),
+    "TATASTEEL": ("tata steel",),
+    "TCS": ("tata consultancy services", "tcs"),
+    "TECHM": ("tech mahindra",),
+    "TITAN": ("titan", "titan company"),
+    "TRENT": ("trent", "trent limited"),
+    "ULTRACEMCO": ("ultratech cement", "ultra tech cement"),
+    "UPL": ("upl", "upl limited"),
+    "WIPRO": ("wipro",),
+}
+
+_SUFFIX_REPLACEMENTS: dict[str, str] = {
+    "bk": "bank",
+    "bank": "bank",
+    "banks": "bank",
+    "finserv": "financial services",
+    "finsv": "financial services",
+    "finance": "finance",
+    "fin": "finance",
+    "life": "life",
+    "motors": "motors",
+    "motor": "motor",
+    "ports": "ports",
+    "port": "port",
+    "steel": "steel",
+    "energy": "energy",
+    "power": "power",
+    "chem": "chem",
+    "chemicals": "chemicals",
+    "infra": "infra",
+    "telecom": "telecom",
+    "tech": "tech",
+    "technologies": "technologies",
+    "services": "services",
+    "service": "service",
+    "india": "india",
+    "ind": "india",
+    "enterprises": "enterprises",
+    "enterprise": "enterprise",
+    "ent": "enterprise",
+    "paints": "paints",
+    "paint": "paints",
+    "hospitals": "hospitals",
+    "hospital": "hospital",
+    "hosp": "hospital",
+    "labs": "labs",
+    "lab": "labs",
+    "cement": "cement",
+    "grid": "grid",
+    "consum": "consumer",
+    "consumer": "consumer",
+    "foods": "foods",
+    "retail": "retail",
+    "airtel": "airtel",
+    "ltd": "limited",
+}
+
+
+def _resolve_config_path(path_str: Optional[str]) -> Optional[Path]:
+    if not path_str:
+        return None
+    candidate = Path(path_str).expanduser()
+    if candidate.exists():
+        return candidate
+    if candidate.is_absolute():
+        return None
+    raw = path_str.replace('\\', '/').lstrip('./')
+    alternatives = []
+    alternatives.append((REPO_ROOT / raw).resolve())
+    if raw.startswith('config/'):
+        alternatives.append((REPO_ROOT / 'configs' / raw.split('/', 1)[1]).resolve())
+    alternatives.append((REPO_ROOT / 'backend' / raw).resolve())
+    resolved = set()
+    for alt in alternatives:
+        if alt in resolved:
+            continue
+        resolved.add(alt)
+        if alt.exists():
+            return alt
+    return None
+
+
+def _heuristic_aliases(sym: str) -> Set[str]:
+    base = sym.split('.', 1)[0]
+    lower = base.lower()
+    clean = re.sub(r'[^a-z0-9]', '', lower)
+    results: Set[str] = set()
+    if lower:
+        results.add(lower)
+    if clean:
+        results.add(clean)
+    if '&' in lower:
+        results.add(lower.replace('&', ' & '))
+        results.add(lower.replace('&', ' and '))
+        results.add(lower.replace('&', ' '))
+    if clean:
+        spaced = re.sub(r'([a-z])([0-9])', r'\1 \2', clean)
+        spaced = re.sub(r'([0-9])([a-z])', r'\1 \2', spaced)
+        if spaced and spaced != clean:
+            results.add(spaced)
+        for suffix, replacement in _SUFFIX_REPLACEMENTS.items():
+            if clean.endswith(suffix) and len(clean) > len(suffix):
+                prefix = clean[:-len(suffix)]
+                if prefix:
+                    results.add(f"{prefix} {replacement}".strip())
+                    results.add(f"{prefix}{replacement}".strip())
+    if lower.startswith('dr') and len(lower) > 2:
+        tail = lower[2:]
+        results.add(f"dr {tail}".strip())
+        results.add(f"doctor {tail}".strip())
+    return {
+        alias.strip()
+        for alias in results
+        if alias.strip() and len(re.sub(r'[^a-z0-9]', '', alias)) >= 3
+    }
+
+
+def _candidate_phrases(sym: str, smap: SymbolMap) -> Set[str]:
+    variants = {sym}
+    root = sym.split('.', 1)[0]
+    variants.add(root)
+    variants.add(root.upper())
+    variants.add(root.lower())
+    phrases: Set[str] = set()
+    for variant in variants:
+        phrases.update(smap.match.get(variant, set()))
+    fallback = _FALLBACK_NEWS_ALIASES.get(root.upper())
+    if fallback:
+        phrases.update(fallback)
+    phrases.update(_heuristic_aliases(sym))
+    return {p.strip().lower() for p in phrases if p}
+
 @dataclass
 class SymbolMap:
     # symbol -> set of matchable phrases
@@ -179,49 +372,82 @@ class SymbolMap:
 
 def _load_aliases() -> SymbolMap:
     cfg = load_settings().news.mapping or {}
-    alias_csv = cfg.get("aliases_csv")
-    master_csv = cfg.get("nse_master_csv")
+    alias_path = _resolve_config_path(cfg.get("aliases_csv"))
+    master_path = _resolve_config_path(cfg.get("nse_master_csv"))
     match: Dict[str, Set[str]] = {}
 
-    def add(sym: str, phrase: str):
+    def add(sym: str, phrase: str) -> None:
         sym = sym.strip()
         phrase = phrase.strip()
         if not sym or not phrase:
             return
         match.setdefault(sym, set()).add(phrase.lower())
 
-    # aliases.csv: symbol,alias
-    if alias_csv and Path(alias_csv).exists():
+    if alias_path:
         t0 = _t0()
-        with open(alias_csv, "r", encoding="utf-8") as f:
+        with open(alias_path, "r", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 add(row.get("symbol", ""), row.get("alias", ""))
-        log.info("news.aliases_loaded", extra={"path": alias_csv, "symbols": len(match), "ms": _ms(t0), "run_id": _runid()})
+        log.info(
+            "news.aliases_loaded",
+            extra={"path": str(alias_path), "symbols": len(match), "ms": _ms(t0), "run_id": _runid()},
+        )
+    elif cfg.get("aliases_csv"):
+        _debug("news.aliases_missing", path=cfg.get("aliases_csv"))
 
-    # nse_master.csv: symbol,isin,company_name,sector
-    if master_csv and Path(master_csv).exists():
+    if master_path:
         t0 = _t0()
-        with open(master_csv, "r", encoding="utf-8") as f:
+        with open(master_path, "r", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 add(row.get("symbol", ""), row.get("company_name", ""))
-        log.info("news.master_loaded", extra={"path": master_csv, "symbols": len(match), "ms": _ms(t0), "run_id": _runid()})
+        log.info(
+            "news.master_loaded",
+            extra={"path": str(master_path), "symbols": len(match), "ms": _ms(t0), "run_id": _runid()},
+        )
+    elif cfg.get("nse_master_csv"):
+        _debug("news.master_missing", path=cfg.get("nse_master_csv"))
 
-    # fallback: symbol itself
+    for sym_root, aliases in _FALLBACK_NEWS_ALIASES.items():
+        for alias in aliases:
+            add(sym_root, alias)
+            add(f"{sym_root}.NS", alias)
+
     for sym in list(match.keys()):
-        add(sym, sym.split(".")[0])  # e.g., RELIANCE from RELIANCE.NS
+        base = sym.split(".")[0]
+        add(sym, base)
+        add(base, base)
+        base_spaced = base.replace('_', ' ').replace('-', ' ')
+        if '&' in base_spaced:
+            base_spaced_amp = base_spaced.replace('&', ' & ')
+            add(sym, base_spaced_amp)
+            add(base, base_spaced_amp)
+            add(sym, base_spaced_amp.replace(' & ', ' and '))
+            add(base, base_spaced_amp.replace(' & ', ' and '))
+        else:
+            add(sym, base_spaced)
+            add(base, base_spaced)
 
     log.debug("news.alias_map_ready", extra={"symbols": len(match), "run_id": _runid()})
     return SymbolMap(match=match)
 
+
 def _headline_matches_symbol(headline: str, sym: str, smap: SymbolMap) -> bool:
-    hay = headline.lower()
-    for phrase in smap.match.get(sym, set()):
-        if phrase and phrase in hay:
+    hay = _norm_text(headline).lower()
+    hay_norm = re.sub(r'[^a-z0-9]', '', hay)
+    for phrase in _candidate_phrases(sym, smap):
+        phrase = phrase.strip().lower()
+        if not phrase:
+            continue
+        phrase_norm = re.sub(r'[^a-z0-9]', '', phrase)
+        if len(phrase_norm) < 3:
+            continue
+        if phrase in hay:
             return True
-    # allow strict symbol token match if short
-    base = sym.split(".")[0].lower()
-    if base and base in hay:
-        return True
+        if phrase_norm and phrase_norm in hay_norm:
+            return True
+        tokens = [tok for tok in phrase.split() if len(tok) >= 2]
+        if tokens and all(tok in hay for tok in tokens):
+            return True
     return False
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -455,7 +681,11 @@ def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap
 
         t1 = _t0()
         # build quick alias map list for speed
-        alias_map: Dict[str, List[str]] = {sym: list(smap.match.get(sym, set())) for sym in symbols}
+        alias_map: Dict[str, List[str]] = {}
+        for sym in symbols:
+            variants = set(smap.match.get(sym, set()))
+            variants.update(smap.match.get(sym.split('.', 1)[0], set()))
+            alias_map[sym] = sorted(variants, key=len, reverse=True)
         _debug("collect.media.alias_map_ready", entries=sum(len(v) for v in alias_map.values()))
 
         for sym in symbols:

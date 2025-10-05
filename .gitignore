@@ -36,6 +36,7 @@ data/
 *.sqlite
 *.sqlite3
 backend/parquet/scores/
+backend/parquet/news/
 
 # ----------------------
 # Alembic
