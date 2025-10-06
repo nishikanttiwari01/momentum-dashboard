@@ -71,20 +71,16 @@ def _kv_str(**kv):
     return " ".join(f"{k}={repr(v)}" for k, v in kv.items() if v is not None)
 
 def _pick_logger():
-    # Prefer the module's `log` if it exists; else use module logger
     lg = globals().get("log")
     if not isinstance(lg, _logging.Logger):
         lg = _logging.getLogger(__name__)
-    # Ensure there is at least one handler; otherwise attach console handler
     if not lg.handlers:
         h = _logging.StreamHandler()
         fmt = _logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
         h.setFormatter(fmt)
         lg.addHandler(h)
-    # Ensure level allows INFO unless user set it lower
     if lg.level == _logging.NOTSET or lg.level > _logging.INFO:
         lg.setLevel(_logging.INFO)
-    # Let it bubble to root unless your app disables it
     lg.propagate = True
     return lg
 
@@ -162,7 +158,6 @@ def _build_source_weights() -> Dict[str, float]:
         dom = (m.get("domain") or "").strip().lower()
         if dom:
             weights[dom] = float(m.get("weight", 0.9))
-    # sensible defaults
     if "reuters.com" not in weights:
         weights["reuters.com"] = 0.95
     log.debug("news.weights_ready", extra={"count": len(weights), "run_id": _runid()})
@@ -171,7 +166,6 @@ def _build_source_weights() -> Dict[str, float]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Aliases & symbol master
 # ──────────────────────────────────────────────────────────────────────────────
-
 
 _FALLBACK_NEWS_ALIASES: dict[str, tuple[str, ...]] = {
     "ADANIENT": ("adani enterprises", "adani enterprise"),
@@ -451,7 +445,7 @@ def _headline_matches_symbol(headline: str, sym: str, smap: SymbolMap) -> bool:
     return False
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Fetchers (RSS + Google News RSS)
+# Fetchers (RSS + Google News RSS + NSE JSON optional)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _fetch_rss(url: str, timeout: int = 15) -> List[dict]:
@@ -464,27 +458,23 @@ def _fetch_rss(url: str, timeout: int = 15) -> List[dict]:
     t0 = _t0()
     out: List[dict] = []
 
-    # Split total timeout into connect/read; keep conservative defaults
-    CONNECT_TO = min(8, timeout)          # seconds
-    READ_TO    = max(4, min(12, timeout)) # seconds
+    CONNECT_TO = min(8, timeout)
+    READ_TO    = max(4, min(12, timeout))
     RETRIES    = 2
     UA = os.getenv("NEWS_RSS_UA", "Mozilla/5.0 (compatible; MomentumSuite/1.0; +https://localhost)")
 
     _info("rss.fetch_start", url=url, connect_to=CONNECT_TO, read_to=READ_TO, retries=RETRIES)
     last_err = None
 
-    for attempt in range(1, RETRIES + 2):  # e.g., 1..3 total tries when RETRIES=2
+    for attempt in range(1, RETRIES + 2):
         try:
-            # Use a HEAD ping to fail fast on dead hosts (optional)
             try:
                 requests.head(url, timeout=(CONNECT_TO, 3), headers={"User-Agent": UA})
             except Exception:
-                pass  # non-fatal; move on to GET
+                pass
 
             resp = requests.get(url, timeout=(CONNECT_TO, READ_TO), headers={"User-Agent": UA})
             resp.raise_for_status()
-
-            # Parse the bytes we fetched so feedparser doesn't make its own network calls
             parsed = feedparser.parse(resp.content)
 
             for e in parsed.entries:
@@ -502,26 +492,83 @@ def _fetch_rss(url: str, timeout: int = 15) -> List[dict]:
         except Exception as e:
             last_err = e
             _warn("rss.fetch_attempt_failed", url=url, attempt=attempt, err=str(e)[:180])
-            # small backoff before next retry
             try:
                 time.sleep(0.6 * attempt)
             except Exception:
                 pass
 
-    # All attempts failed
     _error("rss.fetch_failed", url=url, err=str(last_err)[:300], ms=_ms(t0))
-    return out  # empty list on failure (callers already handle)
+    return out
 
+def _nse_session() -> requests.Session:
+    """
+    Create a browser-like session for NSE JSON endpoints (Akamai).
+    Performs a warm-up GET to seed cookies.
+    """
+    s = requests.Session()
+    headers = {
+        "User-Agent": os.getenv("NEWS_UA", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nseindia.com/",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+    s.headers.update(headers)
+    try:
+        s.get("https://www.nseindia.com/", timeout=(8, 12))
+    except Exception:
+        pass
+    return s
+
+def _fetch_nse_corporate_json(url: str, timeout: int = 20) -> List[dict]:
+    """
+    Fetch NSE Corporate Announcements JSON and convert to our entry dicts:
+      { title, url, published }
+    Expects response with 'data' list where each item has 'headline' and 'sl' (or similar).
+    """
+    out: List[dict] = []
+    s = _nse_session()
+    try:
+        resp = s.get(url, timeout=(8, timeout))
+        resp.raise_for_status()
+        js = resp.json()
+    except Exception as e:
+        _warn("nse.json_fetch_failed", url=url, err=str(e)[:200])
+        return out
+
+    rows = js.get("data") or js.get("rows") or []
+    for r in rows:
+        title = _norm_text(r.get("headline") or r.get("subject") or r.get("company") or "")
+        link = r.get("pdfUrl") or r.get("url") or ""
+        # Construct announcement link when only 'sl' is present
+        if not link and r.get("sl"):
+            link = f"https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol={quote_plus(str(r.get('symbol') or ''))}"
+        # Parse published date/time
+        pub = None
+        for k in ("disseminationTime", "dt", "time", "date"):
+            if r.get(k):
+                try:
+                    val = str(r.get(k))
+                    # common format "2025-10-04T12:34:56"
+                    pub = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                    if not pub.tzinfo:
+                        pub = pub.replace(tzinfo=timezone.utc)
+                    break
+                except Exception:
+                    pass
+        out.append({"title": title, "url": link, "published": pub})
+    _info("nse.json_fetch_ok", url=url, items=len(out))
+    return out
 
 def _google_news_rss(site: str, query: str) -> str:
-    # Example: https://news.google.com/rss/search?q=site:moneycontrol.com+(INFY)+when:12h&hl=en-IN&gl=IN&ceid=IN:en
     base = "https://news.google.com/rss/search?q="
     q = f"site:{site} ({quote_plus(query)}) when:24h"
     return f"{base}{q}&hl=en-IN&gl=IN&ceid=IN:en"
 
 def _fetch_media_for_symbol(sym: str, aliases: List[str], sites: List[str]) -> List[dict]:
     items: List[dict] = []
-    query = " OR ".join([sym.split(".")[0]] + aliases[:2])  # keep short to reduce noise
+    query = " OR ".join([sym.split(".")[0]] + aliases[:2])
     for site in sites:
         url = _google_news_rss(site, query)
         items.extend(_fetch_rss(url))
@@ -529,12 +576,12 @@ def _fetch_media_for_symbol(sym: str, aliases: List[str], sites: List[str]) -> L
     return items
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Summarizer (Ollama optional)
+# Summarizer (Ollama optional) + lightweight fallback + optional article fetch
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _ollama_generate_bullets_why(text: str, model: str = "llama3", timeout: int = 20) -> Tuple[List[str], str, str, str]:
     """
-    Returns (bullets, why, event_type, sentiment). If Ollama unavailable, returns a heuristic fallback.
+    Returns (bullets, why, event_type, sentiment). If Ollama unavailable, raises → caller will fallback.
     """
     host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
     url = f"{host.rstrip('/')}/api/generate"
@@ -547,30 +594,53 @@ def _ollama_generate_bullets_why(text: str, model: str = "llama3", timeout: int 
         "Return strict JSON with keys bullets, why, event_type, sentiment.\n\n"
         f"TEXT:\n{text}\n"
     )
+    t0 = _t0()
+    payload = {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 256}}
+    resp = requests.post(url, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    content = resp.json().get("response", "").strip()
+    start = content.find("{")
+    end = content.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("No JSON found in LLM response")
+    data = json.loads(content[start : end + 1])
+    bullets = [str(b).strip() for b in data.get("bullets", [])][:5] or []
+    why = str(data.get("why", "")).strip()
+    event_type = str(data.get("event_type", "other")).strip()
+    sentiment = str(data.get("sentiment", "neutral")).strip()
+    log.debug("ollama.ok", extra={"model": model, "bullets": len(bullets), "ms": _ms(t0), "run_id": _runid()})
+    return bullets, why, event_type, sentiment
+
+def _fallback_summarize(text: str) -> Tuple[List[str], str, str, str]:
+    """
+    Use the lightweight summarizer if present; else a safe heuristic.
+    Returns (bullets, why, event_type, sentiment).
+    """
     try:
-        t0 = _t0()
-        payload = {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 256}}
-        resp = requests.post(url, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        content = resp.json().get("response", "").strip()
-        # Extract JSON (model may return extra)
-        start = content.find("{")
-        end = content.rfind("}")
-        if start == -1 or end == -1:
-            raise ValueError("No JSON found in LLM response")
-        data = json.loads(content[start : end + 1])
-        bullets = [str(b).strip() for b in data.get("bullets", [])][:5] or []
-        why = str(data.get("why", "")).strip()
-        event_type = str(data.get("event_type", "other")).strip()
-        sentiment = str(data.get("sentiment", "neutral")).strip()
-        log.debug("ollama.ok", extra={"model": model, "bullets": len(bullets), "ms": _ms(t0), "run_id": _runid()})
-        return bullets, why, event_type, sentiment
+        from backend.app.nlp.summarizer import summarize_to_bullets
+        bullets, why = summarize_to_bullets("", text, max_bullets=3)
+        bullets = bullets or [text.split(".")[0][:140]]
+        why = why or "Key update relevant to near-term price action"
+        return bullets, why, "other", "neutral"
     except Exception as e:
-        log.info("ollama.fallback_used", extra={"reason": str(e)[:120], "model": model, "run_id": _runid()})
-        # Fallback heuristic: title-based bullet and neutral sentiment
-        text = _norm_text(text)
-        head = text.split(".")[0][:140]
-        return [head], "Potentially price relevant; confirm with sources.", "other", "neutral"
+        log.info("fallback_summarizer.unavailable", extra={"reason": str(e)[:140], "run_id": _runid()})
+        head = _norm_text(text).split(".")[0][:140]
+        return [head] if head else [], "Potentially price relevant; confirm with sources.", "other", "neutral"
+
+def _enrich_from_article(primary_url: str) -> Tuple[List[str], str]:
+    """
+    Best-effort: fetch the article and produce bullets/why using lightweight summarizer.
+    Silent no-op if content_fetcher is unavailable or fetch fails.
+    """
+    try:
+        from backend.app.pipeline.content_fetcher import fetch_and_summarize
+        data = fetch_and_summarize(primary_url, max_bullets=3)
+        bullets = data.get("bullets") or []
+        why = data.get("why") or ""
+        return bullets[:5], why
+    except Exception as e:
+        log.debug("content_fetch_skip", extra={"reason": str(e)[:120], "url": primary_url, "run_id": _runid()})
+        return [], ""
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Core: build clusters per symbol
@@ -592,20 +662,36 @@ def _publisher_from_url(url: str) -> str:
         return "unknown"
 
 def _within_window(pub: Optional[datetime], since_minutes: int, anchor: datetime) -> bool:
+    """
+    Intraday: anchor ≈ now → [anchor - since, anchor + 5m]
+    Backfill: anchor is in the past (by >2h) → [anchor, anchor + since]
+    """
     if pub is None:
-        return True  # keep if time unknown (we’ll let recency weighting handle it)
-    return anchor - timedelta(minutes=since_minutes) <= pub <= anchor + timedelta(minutes=5)
+        return True
+    if pub.tzinfo is None:
+        pub = pub.replace(tzinfo=timezone.utc)
+
+    now_utc = datetime.now(timezone.utc)
+    anchor = anchor if anchor.tzinfo else anchor.replace(tzinfo=timezone.utc)
+
+    # Heuristic: if anchor is >2h behind 'now', we treat this as a backfill anchor.
+    if (now_utc - anchor) > timedelta(hours=2):
+        start = anchor
+        end = anchor + timedelta(minutes=since_minutes)
+    else:
+        start = anchor - timedelta(minutes=since_minutes)
+        end = anchor + timedelta(minutes=5)
+
+    return start <= pub <= end
 
 def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap: SymbolMap) -> List[RawHit]:
     s = load_settings()
     t0 = _t0()
     hits: List[RawHit] = []
 
-    # Official feeds (not symbol-specific, filter by aliases)
+    # Official feeds (support RSS and optional NSE JSON)
     official = s.news.sources.get("official") or []
-    # (existing) keep as-is:
     log.info("collect.official_begin", extra={"feeds": len(official), "run_id": _runid()})
-    # (new) var-arg style:
     _info("collect.official_begin+", feeds=len(official), since_min=since_minutes, anchor=anchor.isoformat(), symbols=len(symbols))
 
     for src in official:
@@ -614,12 +700,18 @@ def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap
             _debug("collect.official.skip_no_url", src=src)
             continue
 
+        mode = (src.get("mode") or "rss").strip().lower()
         feed_seen = 0
         feed_skipped_window = 0
         feed_matched = 0
-        _debug("collect.official.feed_start", url=url)
+        _debug("collect.official.feed_start", url=url, mode=mode)
 
-        for ent in _fetch_rss(url):
+        if mode == "nse_json":
+            entries = _fetch_nse_corporate_json(url)
+        else:
+            entries = _fetch_rss(url)
+
+        for ent in entries:
             title = ent["title"]
             pub = ent["published"]
             feed_seen += 1
@@ -641,12 +733,6 @@ def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap
             # Map to symbols by alias match
             for sym in symbols:
                 matched = _headline_matches_symbol(title, sym, smap)
-                _debug(
-                    "collect.official.entry_match_check",
-                    symbol=sym,
-                    matched=matched,
-                    title_preview=(title[:120] if title else None),
-                )
                 if matched:
                     hits.append(RawHit(sym, title, link, pubr, pub))
                     feed_matched += 1
@@ -663,24 +749,20 @@ def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap
             seen=feed_seen,
             skipped_window=feed_skipped_window,
             matched=feed_matched,
+            mode=mode,
         )
 
-    # (existing) keep as-is:
     log.info("collect.official_done", extra={"hits": len(hits), "ms": _ms(t0), "run_id": _runid()})
-    # (new)
     _info("collect.official_done+", hits=len(hits), ms=_ms(t0))
 
     # Media via Google News (site-filtered)
     gcfg = s.news.sources.get("google_news") or s.news.get("google_news") or {}
     if gcfg and (gcfg.get("enabled", True)):
         sites = list(gcfg.get("sites") or [])
-        # (existing) keep:
         log.info("collect.media_begin", extra={"sites": len(sites), "symbols": len(symbols), "run_id": _runid()})
-        # (new)
         _info("collect.media_begin+", sites=len(sites), symbols=len(symbols))
 
         t1 = _t0()
-        # build quick alias map list for speed
         alias_map: Dict[str, List[str]] = {}
         for sym in symbols:
             variants = set(smap.match.get(sym, set()))
@@ -731,19 +813,13 @@ def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap
                 matched=sym_matched,
             )
 
-        # (existing) keep:
         log.info("collect.media_done", extra={"hits_total": len(hits), "ms": _ms(t1), "run_id": _runid()})
-        # (new)
         _info("collect.media_done+", hits_total=len(hits), ms=_ms(t1))
     else:
-        # (existing) keep:
         log.info("collect.media_disabled", extra={"run_id": _runid()})
-        # (new)
         _info("collect.media_disabled+")
 
-    # (existing) keep:
     log.info("collect.complete", extra={"hits": len(hits), "since_min": since_minutes, "run_id": _runid()})
-    # (new)
     _info("collect.complete+", hits=len(hits), since_min=since_minutes)
 
     return hits
@@ -767,7 +843,6 @@ class Cluster:
 def _cluster_hits(hits: List[RawHit], weights: Dict[str, float]) -> List[Cluster]:
     t0 = _t0()
     clusters: List[Cluster] = []
-    # group naïvely by (symbol) then cluster titles by token Jaccard
     by_symbol: Dict[str, List[RawHit]] = {}
     for h in hits:
         by_symbol.setdefault(h.symbol, []).append(h)
@@ -791,9 +866,7 @@ def _cluster_hits(hits: List[RawHit], weights: Dict[str, float]) -> List[Cluster
                     group_idx.append(j)
 
             group = [arr[k] for k in group_idx]
-            # Representative title = longest
             title_rep = max((g.title for g in group), key=lambda x: len(x))
-            # Earliest/newest
             pubs = [g.published for g in group if g.published]
             if pubs:
                 earliest = min(pubs)
@@ -801,23 +874,34 @@ def _cluster_hits(hits: List[RawHit], weights: Dict[str, float]) -> List[Cluster
             else:
                 earliest = newest = _now_utc()
 
-            # consensus
             pubs_set = set([g.publisher.lower() for g in group])
             scount = len(pubs_set)
-            # base weight sum
             wsum = sum(weights.get(g.publisher.lower(), 0.9) for g in group)
-            # normalize to 0..1-ish
             consensus = max(0.0, min(1.0, (wsum / max(1.0, len(group))) * (0.6 + 0.4 * min(1.0, scount / 3.0))))
-            # stars
             stars = 3 if (scount >= 3 or any("nse" in g.publisher.lower() or "sebi" in g.publisher.lower() for g in group)) else 2 if scount >= 2 else 1
 
-            # summarize (use all titles joined as context)
-            context = " | ".join([g.title for g in group])[:2000]
-            try:
-                bullets, why, event_type, sentiment = _ollama_generate_bullets_why(context, model=(load_settings().news.summarizer or {}).get("model", "llama3"))
-            except Exception:
-                _exc("summarizer.unexpected_error", symbol=sym)
-                bullets, why, event_type, sentiment = [title_rep], "Potentially price relevant; confirm with sources.", "other", "neutral"
+            # Summarization strategy:
+            # 1) Try to enrich from the first source article (fast, fallback-safe).
+            # 2) If still empty, try Ollama if available.
+            # 3) If Ollama not available, use the lightweight summarizer (fallback).
+            primary_url = group[0].url if group and group[0].url else ""
+            bullets, why = _enrich_from_article(primary_url) if primary_url else ([], "")
+            event_type, sentiment = "other", "neutral"
+
+            if not bullets:
+                context = " | ".join([g.title for g in group])[:2000]
+                try:
+                    b2, w2, et2, se2 = _ollama_generate_bullets_why(context, model=(load_settings().news.summarizer or {}).get("model", "llama3"))
+                    bullets = b2 or bullets
+                    why = w2 or why
+                    event_type = et2 or event_type
+                    sentiment = se2 or sentiment
+                except Exception:
+                    b3, w3, et3, se3 = _fallback_summarize(context)
+                    bullets = bullets or b3
+                    why = why or w3
+                    event_type = et3 or event_type
+                    sentiment = se3 or sentiment
 
             clusters.append(
                 Cluster(
@@ -856,7 +940,6 @@ def _build_batch(symbols: List[str], since_minutes: int, anchor: datetime) -> Ne
         log.info("provider.no_hits", extra={"run_id": _runid()})
         return NewsIngestBatch(items=[])
     clusters = _cluster_hits(hits, weights)
-    # Convert to ingest items
     items: List[NewsIngestItem] = []
     for c in clusters:
         items.append(
@@ -910,14 +993,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         batch = _build_batch(symbols, since_min, anchor)
-        # Print strict JSON to stdout for the CLI to consume
         sys.stdout.write(batch.model_dump_json())
         sys.stdout.flush()
         log.info("cli.done", extra={"items": len(batch.items), "run_id": _runid()})
         return 0
     except Exception:
         _exc("cli.unhandled_exception")
-        # Keep stdout clean on hard failures to help caller detect error
         return 1
 
 if __name__ == "__main__":

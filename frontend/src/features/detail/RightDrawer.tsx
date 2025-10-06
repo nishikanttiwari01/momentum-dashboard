@@ -10,9 +10,17 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  Tabs,           // ⬅️ added
+  Tab,            // ⬅️ added
+  List,           // ⬅️ added
+  ListItem,       // ⬅️ added
+  ListItemText,   // ⬅️ added
+  Link,           // ⬅️ added
+  CircularProgress, // ⬅️ added
 } from '@mui/material';
 import type { DrawerDetail } from '@/lib/api/types';
-import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition } from '@/lib/hooks';
+import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useNewsList } from '@/lib/hooks'; // ⬅️ added useNewsList
+import type { NewsCard } from '@/lib/api/types'; // ⬅️ uses your generated type index re-export
 import { drawerPaperSx } from './styles';
 
 import DrawerHeader from './DrawerHeader';
@@ -131,6 +139,25 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
     typeof qtyServer === 'number' ? String(qtyServer) : ''
   );
 
+  // Tabs state (0 = Overview, 1 = News)  ⬅️ added
+  const [tab, setTab] = React.useState<number>(0);
+  const handleTab = (_e: any, v: number) => setTab(v);
+
+  // News hook (enabled only when News tab is active)  ⬅️ added
+  const toISO = React.useMemo(() => new Date().toISOString(), [sym, tab]);
+  const fromISO = React.useMemo(() => new Date(Date.now() - 24 * 3600 * 1000).toISOString(), [sym, tab]);
+  const {
+    data: newsResp,
+    isLoading: newsLoading,
+    isError: newsError,
+    refetch: refetchNews
+  } = useNewsList(
+    { symbol: sym, from: fromISO, to: toISO, page: 1, per_page: 50, sort: 'impact_desc' },
+    { staleTimeMs: 60_000 }
+  );
+
+  const newsItems = (newsResp?.items ?? []) as NewsCard[];
+
   // ⛳ gate to ignore sync effect while unlocking/refetching
   const unlockingRef = React.useRef(false);
 
@@ -245,100 +272,194 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
           badges={badges}
           onClose={onClose}
         />
+
+        {/* ⬇️ Tabs added */}
+        <Tabs value={tab} onChange={handleTab} variant="fullWidth" sx={{ mt: 0.5 }}>
+          <Tab label="Overview" />
+          <Tab label="News" />
+        </Tabs>
       </Box>
 
       {/* BODY */}
       <Box sx={{ px: 3, py: 2, overflowY: 'auto' }}>
-        <Sparkline data={d?.sparkline as any} height={200} />
+        {/* OVERVIEW tab: your existing content remains untouched */}
+        {tab === 0 && (
+          <React.Fragment>
+            <Sparkline data={d?.sparkline as any} height={200} />
 
-        <ScoreBreakdown
-          score={
-            typeof sb?.score_total_0_100 === 'number'
-              ? sb.score_total_0_100
-              : d?.score
-          }
-          trend_rank={sb?.trend_rank ?? d?.trend_rank}
-          breakout_quality={sb?.breakout_quality ?? d?.breakout_quality}
-          relvol={sb?.relvol ?? d?.relvol}
-        />
+            <ScoreBreakdown
+              score={
+                typeof sb?.score_total_0_100 === 'number'
+                  ? sb.score_total_0_100
+                  : d?.score
+              }
+              trend_rank={sb?.trend_rank ?? d?.trend_rank}
+              breakout_quality={sb?.breakout_quality ?? d?.breakout_quality}
+              relvol={sb?.relvol ?? d?.relvol}
+            />
 
-        <IndicatorsGrid ind={ind} />
+            <IndicatorsGrid ind={ind} />
 
-        <EntryModule
-          effectiveEntry={
-            typeof roundedEffectiveEntry === 'number' ? roundedEffectiveEntry : undefined
-          }
-          locked={locked}
-          trade_on={tradeOn}
-          qty={qtyServer ?? undefined}
-          // do NOT auto-lock on toggle
-          onTradeChange={(on) => {
-            if (on) {
-              setTradeOn(true);
-              // if turning on with empty entry, seed suggestion (2 dp)
-              if (!entryPrice) setEntryPrice(computeSuggestedPriceStr());
-            } else {
-              if (locked) setAskConfirm(true);
-              else setTradeOn(false);
-            }
-          }}
-          onEntryChange={(v) => {
-            const cleaned =
-              v && !Number.isNaN(+v) ? Number(parseFloat(v).toFixed(2)).toString() : v;
-            setEntryPrice(cleaned);
-          }}
-          onQtyChange={(v) => setQtyLocal(v)}
-          // hide any internal “Lock Entry” button inside EntryModule
-          showLockEntryButton={false}
-        />
-
-        {/* Only show our explicit Lock button when trade is ON but not yet locked */}
-        {tradeOn && !locked && (
-          <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-            <Button variant="contained" onClick={lockNow}>
-              Lock trade
-            </Button>
-            <Button
-              variant="outlined"
-              onClick={() => {
-                // cancel staging (turn off without API)
-                setTradeOn(false);
+            <EntryModule
+              effectiveEntry={
+                typeof roundedEffectiveEntry === 'number' ? roundedEffectiveEntry : undefined
+              }
+              locked={locked}
+              trade_on={tradeOn}
+              qty={qtyServer ?? undefined}
+              // do NOT auto-lock on toggle
+              onTradeChange={(on) => {
+                if (on) {
+                  setTradeOn(true);
+                  // if turning on with empty entry, seed suggestion (2 dp)
+                  if (!entryPrice) setEntryPrice(computeSuggestedPriceStr());
+                } else {
+                  if (locked) setAskConfirm(true);
+                  else setTradeOn(false);
+                }
               }}
-            >
-              Cancel
-            </Button>
-          </Box>
+              onEntryChange={(v) => {
+                const cleaned =
+                  v && !Number.isNaN(+v) ? Number(parseFloat(v).toFixed(2)).toString() : v;
+                setEntryPrice(cleaned);
+              }}
+              onQtyChange={(v) => setQtyLocal(v)}
+              // hide any internal “Lock Entry” button inside EntryModule
+              showLockEntryButton={false}
+            />
+
+            {/* Only show our explicit Lock button when trade is ON but not yet locked */}
+            {tradeOn && !locked && (
+              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                <Button variant="contained" onClick={lockNow}>
+                  Lock trade
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={() => {
+                    // cancel staging (turn off without API)
+                    setTradeOn(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </Box>
+            )}
+
+            <NextAction
+              text={na?.text || na?.reason || na?.state}
+              refs={refs}
+              method_pill={d?.method_pill}
+            />
+
+            <ActionBlock
+              stop_now={ab?.stop_now ?? posFromDetail?.stop_now}
+              exit_close_threshold={
+                ab?.exit_close_threshold ?? posFromDetail?.exit_close_threshold
+              }
+              breakeven_active={breakeven_active}
+              euphoria_on={euphoria_on}
+            />
+
+            <SectionHeader>Meters</SectionHeader>
+            <Meters risk={meters?.risk} euphoria={meters?.euphoria} />
+
+            <SectionHeader>Alerts</SectionHeader>
+            <AlertsRow templates={alertTemplates} />
+
+            <Box sx={{ color: 'text.secondary', fontSize: 12, mt: 2, pb: 1 }}>
+              {d?.as_of || header?.as_of ? `As of ${new Date(d?.as_of ?? header?.as_of).toLocaleString()}` : ''}
+              {isFetching ? ' · refreshing…' : ''}
+              {d?.trading_day ? ` · ${d.trading_day}` : ''}
+              {runId ? ` · Run ${runId}` : ''}
+              {d?.symbol_canon ? ` · ${d.symbol_canon}` : ''}
+              {error ? ` · ${(error as any)?.message || 'Failed to load details.'}` : ''}
+            </Box>
+          </React.Fragment>
         )}
 
-        <NextAction
-          text={na?.text || na?.reason || na?.state}
-          refs={refs}
-          method_pill={d?.method_pill}
-        />
+        {/* NEWS tab: minimal, clean rendering */}
+        {tab === 1 && (
+          <React.Fragment>
+            {newsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                <CircularProgress size={22} />
+              </Box>
+            ) : newsError ? (
+              <Typography variant="body2" color="error">
+                Failed to load news.
+              </Typography>
+            ) : !newsItems.length ? (
+              <Typography variant="body2" color="text.secondary">
+                No news in the last 24h.
+              </Typography>
+            ) : (
+              <List disablePadding>
+                {newsItems.map((it, idx) => {
+                  const title = it.title;
+                  const srcText = it.source_primary || it.sources?.[0]?.publisher || '';
+                  const href = it.source_url || it.sources?.[0]?.url || '';
+                  const bullets = (it.bullets || []).slice(0, 3).map((b) => b.replace(/^•\s?/, ''));
 
-        <ActionBlock
-          stop_now={ab?.stop_now ?? posFromDetail?.stop_now}
-          exit_close_threshold={
-            ab?.exit_close_threshold ?? posFromDetail?.exit_close_threshold
-          }
-          breakeven_active={breakeven_active}
-          euphoria_on={euphoria_on}
-        />
-
-        <SectionHeader>Meters</SectionHeader>
-        <Meters risk={meters?.risk} euphoria={meters?.euphoria} />
-
-        <SectionHeader>Alerts</SectionHeader>
-        <AlertsRow templates={alertTemplates} />
-
-        <Box sx={{ color: 'text.secondary', fontSize: 12, mt: 2, pb: 1 }}>
-          {d?.as_of || header?.as_of ? `As of ${new Date(d?.as_of ?? header?.as_of).toLocaleString()}` : ''}
-          {isFetching ? ' · refreshing…' : ''}
-          {d?.trading_day ? ` · ${d.trading_day}` : ''}
-          {runId ? ` · Run ${runId}` : ''}
-          {d?.symbol_canon ? ` · ${d.symbol_canon}` : ''}
-          {error ? ` · ${(error as any)?.message || 'Failed to load details.'}` : ''}
-        </Box>
+                  return (
+                    <React.Fragment key={it.cluster_id || `${idx}`}>
+                      <ListItem alignItems="flex-start" disableGutters sx={{ py: 1.25 }}>
+                        <ListItemText
+                          primary={
+                            <Typography variant="subtitle2" sx={{ lineHeight: 1.3 }}>
+                              {title}
+                            </Typography>
+                          }
+                          secondary={
+                            <Box sx={{ mt: 0.5 }}>
+                              {bullets.length ? (
+                                <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+                                  {bullets.map((b, i) => (
+                                    <li key={i}>
+                                      <Typography variant="body2">{b}</Typography>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                              {it.why ? (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  display="block"
+                                  sx={{ mt: 0.5 }}
+                                >
+                                  {it.why}
+                                </Typography>
+                              ) : null}
+                              {href ? (
+                                <Typography variant="caption" display="block" sx={{ mt: 0.75 }}>
+                                  Source:{' '}
+                                  <Link href={href} target="_blank" rel="noopener noreferrer" underline="hover">
+                                    {srcText || 'link'}
+                                  </Link>
+                                </Typography>
+                              ) : srcText ? (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  display="block"
+                                  sx={{ mt: 0.75 }}
+                                >
+                                  Source: {srcText}
+                                </Typography>
+                              ) : null}
+                            </Box>
+                          }
+                        />
+                      </ListItem>
+                      {idx < newsItems.length - 1 ? <Divider component="li" /> : null}
+                    </React.Fragment>
+                  );
+                })}
+              </List>
+            )}
+          </React.Fragment>
+        )}
       </Box>
 
       {/* Unlock confirmation */}

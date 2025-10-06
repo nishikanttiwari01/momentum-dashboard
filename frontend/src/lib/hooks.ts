@@ -16,8 +16,27 @@ import type {
   ListRunsParams,
   ListRuns200,
 } from './api/types';
-
+// add
+import { useListNewsBySymbol } from './api/client';
+import type { ListNewsBySymbolParams, NewsListResponse } from './api/types';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+
+
+// List news: normalized wrapper (AxiosResponse -> data)
+export function useNewsList(
+  params: ListNewsBySymbolParams,
+  opts?: { staleTimeMs?: number }
+) {
+  const { staleTimeMs = 60_000 } = opts ?? {};
+  return useListNewsBySymbol(params, {
+    query: {
+      select: (res) => res.data as NewsListResponse,
+      staleTime: staleTimeMs,
+      refetchOnWindowFocus: false,
+    },
+  });
+}
 
 /* --------------------------------------------
  * Existing hooks you already use elsewhere

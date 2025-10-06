@@ -92,7 +92,7 @@ def _parse_since_expr(expr: str) -> int:
             val = int(float(s))
         log.debug("since_expr.parsed", extra={"expr": expr, "minutes": val, "run_id": _runid()})
         return val
-    except Exception as e:
+    except Exception:
         _log_exception("since_expr.parse_failed", expr=expr)
         raise
 
@@ -119,6 +119,36 @@ def _stderr(msg: str) -> None:
     sys.stderr.write(msg + "\n")
     sys.stderr.flush()
 
+# ─── ADDED: time helpers for clear window logging & anchors ───────────────────
+
+def _get_tz(tz_name: str):
+    try:
+        import zoneinfo
+        return zoneinfo.ZoneInfo(tz_name)
+    except Exception:
+        return None  # fall back to naive if unavailable
+
+def _fmt(dt: datetime) -> str:
+    """Human-friendly ISO with TZ if present."""
+    try:
+        return dt.isoformat()
+    except Exception:
+        # naive
+        return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+def _log_window(label: str, anchor: datetime, since_minutes: int, tz_label: str) -> None:
+    start = anchor
+    end = anchor + timedelta(minutes=since_minutes)
+    extra = {
+        "anchor": _fmt(anchor),
+        "start": _fmt(start),
+        "end": _fmt(end),
+        "since_min": since_minutes,
+        "tz": tz_label,
+        "run_id": _runid(),
+    }
+    log.info(f"window.{label}", extra=extra)
+    _stderr(f"[info] {label} window {tz_label}: {extra['start']} → {extra['end']} ({since_minutes}m)")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Cohort selection (watchlist+top movers+score threshold)
@@ -510,6 +540,20 @@ def run_intraday(
         log.info("news.run_intraday_no_symbols", extra={"run_id": _runid()})
         _stderr("[info] no symbols selected for intraday run; exiting")
         return
+
+    # ADDED: log the lookup window with a clear anchor (intraday uses 'now - since')
+    now_ist = None
+    tz_cfg = (load_settings().news.trading_timezone or "Asia/Kolkata")
+    tz_ist = _get_tz(tz_cfg)
+    if tz_ist:
+        now_ist = datetime.now(tz_ist)
+        anchor = now_ist - timedelta(minutes=since_minutes)
+        _log_window("intraday", anchor, since_minutes, f"{tz_cfg}")
+    else:
+        now_naive = datetime.now()
+        anchor = now_naive - timedelta(minutes=since_minutes)
+        _log_window("intraday", anchor, since_minutes, "local-naive")
+
     log.info("news.run_intraday_execute", extra={"symbols": len(symbols), "rid": rid, "as_of": as_of, "run_id": _runid()})
     _stderr(
         f"[info] intraday selection: {len(symbols)} symbols (gainers={len(cohorts.top_gainers)}, "
@@ -536,10 +580,14 @@ def run_backfill(
     extra_env: Dict[str, str],
     symbols_all_file: Optional[str],
     symbol_limit: Optional[int],
+    # ADDED: optional overrides
+    since_minutes_override: Optional[int] = None,
+    anchor_hour_override: Optional[int] = None,
+    anchor_tz_override: Optional[str] = None,
+    rolling_24h: bool = False,
 ) -> None:
     """
-    log.info("news.run_backfill_start", extra={"trading_day": trading_day.isoformat(), "provider_cmd_raw": provider_cmd})
-    Backfill for a specific trading day (IST). You can pass a precomputed symbol list (file),
+    Backfill for a specific trading day (IST by default). You can pass a precomputed symbol list (file),
     otherwise it will take all symbols from the latest daily snapshot for that day.
     """
     log.info(
@@ -579,19 +627,50 @@ def run_backfill(
         _stderr("[info] no symbols found for backfill; exiting")
         log.info("news.run_backfill_no_symbols", extra={"trading_day": trading_day.isoformat(), "run_id": _runid()})
         return
-    tz = settings.news.trading_timezone or "Asia/Kolkata"
+
+    # ─── ADDED: configurable anchor and window ────────────────────────────────
+    tz_name = anchor_tz_override or (settings.news.trading_timezone or "Asia/Kolkata")
+    tz = _get_tz(tz_name)
+
+    # Defaults (previous behavior): anchor 09:00 IST, since 1440
+    default_anchor_hour = 9
+    default_since = 1440
+
+    # Allow overrides from CLI or config.news.run_modes.backfill
+    cfg_back = None
     try:
-        import zoneinfo
-        ist = zoneinfo.ZoneInfo(tz)
+        cfg_back = (settings.news.run_modes or {}).get("backfill", {})
     except Exception:
-        ist = None
-        log.warning("tz.zoneinfo_unavailable", extra={"tz": tz, "run_id": _runid()})
-    if ist is not None:
-        anchor_dt = datetime(trading_day.year, trading_day.month, trading_day.day, 9, 0, 0, tzinfo=ist)
+        cfg_back = {}
+
+    cfg_anchor_hour = None
+    cfg_since = None
+    if isinstance(cfg_back, dict):
+        cfg_anchor_hour = cfg_back.get("anchor_hour_ist", None)
+        cfg_since = cfg_back.get("since_minutes", None)
+
+    anchor_hour = int(anchor_hour_override if anchor_hour_override is not None else (cfg_anchor_hour if cfg_anchor_hour is not None else default_anchor_hour))
+    since_minutes = int(since_minutes_override if since_minutes_override is not None else (cfg_since if cfg_since is not None else default_since))
+
+    if rolling_24h:
+        # Anchor = trading_day 00:00 (tz), then extend since=1440 from "now"? We want last 24h relative to anchor.
+        # To reflect "rolling last 24h for that day" we set anchor to (trading_day end - 1440m).
+        # Simpler: anchor to (trading_day at 00:00 tz) and since=1440 → exact calendar day.
+        anchor_hour = 0
+        since_minutes = 1440
+
+    if tz is not None:
+        anchor_dt = datetime(trading_day.year, trading_day.month, trading_day.day, anchor_hour, 0, 0, tzinfo=tz)
     else:
-        anchor_dt = datetime(trading_day.year, trading_day.month, trading_day.day, 9, 0, 0)
+        anchor_dt = datetime(trading_day.year, trading_day.month, trading_day.day, anchor_hour, 0, 0)
+
     at_iso = anchor_dt.isoformat()
-    since_minutes = 1440
+    # Log clear window
+    _log_window("backfill", anchor_dt, since_minutes, tz_name)
+    # Also log UTC window for debugging
+    if anchor_dt.tzinfo:
+        _log_window("backfill_utc", anchor_dt.astimezone(timezone.utc), since_minutes, "UTC")
+
     provider_cmd_clean = (provider_cmd or "").strip() or None
     log.info(
         "news.run_backfill_provider_resolved",
@@ -603,7 +682,7 @@ def run_backfill(
             "run_id": _runid(),
         },
     )
-    _stderr(f"[info] backfill {trading_day.isoformat()} for {len(symbols)} symbols")
+    _stderr(f"[info] backfill {trading_day.isoformat()} for {len(symbols)} symbols (anchor {tz_name} {anchor_hour:02d}:00, since {since_minutes}m)")
     if provider_cmd_clean:
         log.info(
             "news.run_backfill_provider_exec",
@@ -691,12 +770,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_back = sub.add_parser("backfill", help="Backfill T-day news across all symbols.")
     p_back.add_argument("--api-base", default=api_base_default)
-    p_back.add_argument("--day", required=True, help="Trading day YYYY-MM-DD (IST).")
+    p_back.add_argument("--day", required=True, help="Trading day YYYY-MM-DD (IST by default).")
     p_back.add_argument("--provider-cmd", default=os.getenv("NEWS_PROVIDER_CMD"),
                         help="External provider command that prints NewsIngestBatch JSON. You can also set NEWS_PROVIDER_CMD env.")
     p_back.add_argument("--env", nargs="*", default=[])
     p_back.add_argument("--symbols-file", help="Optional newline-delimited list of all symbols for backfill.")
     p_back.add_argument("--symbol-limit", type=int, default=None)
+    # ADDED: override knobs so you can run midnight anchor or rolling windows without touching code
+    p_back.add_argument("--since", help="Override lookback window for backfill (e.g., 24h, 36h, 2880m). Default 1440m.", default=None)
+    p_back.add_argument("--anchor-hour", type=int, help="Hour of anchor in trading TZ (0-23). Default 9 (IST).", default=None)
+    p_back.add_argument("--anchor-tz", help="Trading timezone name (IANA). Default from settings.news.trading_timezone (Asia/Kolkata).", default=None)
+    p_back.add_argument("--rolling-24h", action="store_true", help="Convenience: set anchor to 00:00 and since=1440 for that trading day.")
 
     args = parser.parse_args(argv)
 
@@ -756,6 +840,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 extra_env=extra_env,
                 symbols_all_file=args.symbols_file,
                 symbol_limit=args.symbol_limit,
+                since_minutes_override=(_parse_since_expr(args.since) if args.since else None),
+                anchor_hour_override=args.anchor_hour,
+                anchor_tz_override=args.anchor_tz,
+                rolling_24h=bool(args.rolling_24h),
             )
             return 0
         except Exception:

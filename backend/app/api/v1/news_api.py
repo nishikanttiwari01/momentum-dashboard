@@ -235,3 +235,45 @@ def ingest_news(batch: NewsIngestBatch = Body(...)) -> dict:
     except Exception:
         _exc("news.api.ingest_exception", items=len(batch.items) if batch and batch.items else 0)
         raise
+    
+@router.get(
+    "/news/list",
+    response_model=NewsListResponse,
+    summary="List news for a symbol and time window",
+)
+def list_news(
+    symbol: str = Query(..., description="Symbol, e.g. RELIANCE.NS"),
+    from_: datetime = Query(..., alias="from"),
+    to: datetime = Query(...),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=500),
+    min_confidence: Optional[int] = Query(None, ge=1, le=5),
+    event: Optional[str] = Query(None, description="CSV of event types"),
+    sort: Literal["impact_desc", "published_desc", "confirmed_desc"] = Query("impact_desc"),
+) -> NewsListResponse:
+    """
+    Lists news cards for the given symbol and time window.
+    """
+    f_utc = _ts_aware(from_)
+    t_utc = _ts_aware(to)
+
+    event_filter = None
+    if event:
+        event_filter = [x.strip() for x in event.split(",") if x.strip()]
+
+    t0 = _t0()
+    items, next_page = repo_list_news(
+        symbol=symbol,
+        from_dt=f_utc,
+        to_dt=t_utc,
+        page=page,
+        per_page=per_page,
+        min_confidence=min_confidence,
+        event_filter=event_filter,
+        sort=sort,
+    )
+    log.info(
+        "news.api.list_response",
+        extra={"items": len(items), "next_page": next_page, "ms": _ms(t0), "run_id": _runid()},
+    )
+    return NewsListResponse(items=items, next_page=next_page)

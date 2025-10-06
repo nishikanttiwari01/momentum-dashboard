@@ -11,7 +11,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-# ✨ added
+# ✨ minimal logging (non-invasive)
 import logging
 import os
 import time
@@ -26,13 +26,12 @@ from app.schemas.generated.models import (
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Logging (non-invasive; no behavior change)
+# Logging
 # ──────────────────────────────────────────────────────────────────────────────
 
 log = logging.getLogger(__name__)
 
 def _configure_logging_if_needed(default_level: str = "INFO") -> None:
-    """Init root logging only if the app hasn't configured it yet."""
     root = logging.getLogger()
     if not root.handlers:
         level_name = os.getenv("LOG_LEVEL", default_level).upper()
@@ -55,28 +54,24 @@ def _exc(context: str, **extra):
     extra = {"run_id": _runid(), **extra}
     log.exception(context, extra=extra)
 
-# Ensure we have basic logging even when used from scripts
 _configure_logging_if_needed()
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Paths & storage lifecycle (uses existing global parquet_root)
+# Paths & storage
 # ──────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class _Paths:
-    base_parquet_root: Path       # e.g. ./backend/parquet (your existing root)
-    news_root: Path               # <base>/news
+    base_parquet_root: Path
+    news_root: Path
 
 _paths: Optional[_Paths] = None
 
 
 def _configured_base_root() -> Path:
     """
-    Resolve your existing Parquet root.
-
-    We intentionally DO NOT introduce a second root. This respects your
-    project-wide setting (e.g. ./backend/parquet) and writes news under:
-        <parquet_root>/news/partition_date=YYYY-MM-DD/clusters.parquet
+    Use the project-wide parquet_root (e.g. ./backend/parquet) and write news under:
+      <parquet_root>/news/partition_date=YYYY-MM-DD/clusters.parquet
     """
     cfg = load()
     base = getattr(cfg, "parquet_root", None) or "./backend/parquet"
@@ -86,7 +81,6 @@ def _configured_base_root() -> Path:
 
 
 def ensure_news_storage_ready() -> None:
-    """Ensure <parquet_root>/news exists."""
     global _paths
     base = _configured_base_root()
     news_root = base / "news"
@@ -96,27 +90,26 @@ def ensure_news_storage_ready() -> None:
 
 
 def _partition_dir_from_dt(published: datetime) -> Path:
-    """
-    Partition by India date (IST day boundary). We store data in UTC but the
-    folder partition reflects IST to align with Indian market/news days.
-    """
+    """Partition by IST calendar date; values stored as UTC."""
     assert _paths, "ensure_news_storage_ready() must be called first"
     ist = timezone(timedelta(hours=5, minutes=30))
     day = published.astimezone(ist).strftime("%Y-%m-%d")
     p = _paths.news_root / f"partition_date={day}"
-    log.debug("news.partition_resolved", extra={"published_utc": published.astimezone(timezone.utc).isoformat(), "partition": str(p), "run_id": _runid()})
+    log.debug("news.partition_resolved", extra={
+        "published_utc": published.astimezone(timezone.utc).isoformat(),
+        "partition": str(p), "run_id": _runid()
+    })
     return p
 
 
 def _parquet_path_for_partition(partition_dir: Path) -> Path:
-    # One file per day keeps it simple and fast to scan
     p = partition_dir / "clusters.parquet"
     log.debug("news.parquet_path", extra={"path": str(p), "run_id": _runid()})
     return p
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Arrow schemas & conversion
+# Arrow schema
 # ──────────────────────────────────────────────────────────────────────────────
 
 _SOURCE_STRUCT = pa.struct([
@@ -125,10 +118,11 @@ _SOURCE_STRUCT = pa.struct([
     ("paywalled", pa.bool_()),
 ])
 
+# ⚠️ Minimal addition: two flat columns (source_primary, source_url)
 NEWS_SCHEMA = pa.schema([
     ("cluster_id", pa.string()),
     ("symbol",     pa.string()),
-    ("published",  pa.timestamp("ns", tz="UTC")),  # store as UTC
+    ("published",  pa.timestamp("ns", tz="UTC")),  # stored as UTC
     ("title",      pa.string()),
     ("event_type", pa.string()),
     ("bullets",    pa.list_(pa.string())),
@@ -137,6 +131,8 @@ NEWS_SCHEMA = pa.schema([
     ("confidence_stars", pa.int32()),
     ("consensus_score",  pa.float32()),
     ("source_count",     pa.int32()),
+    ("source_primary",   pa.string()),   # NEW (flat for easy viewing)
+    ("source_url",       pa.string()),   # NEW (flat for easy viewing)
     ("sources",          pa.list_(_SOURCE_STRUCT)),
 ])
 
@@ -145,13 +141,21 @@ log.debug("news.schema_ready", extra={"fields": NEWS_SCHEMA.names, "run_id": _ru
 
 def _ingest_item_to_py(obj) -> dict:
     """
-    Convert a NewsIngestItem (pydantic) into plain Python types for Arrow.
-    Ensure 'published' is timezone-aware UTC.
+    Convert NewsIngestItem (pydantic) to plain types for Arrow.
+    Ensure 'published' is tz-aware UTC. Fill flat source_* from first source.
     """
     pub = obj.published
     if pub.tzinfo is None:
         pub = pub.replace(tzinfo=timezone.utc)
     pub_utc = pub.astimezone(timezone.utc)
+
+    src_list = [
+        {"publisher": s.publisher, "url": str(s.url), "paywalled": bool(getattr(s, "paywalled", False))}
+        for s in (obj.sources or [])
+    ]
+    first_pub = src_list[0]["publisher"] if src_list else ""
+    first_url = src_list[0]["url"] if src_list else ""
+
     d = {
         "cluster_id": obj.cluster_id,
         "symbol": obj.symbol,
@@ -164,10 +168,9 @@ def _ingest_item_to_py(obj) -> dict:
         "confidence_stars": int(obj.confidence_stars or 0),
         "consensus_score": float(obj.consensus_score or 0.0),
         "source_count": int(obj.source_count or 0),
-        "sources": [
-            {"publisher": s.publisher, "url": str(s.url), "paywalled": bool(getattr(s, "paywalled", False))}
-            for s in (obj.sources or [])
-        ],
+        "source_primary": first_pub,      # NEW
+        "source_url": first_url,          # NEW
+        "sources": src_list,
     }
     log.debug("news.ingest_item_normalized", extra={"cluster_id": d["cluster_id"], "symbol": d["symbol"], "run_id": _runid()})
     return d
@@ -181,26 +184,20 @@ def _table_from_items(items: Iterable[dict]) -> pa.Table:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Ingest (idempotent upsert by cluster_id within the partition)
+# Ingest (idempotent upsert by cluster_id per partition)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def repo_ingest_batch(batch: NewsIngestBatch) -> None:
-    """
-    Upsert each item into its IST-dated partition. If the partition file exists,
-    we update rows by cluster_id; otherwise we create the file.
-    """
     ensure_news_storage_ready()
 
     log.info("news.ingest_begin", extra={"items": len(batch.items), "run_id": _runid()})
 
-    # Group incoming items by their partition dir
     buckets: dict[Path, list[dict]] = {}
     for it in batch.items:
         pdir = _partition_dir_from_dt(it.published)
         pdir.mkdir(parents=True, exist_ok=True)
         buckets.setdefault(pdir, []).append(_ingest_item_to_py(it))
 
-    # Upsert per partition
     for pdir, rows in buckets.items():
         ppath = _parquet_path_for_partition(pdir)
         t0 = _t0()
@@ -212,20 +209,16 @@ def repo_ingest_batch(batch: NewsIngestBatch) -> None:
                 _exc("news.parquet_read_failed", path=str(ppath))
                 raise
 
-            # Map cluster_id -> row index
             cid_idx: dict[str, int] = {
                 existing["cluster_id"][i].as_py(): i
                 for i in range(existing.num_rows)
             }
 
-            # Incoming as Arrow table
             new_tbl = _table_from_items(rows)
 
-            # Mutable lists of existing columns
             ex_cols = [existing[name].to_pylist() for name in existing.schema.names]
             name_to_pos = {name: i for i, name in enumerate(existing.schema.names)}
 
-            # Upsert/append
             updated, inserted = 0, 0
             for i in range(new_tbl.num_rows):
                 row = {name: new_tbl[name][i].as_py() for name in new_tbl.schema.names}
@@ -279,9 +272,6 @@ def repo_ingest_batch(batch: NewsIngestBatch) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _parquet_glob_between(from_dt: datetime, to_dt: datetime) -> str:
-    """
-    Build a DuckDB glob covering all IST-partitioned days intersecting [from..to].
-    """
     assert _paths
     ist = timezone(timedelta(hours=5, minutes=30))
     start_day = from_dt.astimezone(ist).date()
@@ -293,7 +283,6 @@ def _parquet_glob_between(from_dt: datetime, to_dt: datetime) -> str:
         parts.append(f"partition_date={day.isoformat()}/clusters.parquet")
         day = day + timedelta(days=1)
 
-    # 'root/{a,b,c}' form for DuckDB
     if not parts:
         g = str(_paths.news_root / "partition_date=*/clusters.parquet")
         log.debug("news.glob_auto_all", extra={"glob": g, "run_id": _runid()})
@@ -318,12 +307,9 @@ def repo_list_news(
     event_filter: Optional[list[str]],
     sort: Literal["impact_desc", "published_desc", "confirmed_desc"],
 ) -> tuple[list[NewsCard], Optional[int]]:
-    """
-    Read Parquet via DuckDB and return paginated NewsCard rows for a symbol.
-    """
+    """Read Parquet via DuckDB and return paginated NewsCard rows for a symbol."""
     ensure_news_storage_ready()
 
-    # Normalize times to UTC for filtering (we stored 'published' as UTC)
     f_utc = (from_dt.replace(tzinfo=timezone.utc)
              if from_dt.tzinfo is None else from_dt.astimezone(timezone.utc))
     t_utc = (to_dt.replace(tzinfo=timezone.utc)
@@ -350,13 +336,11 @@ def repo_list_news(
             where.append(f"event_type IN ({placeholders})")
             params.extend(event_filter)
 
-        # Sorting
         if sort == "published_desc":
             order = "published DESC"
         elif sort == "confirmed_desc":
             order = "source_count DESC, confidence_stars DESC, published DESC"
         else:
-            # impact_desc proxy using consensus + stars + sources + recency(neutralized by published DESC)
             order = "((coalesce(consensus_score,0)) + 0.15*confidence_stars + 0.05*source_count) DESC, published DESC"
 
         q_base = f"""
@@ -369,7 +353,7 @@ def repo_list_news(
         offset = max(0, (page - 1) * per_page)
         q = f"""
           SELECT cluster_id, symbol, published, title, event_type, bullets, why,
-                 sentiment, confidence_stars, consensus_score, source_count, sources
+                 sentiment, confidence_stars, consensus_score, source_count,source_primary, source_url, sources      
           {q_base}
           ORDER BY {order}
           LIMIT ? OFFSET ?
@@ -390,11 +374,9 @@ def repo_list_news(
 
     items: list[NewsCard] = []
     for (cluster_id, _symbol, published, title, event_type, bullets, why,
-         sentiment, confidence_stars, consensus_score, source_count, sources) in rows:
+         sentiment, confidence_stars, consensus_score, source_count, sources,source_primary,source_url) in rows:
 
         pub_dt: datetime = published  # duckdb returns tz-aware UTC
-
-        # Convert nested sources
         src_refs: list[NewsSourceRef] = []
         if sources:
             for s in sources:
@@ -423,6 +405,8 @@ def repo_list_news(
                 consensus_score=float(consensus_score or 0.0),
                 source_count=int(source_count or 0),
                 sources=src_refs,
+                source_primary=source_primary,
+                source_url=source_url,
                 impact_score=None,
                 correlation_note=None,
             )
@@ -438,18 +422,10 @@ def repo_list_news(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Attribution (impact scoring with config boosts & recency)
+# Attribution (impact scoring)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _recency_decay(minutes: float) -> float:
-    """
-    Recency decay buckets from config:
-      news.consensus.recency_decay.buckets:
-        - { max_min: 30,   factor: 1.00 }
-        - { max_min: 90,   factor: 0.80 }
-        - { max_min: 240,  factor: 0.50 }
-        - { max_min: 1440, factor: 0.30 }
-    """
     cfg = load().news.consensus if (load().news and getattr(load().news, "consensus", None)) else {}
     buckets = (cfg.get("recency_decay") or {}).get("buckets") or [
         {"max_min": 30, "factor": 1.00},
@@ -475,11 +451,10 @@ def repo_attribute_move(
     min_confidence: Optional[int],
 ) -> list[NewsAttributionItem]:
     """
-    Attribute a price move at 'at' (UTC or tz-aware) to recent news for 'symbol'.
+    Attribute a price move at 'at' to recent news for 'symbol'.
     Returns the top 3 by computed impact.
     """
     t0 = _t0()
-    # Candidates window
     from_dt = at - timedelta(minutes=lookback_min)
     log.info("news.attrib_begin", extra={
         "symbol": symbol, "at": at.astimezone(timezone.utc).isoformat(),
@@ -502,7 +477,6 @@ def repo_attribute_move(
         rec = _recency_decay(minutes_ago)
         ev = _event_boost(c.event_type)
 
-        # Impact: consensus + stars + sources, modulated by recency & event boost
         impact_raw = (
             (c.consensus_score or 0.0)
             + 0.18 * (c.confidence_stars or 0)
@@ -516,15 +490,13 @@ def repo_attribute_move(
             thr = load().news.attribution.get("thresholds", {}) or {}
         likely_thr = float(thr.get("likely", 0.65))
         possible_thr = float(thr.get("possible", 0.45))
-        decision: Literal["likely", "possible", "none"]
         if impact >= likely_thr:
-            decision = "likely"
+            decision: Literal["likely","possible","none"] = "likely"
         elif impact >= possible_thr:
             decision = "possible"
         else:
             decision = "none"
 
-        # Correlation note
         if minutes_ago <= 5:
             note = "Appeared within 5m of the move"
         elif minutes_ago <= 30:

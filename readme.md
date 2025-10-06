@@ -78,3 +78,4 @@ pip install -r requirements.txt
 
 
 
+(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard>D:/WORK/NEW_STOCK_DASHBOARD/momentum-dashboard/.venv/Scripts/python.exe d:/WORK/NEW_STOCK_DASHBOARD/momentum-dashboard/backend/util/build_master_from_equity_l.py d:/WORK/NEW_STOCK_DASHBOARD/momentum-dashboard/backend/util/nse_master.csv

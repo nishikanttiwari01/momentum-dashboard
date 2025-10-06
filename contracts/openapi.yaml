@@ -989,6 +989,57 @@ paths:
       responses:
         "202":
           description: Accepted
+  /api/v1/news/list:
+    get:
+      operationId: getNewsList
+      summary: List news for a symbol and time window
+      parameters:
+        - in: query
+          name: symbol
+          required: true
+          schema: { type: string, example: "TATAMOTORS.NS" }
+        - in: query
+          name: from
+          required: true
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          required: true
+          schema: { type: string, format: date-time }
+        - in: query
+          name: page
+          required: false
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: per_page
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - in: query
+          name: min_confidence
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 5 }
+        - in: query
+          name: event
+          required: false
+          description: CSV of event types
+          schema:
+            type: string
+            example: "results,regulatory"
+        - in: query
+          name: sort
+          required: false
+          schema:
+            type: string
+            enum: [impact_desc, published_desc, confirmed_desc]
+            default: impact_desc
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewsListResponse"
+
                 
 components:
   parameters:
@@ -2129,6 +2180,15 @@ components:
           type: string
           nullable: true
           description: e.g., "Appeared 12m before price spike"
+        source_primary:
+          type: string
+          description: Primary publisher for display (first source)
+          nullable: true
+        source_url:
+          type: string
+          format: uri
+          description: Primary URL for display (first source)
+          nullable: true        
 
     NewsListResponse:
       type: object

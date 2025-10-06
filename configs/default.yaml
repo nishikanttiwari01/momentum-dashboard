@@ -4,43 +4,40 @@ app:
   api_prefix: /api/v1
   timezone: Asia/Singapore
   backfill_on_start: true
-
 server:
   host: 0.0.0.0
   port: 8000
   cors_origins:
-    - http://localhost:5173
-
+  - http://localhost:5173
 logging:
   level: DEBUG
   file: ./logs/app.log
   max_bytes: 10485760
   backup_count: 5
-
 storage:
   sqlite_path: ./data/local.db
   parquet_root: ./backend/parquet
   compression: zstd
   use_dictionary: true
   write_statistics: true
-
 screener:
-  default_universe: NIFTY50 # or NIFTY50, NIFTY100, ALL
-
+  default_universe: NIFTY50
 scheduler:
   enabled: true
   interval_minutes: 5
   universe: null
   trading_window:
-    tz: "Asia/Kolkata"       # IANA timezone
-    # Python weekday numbers: Monday=0 … Sunday=6
-    days: [0, 1, 2, 3, 4]    # Mon–Fri
-    start: "09:15"           # inclusive
-    end: "15:30"             # exclusive 
-
+    tz: Asia/Kolkata
+    days:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    start: 09:15
+    end: '15:30'
 data:
   adapter: yahoo
-
 alerts:
   enabled: true
   timezone: Asia/Singapore
@@ -51,7 +48,7 @@ alerts:
   ntfy:
     server: https://ntfy.sh
     topic: momentum-alerts-nishi
-    token:
+    token: null
   rules:
     momentum_score_gte:
       threshold: 75
@@ -61,22 +58,20 @@ alerts:
   dedupe:
     window_minutes: 180
   email:
-    enabled: true                 # master switch
-    on_backfill_digest: true      # toggle just the backfill summary
+    enabled: true
+    on_backfill_digest: true
     include_trades: true
     smtp_host: smtp.gmail.com
     smtp_port: 587
     use_tls: true
     from_name: Momentum Suite
     username: nishikantworld@gmail.com
-    password: tzrtcknnvhfqrzly  # use a Gmail App Password
+    password: tzrtcknnvhfqrzly
     from_addr: nishikantworld@gmail.com
-    # supports list OR comma-separated string
     to_list:
-      - nishikantworld@gmail.com
-      - nishikant.tiwari01@gmail.com
-      - shashikantame@gmail.com 
-
+    - nishikantworld@gmail.com
+    - nishikant.tiwari01@gmail.com
+    - shashikantame@gmail.com
 rules:
   breakeven_gain_pct: 5.0
   atr_chand_mult: 2.0
@@ -95,199 +90,228 @@ rules:
     min_prox52w_pct: -10
     require_base_len_bars: 15
     breakout_overrides_soft_gates: true
-# ── UI feature toggle (merge under your existing `features:` if present)
 features:
   news:
     enabled: true
     ui:
-      default_range: trading_day          # trading_day | calendar_day
-      default_sort: impact_desc           # impact_desc | published_desc | confirmed_desc
-      min_confidence_default: 1           # 1..3 stars
+      default_range: trading_day
+      default_sort: impact_desc
+      min_confidence_default: 1
       show_sector_macro: true
-
-# ── News system (NEW top-level block)
 news:
-  # India trading context even if app runtime TZ is Asia/Singapore
-  trading_timezone: "Asia/Kolkata"
-
+  trading_timezone: Asia/Kolkata
   storage:
-    parquet_root: "data/parquet/news_clusters"   # daily partitions by IST publish date
-    duckdb_path:  "data/index/news.duckdb"       # fast symbol+time lookup
-    partition_format: "YYYY-MM-DD"
+    parquet_root: data/parquet/news_clusters
+    duckdb_path: data/index/news.duckdb
+    partition_format: YYYY-MM-DD
     retention_days: 365
-
-  ingest:                                        # how /news/ingest behaves
-    accept_local_only: true                      # bind API ingest to 127.0.0.1
-    require_token: false                         # set true if you want a bearer token
-    token_env: "NEWS_INGEST_TOKEN"
-    upsert_on_cluster_id: true                   # idempotent re-plays
-
-  # Free, high-signal sources + weights for consensus/confidence
+  ingest:
+    accept_local_only: true
+    require_token: false
+    token_env: NEWS_INGEST_TOKEN
+    upsert_on_cluster_id: true
   sources:
     official:
-      - name: "NSE Announcements"
-        type: "rss"
-        url: "https://www.nseindia.com/api/corporate-announcements?index=equities"
-        weight: 1.00
-      - name: "SEBI Press/Filings"
-        type: "rss"
-        url: "https://www.sebi.gov.in/sebiweb/rss/news.xml"
-        weight: 1.00
+    - name: NSE Announcements
+      type: rss
+      url: https://www.nseindia.com/api/corporate-announcements?index=equities
+      weight: 1.0
+    - name: SEBI Press/Filings
+      type: rss
+      url: https://www.sebi.gov.in/sebiweb/rss/news.xml
+      weight: 1.0
     media_sites:
-      - { domain: "moneycontrol.com",      weight: 0.90 }
-      - { domain: "livemint.com",          weight: 0.90 }
-      - { domain: "economictimes.com",     weight: 0.90 }
-      - { domain: "business-standard.com", weight: 0.90 }
-      - { domain: "financialexpress.com",  weight: 0.90 }
-      - { domain: "cnbctv18.com",          weight: 0.90 }
-      - { domain: "reuters.com",           weight: 0.95 }
+    - domain: moneycontrol.com
+      weight: 0.9
+    - domain: livemint.com
+      weight: 0.9
+    - domain: economictimes.com
+      weight: 0.9
+    - domain: business-standard.com
+      weight: 0.9
+    - domain: financialexpress.com
+      weight: 0.9
+    - domain: cnbctv18.com
+      weight: 0.9
+    - domain: reuters.com
+      weight: 0.95
     google_news:
       enabled: true
-      sites: ["moneycontrol.com","livemint.com","economictimes.com",
-              "business-standard.com","financialexpress.com","cnbctv18.com","reuters.com"]
-      query_template: "site:{site} ({symbol} OR {alias})"
+      sites:
+      - moneycontrol.com
+      - livemint.com
+      - economictimes.com
+      - business-standard.com
+      - financialexpress.com
+      - cnbctv18.com
+      - reuters.com
+      query_template: site:{site} ({symbol} OR {alias})
       max_per_site: 6
       lookback_minutes: 720
-
   extraction:
-    user_agent: "MomentumSuiteBot/1.0 (+local)"
-    connect_timeout_sec: 10
-    read_timeout_sec: 15
-    retries: 2
-    allow_languages: ["en"]
-    readabilize: true                             # readability/trafilatura-style parse
-    keep_paywalled_title_only: true               # store title+link, not body, if paywalled
-
-  mapping:                                        # map headlines → tickers
-    nse_master_csv: "config/nse_master.csv"       # symbol, isin, company_name, sector
-    aliases_csv:    "config/symbol_aliases.csv"   # symbol, alias
+    user_agent: MomentumSuiteBot/1.0 (+local)
+    connect_timeout_sec: 12
+    read_timeout_sec: 20
+    retries: 3
+    allow_languages:
+    - en
+    readabilize: true
+    keep_paywalled_title_only: true
+  mapping:
+    nse_master_csv: configs/nse_master.csv
+    aliases_csv: configs/symbol_aliases.csv
     prefer_isin_for_filings: true
-
-  clustering:                                     # dedupe/group similar headlines
-    method: "minhash"                             # minhash | simhash | embed
+  clustering:
+    method: minhash
     title_shingle_size: 3
-    minhash_threshold: 0.82                       # 0..1 (higher = stricter)
-    time_merge_window_min: 240                    # merge dupes within 4h
+    minhash_threshold: 0.82
+    time_merge_window_min: 240
     max_cards_per_symbol_per_day: 24
-
-  consensus:                                      # confidence from recency+citations
+  consensus:
     recency_decay:
       buckets:
-        - { max_min: 30,   factor: 1.00 }
-        - { max_min: 90,   factor: 0.80 }
-        - { max_min: 240,  factor: 0.50 }
-        - { max_min: 1440, factor: 0.30 }
+      - max_min: 30
+        factor: 1.0
+      - max_min: 90
+        factor: 0.8
+      - max_min: 240
+        factor: 0.5
+      - max_min: 1440
+        factor: 0.3
     citation_boost:
-      per_unique_publisher: 0.10
-      max_boost: 0.40
-    confidence_stars:                              # consensus → ★
-      strong_official_plus_media: { min_sources: 2, stars: 3 }
-      strong_media_only:          { min_sources: 3, stars: 3 }
-      medium:                     { min_sources: 2, stars: 2 }
-      low:                        { min_sources: 1, stars: 1 }
-
-  events:                                         # normalized tags + impact boosts
-    taxonomy: [results, order_win, pledge, rating_change, regulatory, court, mna, guidance, mgmt_change, macro, other]
+      per_unique_publisher: 0.1
+      max_boost: 0.4
+    confidence_stars:
+      strong_official_plus_media:
+        min_sources: 2
+        stars: 3
+      strong_media_only:
+        min_sources: 3
+        stars: 3
+      medium:
+        min_sources: 2
+        stars: 2
+      low:
+        min_sources: 1
+        stars: 1
+  events:
+    taxonomy:
+    - results
+    - order_win
+    - pledge
+    - rating_change
+    - regulatory
+    - court
+    - mna
+    - guidance
+    - mgmt_change
+    - macro
+    - other
     boosts:
-      results: 1.30
-      regulatory: 1.30
-      mna: 1.30
+      results: 1.3
+      regulatory: 1.3
+      mna: 1.3
       order_win: 1.15
       pledge: 1.15
-      rating_change: 1.10
-      guidance: 1.10
+      rating_change: 1.1
+      guidance: 1.1
       mgmt_change: 1.05
       macro: 1.05
-      other: 1.00
-
-  summarizer:                                     # local LLM (via Ollama)
-    engine: "ollama"
-    model:  "llama3"                              # or "mistral"
+      other: 1.0
+  summarizer:
+    engine: ollama
+    model: llama3
     max_tokens: 320
     timeout_sec: 30
     retries: 2
-    schema_validate: true                         # enforce bullets/why JSON schema
+    schema_validate: true
     adaptive_bullets:
       min: 2
       max: 5
-      extend_if: ["has_numbers","multi_source","complex_event"]
-
-  attribution:                                    # reason-for-move scoring
+      extend_if:
+      - has_numbers
+      - multi_source
+      - complex_event
+  attribution:
     lookback_min_default: 240
     thresholds:
-      likely:   0.65
+      likely: 0.65
       possible: 0.45
     text_match:
-      method: "bm25"                              # bm25 | cosine
+      method: bm25
       min_score: 0.35
-    correlation_band_min: -10                     # minutes (allow slightly after)
-    correlation_band_max: 120                     # minutes before spike considered
-    fallback_if_no_catalyst: "none"               # none | sector | macro
-
-  # ── Intraday selection (configurable cohorts; NO scheduler implied)
+    correlation_band_min: -10
+    correlation_band_max: 120
+    fallback_if_no_catalyst: none
   run_modes:
     intraday:
-      selection: "watchlist + top_movers + score_threshold"
-
+      selection: watchlist + top_movers + score_threshold
       cohorts:
         watchlist:
           include: true
           also_include_active_trades: true
           also_include_visible_symbols: true
-
         top_movers:
           include: true
-          from_latest_run: true                   # use the latest screener snapshot
+          from_latest_run: true
           top_gainers_count: 10
           top_losers_count: 10
-          min_abs_change_pct: 1.0                 # ignore tiny moves
+          min_abs_change_pct: 1.0
           change_window_min: 15
-
         score_threshold:
           include: true
-          score_type: "full"                      # full | basic
-          min_score: 70                           # set 60 or 70 as you like
+          score_type: full
+          min_score: 70
           max_symbols: 100
-
       fetch:
-        since: "10m"                              # intraday refresh window
-        symbol_cooldown_min: 20                   # don't refetch same symbol too soon
-        max_symbols_per_run: 250                  # hard cap per pull
+        since: 10m
+        symbol_cooldown_min: 20
+        max_symbols_per_run: 250
         max_items_per_symbol: 8
         prioritize_order:
-          - "is_active_trade"
-          - "is_top_mover"
-          - "score_desc"
-          - "abs_change_pct_desc"
-
+        - is_active_trade
+        - is_top_mover
+        - score_desc
+        - abs_change_pct_desc
       fallbacks:
-        if_no_latest_run: "use_last_successful_run"   # or "watchlist_only"
-        if_universe_too_large: "raise_thresholds"     # bump min_score / reduce counts
+        if_no_latest_run: use_last_successful_run
+        if_universe_too_large: raise_thresholds
         stale_minutes_ok: 30
-
-    backfill:                                     # T-day sweep when you choose
-      selection: "all_symbols"
-      window_days: 1                               # default = prior trading day
-      extend_buffer_min: 120
-      max_window_days: 30
-
-  backfill:                                       # optional T+1 alignment helpers
-    enabled_on_app_start: true                    # if your app supports backfill-on-start
-    watermark_file: "data/state/news_backfill.json"
-    holiday_calendar_file: "config/nse_holidays.yaml"
+    backfill:
+      anchor_hour_ist: 0
+      since_minutes: 1440
+  backfill:
+    enabled_on_app_start: true
+    watermark_file: data/state/news_backfill.json
+    holiday_calendar_file: config/nse_holidays.yaml
     retry_on_start_failure: true
-
-  on_demand:                                      # safety valves for manual sweeps
+  on_demand:
     max_symbols_per_run: 1200
     max_items_per_symbol: 50
-
-  # ── Trigger policy: chain after screener/Parquet run; still allow manual pulls
   trigger:
-    mode: "after_scan"                            # after_scan | independent
+    mode: after_scan
     require_fresh_scores: true
     max_scores_age_min: 20
     on_scan_success:
       run_intraday_news: true
-      use_run_id_from_scan: true                  # bind cohorts to that run
+      use_run_id_from_scan: true
   fallbacks:
-    if_no_fresh_scores: "manual_only"             # manual_only | use_last_successful_run
+    if_no_fresh_scores: manual_only
+  http_client:
+    headers:
+      User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
+        like Gecko) Chrome/120.0 Safari/537.36
+      Accept: application/json, text/xml, */*;q=0.8
+      Accept-Language: en-US,en;q=0.9
+      Referer: https://www.nseindia.com/
+    retry:
+      attempts: 3
+      backoff_sec: 2
+      status_forcelist:
+      - 401
+      - 403
+      - 429
+      - 500
+      - 502
+      - 503
+      - 504

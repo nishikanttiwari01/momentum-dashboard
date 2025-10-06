@@ -35,6 +35,7 @@ import type {
   GetInstrumentIndicatorsParams,
   GetInstrumentPricesParams,
   GetLearning200,
+  GetNewsListParams,
   GetTopMoversParams,
   GetWatchlist200,
   HealthState,
@@ -43,17 +44,22 @@ import type {
   ListHistoryParams,
   ListInstruments200,
   ListInstrumentsParams,
+  ListNewsBySymbolParams,
   ListRuns200,
   ListRunsParams,
   ListSnapshotPinsParams,
   ListUniverse200,
   ListUniverseParams,
+  NewsIngestBatch,
+  NewsListResponse,
+  NewsMoveAttributionResponse,
   PositionCreate,
   PositionOut,
   PositionUpdate,
   PreviewAlertDigest200,
   PriceCandle,
   Problem,
+  ReasonForMoveParams,
   RemoveFromWatchlistParams,
   RunDetail,
   RunId,
@@ -2114,6 +2120,248 @@ export const useGetLearning = <TData = Awaited<ReturnType<typeof getLearning>>, 
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
   const queryOptions = getGetLearningQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * @summary List news clusters for a symbol within a time window
+ */
+export const listNewsBySymbol = (
+    params: ListNewsBySymbolParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<NewsListResponse>> => {
+    
+    return axios.default.get(
+      `/api/v1/news`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getListNewsBySymbolQueryKey = (params: ListNewsBySymbolParams,) => {
+    return [`/api/v1/news`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getListNewsBySymbolQueryOptions = <TData = Awaited<ReturnType<typeof listNewsBySymbol>>, TError = AxiosError<unknown>>(params: ListNewsBySymbolParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNewsBySymbol>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListNewsBySymbolQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listNewsBySymbol>>> = ({ signal }) => listNewsBySymbol(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listNewsBySymbol>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListNewsBySymbolQueryResult = NonNullable<Awaited<ReturnType<typeof listNewsBySymbol>>>
+export type ListNewsBySymbolQueryError = AxiosError<unknown>
+
+/**
+ * @summary List news clusters for a symbol within a time window
+ */
+export const useListNewsBySymbol = <TData = Awaited<ReturnType<typeof listNewsBySymbol>>, TError = AxiosError<unknown>>(
+ params: ListNewsBySymbolParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listNewsBySymbol>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getListNewsBySymbolQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * @summary Likely catalyst(s) explaining a move at a given time
+ */
+export const reasonForMove = (
+    symbol: string,
+    params: ReasonForMoveParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<NewsMoveAttributionResponse>> => {
+    
+    return axios.default.get(
+      `/api/v1/moves/${symbol}/reason`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getReasonForMoveQueryKey = (symbol: string,
+    params: ReasonForMoveParams,) => {
+    return [`/api/v1/moves/${symbol}/reason`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getReasonForMoveQueryOptions = <TData = Awaited<ReturnType<typeof reasonForMove>>, TError = AxiosError<unknown>>(symbol: string,
+    params: ReasonForMoveParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof reasonForMove>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getReasonForMoveQueryKey(symbol,params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof reasonForMove>>> = ({ signal }) => reasonForMove(symbol,params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(symbol), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof reasonForMove>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ReasonForMoveQueryResult = NonNullable<Awaited<ReturnType<typeof reasonForMove>>>
+export type ReasonForMoveQueryError = AxiosError<unknown>
+
+/**
+ * @summary Likely catalyst(s) explaining a move at a given time
+ */
+export const useReasonForMove = <TData = Awaited<ReturnType<typeof reasonForMove>>, TError = AxiosError<unknown>>(
+ symbol: string,
+    params: ReasonForMoveParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof reasonForMove>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getReasonForMoveQueryOptions(symbol,params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * @summary Batch ingest of normalized news clusters + summaries
+ */
+export const ingestNews = (
+    newsIngestBatch: NewsIngestBatch, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<void>> => {
+    
+    return axios.default.post(
+      `/api/v1/news/ingest`,
+      newsIngestBatch,options
+    );
+  }
+
+
+
+export const getIngestNewsMutationOptions = <TError = AxiosError<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ingestNews>>, TError,{data: NewsIngestBatch}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationOptions<Awaited<ReturnType<typeof ingestNews>>, TError,{data: NewsIngestBatch}, TContext> => {
+const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof ingestNews>>, {data: NewsIngestBatch}> = (props) => {
+          const {data} = props ?? {};
+
+          return  ingestNews(data,axiosOptions)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type IngestNewsMutationResult = NonNullable<Awaited<ReturnType<typeof ingestNews>>>
+    export type IngestNewsMutationBody = NewsIngestBatch
+    export type IngestNewsMutationError = AxiosError<unknown>
+
+    /**
+ * @summary Batch ingest of normalized news clusters + summaries
+ */
+export const useIngestNews = <TError = AxiosError<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof ingestNews>>, TError,{data: NewsIngestBatch}, TContext>, axios?: AxiosRequestConfig}
+): UseMutationResult<
+        Awaited<ReturnType<typeof ingestNews>>,
+        TError,
+        {data: NewsIngestBatch},
+        TContext
+      > => {
+
+      const mutationOptions = getIngestNewsMutationOptions(options);
+
+      return useMutation(mutationOptions);
+    }
+    
+/**
+ * @summary List news for a symbol and time window
+ */
+export const getNewsList = (
+    params: GetNewsListParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<NewsListResponse>> => {
+    
+    return axios.default.get(
+      `/api/v1/news/list`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getGetNewsListQueryKey = (params: GetNewsListParams,) => {
+    return [`/api/v1/news/list`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getGetNewsListQueryOptions = <TData = Awaited<ReturnType<typeof getNewsList>>, TError = AxiosError<unknown>>(params: GetNewsListParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNewsList>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetNewsListQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getNewsList>>> = ({ signal }) => getNewsList(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getNewsList>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetNewsListQueryResult = NonNullable<Awaited<ReturnType<typeof getNewsList>>>
+export type GetNewsListQueryError = AxiosError<unknown>
+
+/**
+ * @summary List news for a symbol and time window
+ */
+export const useGetNewsList = <TData = Awaited<ReturnType<typeof getNewsList>>, TError = AxiosError<unknown>>(
+ params: GetNewsListParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNewsList>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getGetNewsListQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
