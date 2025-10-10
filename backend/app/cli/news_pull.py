@@ -7,12 +7,14 @@ import os
 import sys
 import subprocess
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, date, timezone
 from pathlib import Path
 from typing import Iterable, Optional, Tuple, List, Dict, Any
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Fast API models you generated from OpenAPI
 from app.schemas.generated.models import NewsIngestBatch
@@ -491,6 +493,139 @@ def _ingest_batch_via_api(api_base: str, batch: NewsIngestBatch) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# NEW: sharded execution helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _shard(seq: List[str], shard_size: Optional[int]) -> List[List[str]]:
+    if not shard_size or shard_size <= 0 or shard_size >= len(seq):
+        return [seq]
+    return [seq[i:i + shard_size] for i in range(0, len(seq), shard_size)]
+
+def _run_shards_parallel(
+    *,
+    api_base: str,
+    provider_cmd: str,
+    extra_env: Dict[str, str],
+    since_minutes: int,
+    at_datetime_iso: Optional[str],
+    symbols: List[str],
+    shard_size: Optional[int],
+    concurrency: int,
+) -> int:
+    """
+    Split symbols into shards and run provider_cmd for each shard concurrently.
+    Each shard is ingested independently.
+    Returns total clusters ingested across all shards.
+    """
+    shards = _shard(symbols, shard_size)
+    log.info("sharding.plan", extra={
+        "symbols_total": len(symbols),
+        "shards": len(shards),
+        "shard_size": (shard_size or len(symbols)),
+        "concurrency": int(max(1, concurrency)),
+        "run_id": _runid(),
+    })
+    total_items = 0
+    if len(shards) == 1:
+        # Single call (keeps previous behavior)
+        batch = _run_provider_cmd(
+            cmd=provider_cmd,
+            symbols=shards[0],
+            since_minutes=since_minutes,
+            at_datetime_iso=at_datetime_iso,
+            extra_env=extra_env,
+        )
+        _ingest_batch_via_api(api_base, batch)
+        return len(batch.items)
+
+    # Multi-shard concurrent run
+    work = []
+    t0_all = _timeit_start()
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+        for idx, chunk in enumerate(shards, start=1):
+            work.append(ex.submit(
+                _run_provider_cmd,
+                cmd=provider_cmd,
+                symbols=chunk,
+                since_minutes=since_minutes,
+                at_datetime_iso=at_datetime_iso,
+                extra_env=extra_env,
+            ))
+        for i, fut in enumerate(as_completed(work), start=1):
+            try:
+                batch: NewsIngestBatch = fut.result()
+                total_items += len(batch.items)
+                _ingest_batch_via_api(api_base, batch)
+                log.info("shard.ingested", extra={"i": i, "items": len(batch.items), "run_id": _runid()})
+            except Exception:
+                _log_exception("shard.failed", shard_index=i)
+                # continue other shards; fail at end if needed
+
+    log.info("sharding.complete", extra={"items_total": total_items, "ms": _timeit_done(t0_all), "run_id": _runid()})
+    return total_items
+
+
+def _run_internal_shards_parallel(
+    *,
+    api_base: str,
+    symbols: List[str],
+    shard_size: Optional[int],
+    concurrency: int,
+    since_minutes: int,
+    anchor_dt: datetime,
+) -> int:
+    """
+    Shard symbols and run the in-process provider concurrently.
+    Mirrors _run_shards_parallel but executes _build_batch directly.
+    """
+    derived_shard_size = shard_size
+    if (not derived_shard_size or derived_shard_size <= 0) and concurrency > 1 and symbols:
+        derived_shard_size = max(1, math.ceil(len(symbols) / min(len(symbols), concurrency)))
+
+    shards = _shard(symbols, derived_shard_size)
+    log.info(
+        "sharding.plan",
+        extra={
+            "symbols_total": len(symbols),
+            "shards": len(shards),
+            "shard_size": (derived_shard_size or len(symbols)),
+            "concurrency": int(max(1, concurrency)),
+            "mode": "internal",
+            "run_id": _runid(),
+        },
+    )
+
+    if len(shards) == 1:
+        batch = _build_batch(symbols=shards[0], since_minutes=since_minutes, anchor=anchor_dt)
+        _ingest_batch_via_api(api_base, batch)
+        return len(batch.items)
+
+    total_items = 0
+    t0_all = _timeit_start()
+    futures: Dict[Any, int] = {}
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+        for idx, chunk in enumerate(shards, start=1):
+            futures[ex.submit(_build_batch, chunk, since_minutes, anchor_dt)] = idx
+
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                batch: NewsIngestBatch = fut.result()
+                total_items += len(batch.items)
+                _ingest_batch_via_api(api_base, batch)
+                log.info("shard.ingested", extra={"i": idx, "items": len(batch.items), "mode": "internal", "run_id": _runid()})
+            except Exception:
+                _log_exception("shard.failed", shard_index=idx, mode="internal")
+
+    log.info(
+        "sharding.complete",
+        extra={"items_total": total_items, "ms": _timeit_done(t0_all), "mode": "internal", "run_id": _runid()},
+    )
+    return total_items
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Intraday & Backfill runners
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -508,6 +643,9 @@ def run_intraday(
     provider_cmd: str,
     extra_env: Dict[str, str],
     symbol_limit: Optional[int],
+    # NEW:
+    shard_size: Optional[int],
+    concurrency: int,
 ) -> None:
     log.info(
         "news.run_intraday_start",
@@ -519,6 +657,8 @@ def run_intraday(
             "score_min": score_min,
             "symbol_limit": symbol_limit,
             "provider_cmd": provider_cmd,
+            "concurrency": concurrency,
+            "shard_size": shard_size,
             "run_id": _runid(),
         },
     )
@@ -542,7 +682,6 @@ def run_intraday(
         return
 
     # ADDED: log the lookup window with a clear anchor (intraday uses 'now - since')
-    now_ist = None
     tz_cfg = (load_settings().news.trading_timezone or "Asia/Kolkata")
     tz_ist = _get_tz(tz_cfg)
     if tz_ist:
@@ -559,18 +698,21 @@ def run_intraday(
         f"[info] intraday selection: {len(symbols)} symbols (gainers={len(cohorts.top_gainers)}, "
         f"losers={len(cohorts.top_losers)}, high_score={len(cohorts.high_score)}, watchlist={len(cohorts.watchlist)})"
     )
-    t0 = _timeit_start()
-    batch = _run_provider_cmd(
-        cmd=provider_cmd,
-        symbols=symbols,
+
+    # NEW: run shards in parallel (or single-shot if no sharding)
+    total_items = _run_shards_parallel(
+        api_base=api_base,
+        provider_cmd=provider_cmd,
+        extra_env=extra_env,
         since_minutes=since_minutes,
         at_datetime_iso=None,
-        extra_env=extra_env,
+        symbols=symbols,
+        shard_size=shard_size,
+        concurrency=concurrency,
     )
-    log.info("news.run_intraday_provider_done", extra={"items": len(batch.items), "ms": _timeit_done(t0), "run_id": _runid()})
-    _ingest_batch_via_api(api_base, batch)
-    log.info("news.run_intraday_ingested", extra={"items": len(batch.items), "run_id": _runid()})
-    _stderr(f"[ok] ingested {len(batch.items)} news clusters")
+    log.info("news.run_intraday_ingested", extra={"items": total_items, "run_id": _runid()})
+    _stderr(f"[ok] ingested {total_items} news clusters")
+
 
 def run_backfill(
     *,
@@ -580,11 +722,14 @@ def run_backfill(
     extra_env: Dict[str, str],
     symbols_all_file: Optional[str],
     symbol_limit: Optional[int],
-    # ADDED: optional overrides
+    # ADDED earlier: optional overrides
     since_minutes_override: Optional[int] = None,
     anchor_hour_override: Optional[int] = None,
     anchor_tz_override: Optional[str] = None,
     rolling_24h: bool = False,
+    # NEW:
+    shard_size: Optional[int] = None,
+    concurrency: int = 1,
 ) -> None:
     """
     Backfill for a specific trading day (IST by default). You can pass a precomputed symbol list (file),
@@ -592,7 +737,13 @@ def run_backfill(
     """
     log.info(
         "news.run_backfill_start",
-        extra={"trading_day": trading_day.isoformat(), "provider_cmd_raw": provider_cmd, "run_id": _runid()},
+        extra={
+            "trading_day": trading_day.isoformat(),
+            "provider_cmd_raw": provider_cmd,
+            "concurrency": concurrency,
+            "shard_size": shard_size,
+            "run_id": _runid(),
+        },
     )
     settings = load_settings()
     if symbols_all_file:
@@ -628,15 +779,13 @@ def run_backfill(
         log.info("news.run_backfill_no_symbols", extra={"trading_day": trading_day.isoformat(), "run_id": _runid()})
         return
 
-    # ─── ADDED: configurable anchor and window ────────────────────────────────
+    # ─── configurable anchor and window (existing) ────────────────────────────
     tz_name = anchor_tz_override or (settings.news.trading_timezone or "Asia/Kolkata")
     tz = _get_tz(tz_name)
 
-    # Defaults (previous behavior): anchor 09:00 IST, since 1440
     default_anchor_hour = 9
     default_since = 1440
 
-    # Allow overrides from CLI or config.news.run_modes.backfill
     cfg_back = None
     try:
         cfg_back = (settings.news.run_modes or {}).get("backfill", {})
@@ -653,9 +802,6 @@ def run_backfill(
     since_minutes = int(since_minutes_override if since_minutes_override is not None else (cfg_since if cfg_since is not None else default_since))
 
     if rolling_24h:
-        # Anchor = trading_day 00:00 (tz), then extend since=1440 from "now"? We want last 24h relative to anchor.
-        # To reflect "rolling last 24h for that day" we set anchor to (trading_day end - 1440m).
-        # Simpler: anchor to (trading_day at 00:00 tz) and since=1440 → exact calendar day.
         anchor_hour = 0
         since_minutes = 1440
 
@@ -665,9 +811,7 @@ def run_backfill(
         anchor_dt = datetime(trading_day.year, trading_day.month, trading_day.day, anchor_hour, 0, 0)
 
     at_iso = anchor_dt.isoformat()
-    # Log clear window
     _log_window("backfill", anchor_dt, since_minutes, tz_name)
-    # Also log UTC window for debugging
     if anchor_dt.tzinfo:
         _log_window("backfill_utc", anchor_dt.astimezone(timezone.utc), since_minutes, "UTC")
 
@@ -683,47 +827,103 @@ def run_backfill(
         },
     )
     _stderr(f"[info] backfill {trading_day.isoformat()} for {len(symbols)} symbols (anchor {tz_name} {anchor_hour:02d}:00, since {since_minutes}m)")
+
     if provider_cmd_clean:
-        log.info(
-            "news.run_backfill_provider_exec",
-            extra={"trading_day": trading_day.isoformat(), "provider_cmd": provider_cmd_clean, "run_id": _runid()},
-        )
-        t0 = _timeit_start()
-        batch = _run_provider_cmd(
-            cmd=provider_cmd_clean,
-            symbols=symbols,
+        # NEW: parallel sharded path (or single-shot if no sharding)
+        total_items = _run_shards_parallel(
+            api_base=api_base,
+            provider_cmd=provider_cmd_clean,
+            extra_env=extra_env,
             since_minutes=since_minutes,
             at_datetime_iso=at_iso,
-            extra_env=extra_env,
+            symbols=symbols,
+            shard_size=shard_size,
+            concurrency=concurrency,
         )
         log.info(
             "news.run_backfill_provider_done",
             extra={
                 "trading_day": trading_day.isoformat(),
                 "provider_cmd": provider_cmd_clean,
-                "item_count": len(batch.items),
-                "ms": _timeit_done(t0),
+                "item_count": total_items,
                 "run_id": _runid(),
             },
         )
+        _stderr(f"[ok] ingested {total_items} news clusters for {trading_day.isoformat()}")
     else:
+        # Keep in-process provider, but allow sharded execution to leverage concurrency.
         log.info(
             "news.run_backfill_provider_internal",
             extra={"trading_day": trading_day.isoformat(), "since_minutes": since_minutes, "anchor": at_iso, "run_id": _runid()},
         )
+
+        derived_shard_size = shard_size
+        if (not derived_shard_size or derived_shard_size <= 0) and concurrency > 1 and len(symbols) > 1:
+            derived_shard_size = max(1, math.ceil(len(symbols) / min(len(symbols), concurrency)))
+        candidate_shards = _shard(symbols, derived_shard_size)
+        use_internal_sharding = len(candidate_shards) > 1
+
         t0 = _timeit_start()
-        batch = _build_batch(symbols=symbols, since_minutes=since_minutes, anchor=anchor_dt)
-        log.info(
-            "news.run_backfill_provider_internal_done",
-            extra={"trading_day": trading_day.isoformat(), "item_count": len(batch.items), "ms": _timeit_done(t0), "run_id": _runid()},
-        )
-        _stderr(f"[info] provider internal pipeline (since={since_minutes}m, anchor={at_iso})")
-    _ingest_batch_via_api(api_base, batch)
-    log.info(
-        "news.run_backfill_ingested",
-        extra={"trading_day": trading_day.isoformat(), "item_count": len(batch.items), "run_id": _runid()},
-    )
-    _stderr(f"[ok] ingested {len(batch.items)} news clusters for {trading_day.isoformat()}")
+        if use_internal_sharding:
+            _stderr(
+                f"[info] provider internal pipeline (sharded={len(candidate_shards)} since={since_minutes}m, anchor={at_iso})"
+            )
+            total_items = _run_internal_shards_parallel(
+                api_base=api_base,
+                symbols=symbols,
+                shard_size=derived_shard_size,
+                concurrency=concurrency,
+                since_minutes=since_minutes,
+                anchor_dt=anchor_dt,
+            )
+            ms_all = _timeit_done(t0)
+            log.info(
+                "news.run_backfill_provider_internal_done",
+                extra={
+                    "trading_day": trading_day.isoformat(),
+                    "item_count": total_items,
+                    "ms": ms_all,
+                    "mode": "multi",
+                    "shards": len(candidate_shards),
+                    "run_id": _runid(),
+                },
+            )
+            log.info(
+                "news.run_backfill_ingested",
+                extra={
+                    "trading_day": trading_day.isoformat(),
+                    "item_count": total_items,
+                    "mode": "internal_sharded",
+                    "run_id": _runid(),
+                },
+            )
+            _stderr(f"[ok] ingested {total_items} news clusters for {trading_day.isoformat()} (internal shards)")
+        else:
+            batch = _build_batch(symbols=symbols, since_minutes=since_minutes, anchor=anchor_dt)
+            ms_single = _timeit_done(t0)
+            log.info(
+                "news.run_backfill_provider_internal_done",
+                extra={
+                    "trading_day": trading_day.isoformat(),
+                    "item_count": len(batch.items),
+                    "ms": ms_single,
+                    "mode": "single",
+                    "run_id": _runid(),
+                },
+            )
+            _stderr(f"[info] provider internal pipeline (since={since_minutes}m, anchor={at_iso})")
+            _ingest_batch_via_api(api_base, batch)
+            log.info(
+                "news.run_backfill_ingested",
+                extra={
+                    "trading_day": trading_day.isoformat(),
+                    "item_count": len(batch.items),
+                    "mode": "internal_single",
+                    "run_id": _runid(),
+                },
+            )
+            _stderr(f"[ok] ingested {len(batch.items)} news clusters for {trading_day.isoformat()}")
+
 
 def _settings_defaults() -> Dict[str, Any]:
     s = load_settings()
@@ -750,6 +950,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     s = load_settings()
     api_base_default = f"http://{s.server.host}:{s.server.port}"
 
+    # NEW: env fallbacks for concurrency & sharding
+    env_conc = int(os.getenv("NEWS_CONCURRENCY", "1") or "1")
+    env_shard = os.getenv("NEWS_SHARD_SIZE")
+    env_shard_size = int(env_shard) if (env_shard and env_shard.isdigit()) else None
+
     parser = argparse.ArgumentParser(prog="news-pull", description="Pull intraday/backfill news and ingest to API.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -767,6 +972,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_intra.add_argument("--provider-cmd", default=os.getenv("NEWS_PROVIDER_CMD") or (s.features.get("news", {}) if isinstance(s.features, dict) else None),
                         help="External provider command that prints NewsIngestBatch JSON. You can also set NEWS_PROVIDER_CMD env.")
     p_intra.add_argument("--env", nargs="*", default=[], help="Inject env to provider as KEY=VALUE.")
+    # NEW:
+    p_intra.add_argument("--concurrency", type=int, default=env_conc, help="Parallel provider processes (default from NEWS_CONCURRENCY or 1).")
+    p_intra.add_argument("--shard-size", type=int, default=(env_shard_size if env_shard_size else 0),
+                         help="Symbols per provider call. 0/omitted = no sharding.")
 
     p_back = sub.add_parser("backfill", help="Backfill T-day news across all symbols.")
     p_back.add_argument("--api-base", default=api_base_default)
@@ -776,11 +985,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_back.add_argument("--env", nargs="*", default=[])
     p_back.add_argument("--symbols-file", help="Optional newline-delimited list of all symbols for backfill.")
     p_back.add_argument("--symbol-limit", type=int, default=None)
-    # ADDED: override knobs so you can run midnight anchor or rolling windows without touching code
+    # override knobs (existing)
     p_back.add_argument("--since", help="Override lookback window for backfill (e.g., 24h, 36h, 2880m). Default 1440m.", default=None)
     p_back.add_argument("--anchor-hour", type=int, help="Hour of anchor in trading TZ (0-23). Default 9 (IST).", default=None)
     p_back.add_argument("--anchor-tz", help="Trading timezone name (IANA). Default from settings.news.trading_timezone (Asia/Kolkata).", default=None)
     p_back.add_argument("--rolling-24h", action="store_true", help="Convenience: set anchor to 00:00 and since=1440 for that trading day.")
+    # NEW:
+    p_back.add_argument("--concurrency", type=int, default=env_conc, help="Parallel provider processes (default from NEWS_CONCURRENCY or 1).")
+    p_back.add_argument("--shard-size", type=int, default=(env_shard_size if env_shard_size else 0),
+                        help="Symbols per provider call. 0/omitted = no sharding.")
 
     args = parser.parse_args(argv)
 
@@ -794,6 +1007,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             extra_env[k] = v
     if extra_env:
         log.debug("cli.env_injected", extra={"keys": sorted(list(extra_env.keys())), "run_id": _runid()})
+
+    # Normalize concurrency/shardsize
+    conc = max(1, int(getattr(args, "concurrency", 1) or 1))
+    shard_size = int(getattr(args, "shard_size", 0) or 0)
+    shard_size = shard_size if shard_size > 0 else None
 
     if args.cmd == "intraday":
         if not args.provider_cmd:
@@ -814,6 +1032,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 provider_cmd=str(args.provider_cmd),
                 extra_env=extra_env,
                 symbol_limit=args.symbol_limit,
+                shard_size=shard_size,
+                concurrency=conc,
             )
             return 0
         except Exception:
@@ -844,6 +1064,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 anchor_hour_override=args.anchor_hour,
                 anchor_tz_override=args.anchor_tz,
                 rolling_24h=bool(args.rolling_24h),
+                shard_size=shard_size,
+                concurrency=conc,
             )
             return 0
         except Exception:

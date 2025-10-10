@@ -248,7 +248,6 @@ def _delete_intraday_partition(as_of: date) -> None:
             )
 
 
-
 def _trigger_util_exports(as_of: date) -> None:
     extra = {'date': as_of.isoformat()}
     try:
@@ -335,22 +334,86 @@ def main(argv: list[str] | None = None) -> int:
             wrote_new = (status == 201) or (rows_written > 0)
             if wrote_new:
                 provider_cmd_env = (os.getenv("NEWS_PROVIDER_CMD") or "").strip()
-                log.info("news_backfill_provider_resolved", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
                 provider_cmd = provider_cmd_env or None
+                log.info("news_backfill_provider_resolved", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
+
+                from app.cli.news_pull import run_backfill as run_news_backfill  # local import
+
+                news_concurrency = 1
+                conc_env = (os.getenv("NEWS_CONCURRENCY") or "").strip()
+                #conc_env = 20
+                log.info(
+                    "conc_env= %s", conc_env)
+                if conc_env:
+                    try:
+                        news_concurrency = int(conc_env)
+                    except ValueError:
+                        log.warning(
+                            "news_concurrency_invalid",
+                            extra={"date": d.isoformat(), "value": conc_env},
+                        )
+                        news_concurrency = 1
+                if news_concurrency < 1:
+                    news_concurrency = 1
+
+                shard_size: Optional[int] = None
+                shard_env = (os.getenv("NEWS_SHARD_SIZE") or "").strip()
+                #shard_env = 50
+                log.info(
+                    "shard_env= %s", shard_env)
+                if shard_env:
+                    try:
+                        parsed = int(shard_env)
+                        if parsed > 0:
+                            shard_size = parsed
+                    except ValueError:
+                        log.warning(
+                            "news_shard_size_invalid",
+                            extra={"date": d.isoformat(), "value": shard_env},
+                        )
+
+                symbols_file_env = (os.getenv("NEWS_SYMBOLS_FILE") or "").strip()
+                symbols_all_file = symbols_file_env or None
+
+                log.info(
+                    "news_backfill_begin",
+                    extra={
+                        "date": d.isoformat(),
+                        "provider_cmd": provider_cmd_env or "internal",
+                        "concurrency": news_concurrency,
+                        "shard_size": (shard_size or 0),
+                        "symbols_file": bool(symbols_all_file),
+                    },
+                )
+
                 try:
-                    log.info("news_backfill_begin", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
-                    from app.cli.news_pull import run_backfill as run_news_backfill  # local import
                     run_news_backfill(
                         api_base=API,
                         trading_day=d,
                         provider_cmd=provider_cmd,
                         extra_env={},
-                        symbols_all_file=None,
+                        symbols_all_file=symbols_all_file,
                         symbol_limit=None,
+                        shard_size=shard_size,
+                        concurrency=news_concurrency,
                     )
-                    log.info("news_backfill_ok", extra={"date": d.isoformat()})
+                    log.info(
+                        "news_backfill_ok",
+                        extra={
+                            "date": d.isoformat(),
+                            "mode": ("multi" if news_concurrency > 1 else "single"),
+                        },
+                    )
                 except Exception:
-                    log.exception("news_backfill_failed", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
+                    log.exception(
+                        "news_backfill_failed",
+                        extra={
+                            "date": d.isoformat(),
+                            "provider_cmd": provider_cmd_env or "internal",
+                        },
+                    )
+
+
             if _should_export_utilities(status, resp) and d not in exported_dates:
                 # Always wait briefly for daily snapshot visibility (commit marker or parquet)
                 _wait_for_daily_visible(d)
@@ -392,4 +455,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

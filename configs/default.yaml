@@ -21,7 +21,7 @@ storage:
   use_dictionary: true
   write_statistics: true
 screener:
-  default_universe: NIFTY50
+  default_universe: ALL #NIFTY50 ALL
 scheduler:
   enabled: true
   interval_minutes: 5
