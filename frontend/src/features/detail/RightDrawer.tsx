@@ -19,7 +19,7 @@ import {
   CircularProgress, // ⬅️ added
 } from '@mui/material';
 import type { DrawerDetail } from '@/lib/api/types';
-import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useNewsList } from '@/lib/hooks'; // ⬅️ added useNewsList
+import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks'; // ⬅️ updated to use infinite news hook
 import type { NewsCard } from '@/lib/api/types'; // ⬅️ uses your generated type index re-export
 import { drawerPaperSx } from './styles';
 
@@ -139,24 +139,79 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
     typeof qtyServer === 'number' ? String(qtyServer) : ''
   );
 
-  // Tabs state (0 = Overview, 1 = News)  ⬅️ added
+  // Tabs state (0 = Overview, 1 = News)
   const [tab, setTab] = React.useState<number>(0);
   const handleTab = (_e: any, v: number) => setTab(v);
 
-  // News hook (enabled only when News tab is active)  ⬅️ added
+  // News hook (enabled only when News tab is active)
+  const newsLookbackHours = React.useMemo(() => {
+    const raw = Number(d?.news_recent_hours ?? undefined);
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    return 168;
+  }, [d?.news_recent_hours]);
+
+  const newsRangeLabel = React.useMemo(() => {
+    if (!Number.isFinite(newsLookbackHours)) return '7 days';
+    if (newsLookbackHours % 24 === 0) {
+      const days = Math.round(newsLookbackHours / 24);
+      return days === 1 ? '24h' : `${days} days`;
+    }
+    return `${newsLookbackHours}h`;
+  }, [newsLookbackHours]);
+
   const toISO = React.useMemo(() => new Date().toISOString(), [sym, tab]);
-  const fromISO = React.useMemo(() => new Date(Date.now() - 24 * 3600 * 1000).toISOString(), [sym, tab]);
-  const {
-    data: newsResp,
-    isLoading: newsLoading,
-    isError: newsError,
-    refetch: refetchNews
-  } = useNewsList(
-    { symbol: sym, from: fromISO, to: toISO, page: 1, per_page: 50, sort: 'impact_desc' },
-    { staleTimeMs: 60_000, enabled: Boolean(sym) && tab === 1 }
+  const fromISO = React.useMemo(
+    () => new Date(Date.now() - newsLookbackHours * 3600 * 1000).toISOString(),
+    [sym, tab, newsLookbackHours]
   );
 
-  const newsItems = (newsResp?.items ?? []) as NewsCard[];
+  const newsParams = React.useMemo(() => {
+    if (!sym) return undefined;
+    return {
+      symbol: sym,
+      from: fromISO,
+      to: toISO,
+      sort: 'impact_desc',
+    } as const;
+  }, [sym, fromISO, toISO]);
+
+  const {
+    data: newsPages,
+    isLoading: newsLoading,
+    isError: newsError,
+    fetchNextPage: fetchMoreNews,
+    hasNextPage: hasMoreNews,
+    isFetchingNextPage: loadingMoreNews,
+    refetch: refetchNews,
+  } = useAllNewsInfinite(newsParams, {
+    perPage: 200,
+    staleTimeMs: 60_000,
+    enabled: Boolean(newsParams) && tab === 1,
+  });
+
+  const newsItems = React.useMemo(() => {
+    if (!newsPages?.pages) return [] as NewsCard[];
+    const seen = new Set<string>();
+    const out: NewsCard[] = [];
+    for (const page of newsPages.pages) {
+      for (const it of page.items ?? []) {
+        if (!seen.has(it.cluster_id)) {
+          seen.add(it.cluster_id);
+          out.push(it as NewsCard);
+        }
+      }
+    }
+    return out;
+  }, [newsPages]);
+
+  React.useEffect(() => {
+    if (tab !== 1) return;
+    if (newsItems.length > 0) return;
+    if (!hasMoreNews || loadingMoreNews) return;
+    fetchMoreNews();
+  }, [tab, newsItems.length, hasMoreNews, loadingMoreNews, fetchMoreNews]);
+
+  const isInitialNewsLoading = newsLoading || (loadingMoreNews && newsItems.length === 0);
 
   // ⛳ gate to ignore sync effect while unlocking/refetching
   const unlockingRef = React.useRef(false);
@@ -381,7 +436,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
         {/* NEWS tab: minimal, clean rendering */}
         {tab === 1 && (
           <React.Fragment>
-            {newsLoading ? (
+            {isInitialNewsLoading ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
                 <CircularProgress size={22} />
               </Box>
@@ -391,72 +446,85 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
               </Typography>
             ) : !newsItems.length ? (
               <Typography variant="body2" color="text.secondary">
-                No news in the last 24h.
+                No news in the last {newsRangeLabel}.
               </Typography>
             ) : (
-              <List disablePadding>
-                {newsItems.map((it, idx) => {
-                  const title = it.title;
-                  const srcText = it.source_primary || it.sources?.[0]?.publisher || '';
-                  const href = it.source_url || it.sources?.[0]?.url || '';
-                  const bullets = (it.bullets || []).slice(0, 3).map((b) => b.replace(/^•\s?/, ''));
+              <React.Fragment>
+                <List disablePadding>
+                  {newsItems.map((it, idx) => {
+                    const title = it.title;
+                    const srcText = it.source_primary || it.sources?.[0]?.publisher || '';
+                    const href = it.source_url || it.sources?.[0]?.url || '';
+                    const bullets = (it.bullets || []).slice(0, 3).map((b) => b.replace(/^•\s?/, ''));
 
-                  return (
-                    <React.Fragment key={it.cluster_id || `${idx}`}>
-                      <ListItem alignItems="flex-start" disableGutters sx={{ py: 1.25 }}>
-                        <ListItemText
-                          primary={
-                            <Typography variant="subtitle2" sx={{ lineHeight: 1.3 }}>
-                              {title}
-                            </Typography>
-                          }
-                          secondary={
-                            <Box sx={{ mt: 0.5 }}>
-                              {bullets.length ? (
-                                <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
-                                  {bullets.map((b, i) => (
-                                    <li key={i}>
-                                      <Typography variant="body2">{b}</Typography>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : null}
-                              {it.why ? (
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                  display="block"
-                                  sx={{ mt: 0.5 }}
-                                >
-                                  {it.why}
-                                </Typography>
-                              ) : null}
-                              {href ? (
-                                <Typography variant="caption" display="block" sx={{ mt: 0.75 }}>
-                                  Source:{' '}
-                                  <Link href={href} target="_blank" rel="noopener noreferrer" underline="hover">
-                                    {srcText || 'link'}
-                                  </Link>
-                                </Typography>
-                              ) : srcText ? (
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                  display="block"
-                                  sx={{ mt: 0.75 }}
-                                >
-                                  Source: {srcText}
-                                </Typography>
-                              ) : null}
-                            </Box>
-                          }
-                        />
-                      </ListItem>
-                      {idx < newsItems.length - 1 ? <Divider component="li" /> : null}
-                    </React.Fragment>
-                  );
-                })}
-              </List>
+                    return (
+                      <React.Fragment key={it.cluster_id || `${idx}`}>
+                        <ListItem alignItems="flex-start" disableGutters sx={{ py: 1.25 }}>
+                          <ListItemText
+                            primary={
+                              <Typography variant="subtitle2" sx={{ lineHeight: 1.3 }}>
+                                {title}
+                              </Typography>
+                            }
+                            secondary={
+                              <Box sx={{ mt: 0.5 }}>
+                                {bullets.length ? (
+                                  <ul style={{ margin: 0, paddingLeft: '1.1rem' }}>
+                                    {bullets.map((b, i) => (
+                                      <li key={i}>
+                                        <Typography variant="body2">{b}</Typography>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                                {it.why ? (
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    display="block"
+                                    sx={{ mt: 0.5 }}
+                                  >
+                                    {it.why}
+                                  </Typography>
+                                ) : null}
+                                {href ? (
+                                  <Typography variant="caption" display="block" sx={{ mt: 0.75 }}>
+                                    Source:{' '}
+                                    <Link href={href} target="_blank" rel="noopener noreferrer" underline="hover">
+                                      {srcText || 'link'}
+                                    </Link>
+                                  </Typography>
+                                ) : srcText ? (
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    display="block"
+                                    sx={{ mt: 0.75 }}
+                                  >
+                                    Source: {srcText}
+                                  </Typography>
+                                ) : null}
+                              </Box>
+                            }
+                          />
+                        </ListItem>
+                        {idx < newsItems.length - 1 ? <Divider component="li" /> : null}
+                      </React.Fragment>
+                    );
+                  })}
+                </List>
+                {loadingMoreNews ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                    <CircularProgress size={18} />
+                  </Box>
+                ) : hasMoreNews ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1 }}>
+                    <Button onClick={() => fetchMoreNews()} size="small" variant="outlined">
+                      Load more
+                    </Button>
+                  </Box>
+                ) : null}
+              </React.Fragment>
             )}
           </React.Fragment>
         )}

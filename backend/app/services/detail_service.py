@@ -34,6 +34,30 @@ def _rules_cfg():
     except Exception:
         return None
 
+def _right_drawer_news_hours() -> int:
+    default_hours = 168  # one week
+    settings = _settings()
+    if not settings:
+        return default_hours
+    try:
+        features = getattr(settings, "features", {}) or {}
+        if isinstance(features, dict):
+            news_cfg = features.get("news") or {}
+            if isinstance(news_cfg, dict):
+                ui_cfg = news_cfg.get("ui") or {}
+                if isinstance(ui_cfg, dict):
+                    hours = ui_cfg.get("right_drawer_hours") or ui_cfg.get("drawer_hours")
+                    if hours is not None:
+                        try:
+                            val = int(hours)
+                            if val > 0:
+                                return val
+                        except Exception:
+                            log.debug("detail.news_hours_invalid", extra={"value": hours})
+    except Exception:
+        log.exception("detail.news_hours_cfg_error")
+    return default_hours
+
 
 def _app_timezone_default() -> str:
     settings = _settings()
@@ -711,6 +735,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
         "next_action": next_action,
         "alerts": {"suggestions": []},
         "diagnostics": diagnostics,
+        "news_recent_hours": _right_drawer_news_hours(),
 
         # FE compatibility fields (kept)
         "run_id": rid_used or (run_id or ""),

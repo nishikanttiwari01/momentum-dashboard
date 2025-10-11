@@ -45,6 +45,8 @@ export interface DrawerDetail {
   method_pill?: string;
   /** @deprecated */
   name?: string;
+  /** Default lookback window (hours) for the right-drawer news tab. */
+  news_recent_hours?: number;
   next_action: DrawerNextAction;
   /**
    * Use header.pct_1d instead.

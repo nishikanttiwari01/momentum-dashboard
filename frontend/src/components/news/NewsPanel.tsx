@@ -20,6 +20,13 @@ export default function NewsPanel({
 }) {
   const toISO = new Date().toISOString();
   const fromISO = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+  const rangeLabel = React.useMemo(() => {
+    if (hours % 24 === 0) {
+      const days = Math.round(hours / 24);
+      return days === 1 ? "24h" : `${days} days`;
+    }
+    return `${hours}h`;
+  }, [hours]);
 
   const { data, isLoading, isError } = useNewsList({
     symbol,
@@ -49,7 +56,7 @@ export default function NewsPanel({
   if (!items.length) {
     return (
       <Typography variant="body2" color="text.secondary">
-        No news in the last {hours}h.
+        No news in the last {rangeLabel}.
       </Typography>
     );
   }

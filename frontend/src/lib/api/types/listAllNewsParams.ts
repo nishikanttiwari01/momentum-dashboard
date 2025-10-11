@@ -10,6 +10,10 @@ import type { ListAllNewsSort } from './listAllNewsSort';
 
 export type ListAllNewsParams = {
 /**
+ * Optional symbol filter (e.g., RELIANCE.NS)
+ */
+symbol?: string;
+/**
  * Trading date (YYYY-MM-DD) in IST; ignored if explicit from/to provided
  */
 on?: string;

@@ -244,6 +244,7 @@ def ingest_news(batch: NewsIngestBatch = Body(...)) -> dict:
     summary="List news across all symbols for a trading window",
 )
 def list_all_news_endpoint(
+    symbol: Optional[str] = Query(None, description="Optional symbol filter (e.g., RELIANCE.NS)"),
     on: Optional[date] = Query(None),
     align: Literal["trading_day", "calendar_day"] = Query("trading_day"),
     from_: Optional[datetime] = Query(None, alias="from"),
@@ -267,6 +268,7 @@ def list_all_news_endpoint(
     t0 = _t0()
     try:
         items, next_page = list_all_news(
+            symbol=symbol,
             from_dt=from_dt,
             to_dt=to_dt,
             page=page,
@@ -277,7 +279,7 @@ def list_all_news_endpoint(
         )
         log.info(
             "news.api.list_all_response",
-            extra={"items": len(items), "next_page": next_page, "ms": _ms(t0), "run_id": _runid()},
+            extra={"symbol": symbol or "*", "items": len(items), "next_page": next_page, "ms": _ms(t0), "run_id": _runid()},
         )
         return NewsWindowListResponse(
             window=Window(**{"from": from_dt, "to": to_dt}),
@@ -293,6 +295,7 @@ def list_all_news_endpoint(
     except Exception:
         _exc(
             "news.api.list_all_exception",
+            symbol=symbol,
             on=(on.isoformat() if on else None),
             align=align,
             page=page,

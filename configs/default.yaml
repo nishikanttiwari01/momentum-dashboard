@@ -98,6 +98,7 @@ features:
       default_sort: impact_desc
       min_confidence_default: 1
       show_sector_macro: true
+      right_drawer_hours: 168
 news:
   trading_timezone: Asia/Kolkata
   storage:

@@ -162,6 +162,7 @@ def list_news_for_symbol(
 
 
 def list_all_news(
+    symbol: Optional[str],
     from_dt: datetime,
     to_dt: datetime,
     page: int,
@@ -187,7 +188,7 @@ def list_all_news(
     try:
         ensure_news_storage_ready()
         items, next_page = repo_list_news(
-            symbol=None,
+            symbol=symbol,
             from_dt=from_dt,
             to_dt=to_dt,
             page=page,
@@ -199,6 +200,7 @@ def list_all_news(
         log.info(
             "news.service.list_all_complete",
             extra={
+                "symbol": symbol or "*",
                 "items": len(items),
                 "next_page": next_page,
                 "ms": _ms(t0),
@@ -206,11 +208,12 @@ def list_all_news(
             },
         )
         if next_page is None:
-            log.debug("news.service.list_all_no_more_pages", extra={"run_id": _runid()})
+            log.debug("news.service.list_all_no_more_pages", extra={"symbol": symbol or "*", "run_id": _runid()})
         return items, next_page
     except Exception:
         _exc(
             "news.service.list_all_exception",
+            symbol=symbol or "*",
             page=page,
             per_page=per_page,
             sort=sort,

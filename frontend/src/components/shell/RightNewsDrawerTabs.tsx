@@ -22,7 +22,7 @@ export default function RightNewsDrawerTabs({
   open,
   onClose,
   symbol,
-  hours = 24,
+  hours = 168,
   width = 420,
 }: RightNewsDrawerTabsProps) {
   const [tab, setTab] = React.useState(0);

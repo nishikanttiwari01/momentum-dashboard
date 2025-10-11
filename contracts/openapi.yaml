@@ -998,6 +998,12 @@ paths:
         Provide either `on` (with optional `align`) or an explicit `from`/`to` window.
       parameters:
         - in: query
+          name: symbol
+          required: false
+          description: Optional symbol filter (e.g., RELIANCE.NS)
+          schema:
+            type: string
+        - in: query
           name: on
           required: false
           description: Trading date (YYYY-MM-DD) in IST; ignored if explicit from/to provided
@@ -1795,6 +1801,10 @@ components:
           $ref: '#/components/schemas/DrawerAlerts'
         diagnostics:
           $ref: '#/components/schemas/DrawerDiagnostics'
+        news_recent_hours:
+          type: integer
+          description: Default lookback window (hours) for the right-drawer news tab.
+          example: 168
 
         # -------- Backward-compatibility aliases (deprecated) --------
         run_id:
