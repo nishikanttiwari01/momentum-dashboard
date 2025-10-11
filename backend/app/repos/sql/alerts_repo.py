@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, date, timezone
-from typing import Optional, Dict, Any, Iterable
+from typing import Optional, Dict, Any, Iterable, Tuple, TYPE_CHECKING
 
 from sqlalchemy import (
     Column, Integer, String, DateTime, Date, JSON, Index, UniqueConstraint, func, select
@@ -10,6 +10,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session, declarative_base
 
 from app.repos.interfaces.base import AlertRuleVO
+
+if TYPE_CHECKING:
+    from app.repos.models import Alert
 
 # Prefer shared Base if available; fallback to a local Base for migrations/tests.
 try:
@@ -73,6 +76,86 @@ class AlertsRepo:
     def __init__(self, session: Session):
         self.s = session
 
+    # --- Combined views (rules + state) ---
+    def list_alert_states(self) -> list[Dict[str, Any]]:
+        from app.repos.models import Alert  # local import to avoid circular dependency
+
+        alert_rows: Iterable[Alert] = self.s.query(Alert).all()
+        alert_map: Dict[Tuple[str, str], Alert] = {
+            (row.symbol.upper(), row.rule_type): row for row in alert_rows
+        }
+
+        response: list[Dict[str, Any]] = []
+        seen: set[Tuple[str, str]] = set()
+
+        state_rows: Iterable[AlertStateORM] = self.s.query(AlertStateORM).all()
+        for state in state_rows:
+            key = (state.symbol.upper(), state.rule_code)
+            seen.add(key)
+            response.append(self._build_state_payload(alert_row=alert_map.get(key), state_row=state))
+
+        for key, alert_row in alert_map.items():
+            if key in seen:
+                continue
+            response.append(self._build_state_payload(alert_row=alert_row, state_row=None))
+
+        return response
+
+    def _build_state_payload(
+        self,
+        *,
+        alert_row: Optional["Alert"],
+        state_row: Optional[AlertStateORM],
+    ) -> Dict[str, Any]:
+        symbol = (
+            (alert_row.symbol if alert_row else state_row.symbol) if (alert_row or state_row) else ""
+        ).upper()
+        rule_type = (
+            alert_row.rule_type
+            if alert_row is not None
+            else (state_row.rule_code if state_row is not None else "")
+        )
+
+        channels = list(alert_row.channels or []) if alert_row and alert_row.channels else []
+        enabled = bool(alert_row.enabled) if alert_row is not None else True
+        rule_value = (
+            alert_row.rule_value
+            if alert_row is not None
+            else (str(state_row.last_score) if state_row and state_row.last_score is not None else None)
+        )
+
+        conditions: Dict[str, Any] | None = None
+        if state_row is not None:
+            conditions = {
+                "code": state_row.rule_code,
+                "last_score": state_row.last_score,
+                "last_fired_run_id": state_row.last_fired_run_id,
+            }
+            if state_row.last_fired_local_date:
+                conditions["last_fired_local_date"] = state_row.last_fired_local_date.isoformat()
+            conditions = {k: v for k, v in conditions.items() if v not in (None, "", [])} or None
+
+        rule_payload: Dict[str, Any] = {
+            "symbol": symbol,
+            "rule_type": rule_type,
+            "rule_value": rule_value,
+            "channels": channels,
+            "enabled": enabled,
+        }
+        if conditions:
+            rule_payload["conditions"] = conditions
+
+        payload: Dict[str, Any] = {
+            "id": state_row.id if state_row is not None else (alert_row.id if alert_row else None),
+            "rule": rule_payload,
+            "last_fired_at": state_row.last_fired_at_utc if state_row else None,
+            "muted_until": None,
+            "last_score": state_row.last_score if state_row else None,
+            "last_fired_local_date": state_row.last_fired_local_date if state_row else None,
+            "last_fired_run_id": state_row.last_fired_run_id if state_row else None,
+        }
+        return payload
+
     # --- Rules ---
     def list_alerts(self) -> list[AlertRuleVO]:
         from app.repos.models import Alert  # local import to avoid circular dependency
@@ -104,6 +187,27 @@ class AlertsRepo:
         if not row:
             raise ValueError(f'Alert with id={alert_id} not found')
         row.enabled = bool(enabled)
+
+    def serialize_alert_rule(self, rule: AlertRuleVO) -> Dict[str, Any]:
+        """
+        Convert a saved AlertRuleVO into the AlertState-shaped payload returned by the API.
+        """
+        from app.repos.models import Alert  # local import
+
+        alert_row = None
+        if rule.id is not None:
+            alert_row = self.s.query(Alert).filter(Alert.id == rule.id).one_or_none()
+
+        state_row = (
+            self.s.query(AlertStateORM)
+            .filter(
+                AlertStateORM.symbol == rule.symbol.upper(),
+                AlertStateORM.rule_code == rule.rule_type,
+            )
+            .one_or_none()
+        )
+
+        return self._build_state_payload(alert_row=alert_row, state_row=state_row)
 
     @staticmethod
     def _to_vo(row: 'Alert') -> AlertRuleVO:  # type: ignore[name-defined]

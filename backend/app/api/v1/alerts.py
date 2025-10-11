@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from app.schemas.alerts import AlertRuleCreate, AlertRuleOut
+from app.schemas.alerts import AlertRuleCreate, AlertStateOut
 from app.core.db import get_sessionmaker
 from app.repos.unit_of_work import SqliteUnitOfWork
 from app.repos.interfaces.base import AlertRuleVO
@@ -17,14 +17,14 @@ def get_uow() -> SqliteUnitOfWork:
     return SqliteUnitOfWork(get_sessionmaker())
 
 
-@router.get("/alerts", response_model=List[AlertRuleOut])
+@router.get("/alerts", response_model=List[AlertStateOut])
 def list_alerts(uow: SqliteUnitOfWork = Depends(get_uow)):
     with uow:
-        return uow.alerts.list_alerts()
+        return uow.alerts.list_alert_states()
 
 
 # Create: 201 on real create, but return 200 for header-only idempotency pings (rule is None)
-@router.post("/alerts", response_model=AlertRuleOut | dict, status_code=status.HTTP_201_CREATED)
+@router.post("/alerts", response_model=AlertStateOut | dict, status_code=status.HTTP_201_CREATED)
 def create_alert(
     rule: Optional[AlertRuleCreate] = None,
     uow: SqliteUnitOfWork = Depends(get_uow),
@@ -49,4 +49,5 @@ def create_alert(
     )
     with uow:
         saved = uow.alerts.create_alert(vo)
-        return saved
+        payload = uow.alerts.serialize_alert_rule(saved)
+        return payload

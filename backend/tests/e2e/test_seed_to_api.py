@@ -53,7 +53,7 @@ def test_seed_to_api_edge_isolated(tmp_path: Path, monkeypatch):
     # 6) Read via API edge
     r = client.get("/api/v1/alerts")
     assert r.status_code == 200, r.text
-    symbols = {a["symbol"] for a in r.json()}
+    symbols = {a["rule"]["symbol"] for a in r.json()}
     assert "RELIANCE" in symbols
 
     # 7) Write via API edge and verify round-trip
@@ -65,6 +65,7 @@ def test_seed_to_api_edge_isolated(tmp_path: Path, monkeypatch):
         "enabled": True
     })
     assert r2.status_code in (200, 201), r2.text
+    assert r2.json()["rule"]["symbol"] == "INFY"
 
     r3 = client.get("/api/v1/alerts")
-    assert any(a["symbol"] == "INFY" for a in r3.json())
+    assert any(a["rule"]["symbol"] == "INFY" for a in r3.json())

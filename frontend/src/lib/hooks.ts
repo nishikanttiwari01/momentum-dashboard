@@ -96,14 +96,21 @@ export type AlertChannelFlags = Record<string, boolean>;
 export type AlertListItem = {
   id: number | null;
   symbol: string;
+  ruleCode: string;
+  ruleValue: string | null;
   label: string;
   description: string | null;
   details: string[];
   channels: string[];
   channelFlags: AlertChannelFlags;
   enabled: boolean;
+  lastScore: number | null;
   lastFiredAt: string | null;
+  lastFiredLocalDate: string | null;
+  lastFiredRunId: string | null;
   mutedUntil: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
   raw: RawAlert;
 };
 
@@ -116,14 +123,13 @@ export function useAlerts(opts?: { staleTimeMs?: number; enabled?: boolean }) {
         return payload.map((item) => normalizeAlertRecord(item));
       },
       staleTime: staleTimeMs,
+      refetchOnMount: 'always',
       refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
       enabled,
     },
   });
 }
-
-const ALERT_LABEL_KEYS = ['label', 'name', 'title'] as const;
-const ALERT_SKIP_DETAIL_KEYS = new Set(['label', 'name', 'title', 'code']);
 
 function normalizeAlertRecord(input: unknown): AlertListItem {
   const source = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
@@ -131,28 +137,44 @@ function normalizeAlertRecord(input: unknown): AlertListItem {
     source['rule'] && typeof source['rule'] === 'object'
       ? (source['rule'] as Record<string, unknown>)
       : null;
-  const rule = ruleCandidate && Object.keys(ruleCandidate).length > 0 ? ruleCandidate : source;
-
-  const symbolValue = rule['symbol'] ?? source['symbol'] ?? '';
-  const symbol = typeof symbolValue === 'string' ? symbolValue.toUpperCase() : '';
-
-  const enabledValue = rule['enabled'] ?? source['enabled'];
-  const enabled = enabledValue === undefined ? true : Boolean(enabledValue);
-
-  const ruleChannels = rule['channels'] ?? source['channels'];
-  const { channelFlags, channels } = normalizeAlertChannels(ruleChannels);
+  const rule = ruleCandidate && Object.keys(ruleCandidate).length > 0 ? ruleCandidate : null;
 
   const ruleConditions =
-    rule['conditions'] && typeof rule['conditions'] === 'object'
+    rule && rule['conditions'] && typeof rule['conditions'] === 'object'
       ? (rule['conditions'] as Record<string, unknown>)
       : null;
 
-  const ruleType = rule['rule_type'] ?? source['rule_type'];
-  const ruleCode = rule['rule_code'] ?? source['rule_code'];
-  const label = deriveAlertLabel(ruleConditions, ruleType, ruleCode) || 'Alert';
+  const symbolValue = (rule?.['symbol'] ?? source['symbol'] ?? '').toString();
+  const symbol = symbolValue.toUpperCase();
 
-  const details = buildAlertDetails(ruleConditions, rule, source);
-  const description = details.length > 0 ? details.join(' | ') : null;
+  const ruleType = rule?.['rule_type'] ?? rule?.['ruleType'] ?? '';
+  const ruleCodeValue =
+    source['rule_code'] ??
+    source['ruleCode'] ??
+    ruleConditions?.['code'] ??
+    ruleType ??
+    '';
+  const ruleCode = typeof ruleCodeValue === 'string' ? ruleCodeValue : String(ruleCodeValue ?? '');
+
+  const ruleValueRaw = rule?.['rule_value'] ?? rule?.['ruleValue'] ?? null;
+  const ruleValue =
+    ruleValueRaw == null || ruleValueRaw === ''
+      ? null
+      : typeof ruleValueRaw === 'string'
+      ? ruleValueRaw
+      : String(ruleValueRaw);
+
+  const enabledValue = rule?.['enabled'] ?? source['enabled'];
+  const enabled = enabledValue === undefined ? true : Boolean(enabledValue);
+
+  const { channelFlags, channels } = normalizeAlertChannels(
+    rule?.['channels'] ?? source['channels']
+  );
+
+  const lastScore =
+    toNumberLike(source['last_score']) ??
+    toNumberLike(source['lastScore']) ??
+    toNumberLike(ruleConditions?.['last_score']);
 
   const lastFiredAt = extractDateString(source, [
     'last_fired_at',
@@ -160,21 +182,59 @@ function normalizeAlertRecord(input: unknown): AlertListItem {
     'lastFiredAt',
     'lastFiredAtUtc',
   ]);
+  const lastFiredLocalDate = extractDateString(source, [
+    'last_fired_local_date',
+    'lastFiredLocalDate',
+  ]);
+  const lastFiredRunIdRaw =
+    ruleConditions?.['last_fired_run_id'] ?? source['last_fired_run_id'] ?? source['lastFiredRunId'];
+  const lastFiredRunId =
+    lastFiredRunIdRaw == null || lastFiredRunIdRaw === ''
+      ? null
+      : typeof lastFiredRunIdRaw === 'string'
+      ? lastFiredRunIdRaw
+      : String(lastFiredRunIdRaw);
+
   const mutedUntil = extractDateString(source, ['muted_until', 'mutedUntil']);
 
-  const id = toNumberLike(source['id'] ?? rule['id']);
+  const details: string[] = [];
+  if (ruleValue) details.push(`Value: ${ruleValue}`);
+  if (lastScore !== null) details.push(`Score: ${lastScore}`);
+  if (lastFiredRunId) details.push(`Run: ${lastFiredRunId}`);
+
+  if (ruleConditions) {
+    Object.entries(ruleConditions).forEach(([key, value]) => {
+      if (['code', 'last_score', 'last_fired_run_id', 'last_fired_local_date'].includes(key)) return;
+      const formatted = formatDetail(humanizeKey(key), value);
+      if (formatted) {
+        details.push(formatted);
+      }
+    });
+  }
+
+  const description = details.length > 0 ? details.join(' | ') : null;
+
+  const id = toNumberLike(source['id'] ?? rule?.['id']);
+  const label = ruleValue || humanizeKey(ruleCode) || 'Alert';
 
   return {
     id,
     symbol,
+    ruleCode,
+    ruleValue,
     label,
     description,
     details,
     channels,
     channelFlags,
     enabled,
+    lastScore,
     lastFiredAt,
+    lastFiredLocalDate,
+    lastFiredRunId,
     mutedUntil,
+    createdAt: null,
+    updatedAt: null,
     raw: (input ?? {}) as RawAlert,
   };
 }
@@ -200,9 +260,7 @@ function normalizeAlertChannels(input: unknown): {
     });
   } else if (typeof input === 'string') {
     const normalized = input.trim().toLowerCase();
-    if (normalized) {
-      flags[normalized] = true;
-    }
+    if (normalized) flags[normalized] = true;
   }
 
   const channels = Object.entries(flags)
@@ -211,64 +269,6 @@ function normalizeAlertChannels(input: unknown): {
     .sort((a, b) => a.localeCompare(b));
 
   return { channelFlags: flags, channels };
-}
-
-function deriveAlertLabel(
-  conditions: Record<string, unknown> | null,
-  ruleType: unknown,
-  ruleCode: unknown
-): string {
-  if (conditions) {
-    for (const key of ALERT_LABEL_KEYS) {
-      const value = conditions[key];
-      if (typeof value === 'string' && value.trim()) {
-        return value.trim();
-      }
-    }
-    const code = conditions['code'];
-    if (typeof code === 'string' && code.trim()) {
-      return humanizeKey(code);
-    }
-  }
-
-  if (typeof ruleType === 'string' && ruleType.trim()) {
-    return humanizeKey(ruleType);
-  }
-
-  if (typeof ruleCode === 'string' && ruleCode.trim()) {
-    return humanizeKey(ruleCode);
-  }
-
-  return 'Alert';
-}
-
-function buildAlertDetails(
-  conditions: Record<string, unknown> | null,
-  rule: Record<string, unknown>,
-  source: Record<string, unknown>
-): string[] {
-  const detailSet = new Set<string>();
-  const addDetail = (label: string, value: unknown) => {
-    const formatted = formatDetail(label, value);
-    if (formatted) {
-      detailSet.add(formatted);
-    }
-  };
-
-  if (conditions) {
-    Object.entries(conditions).forEach(([key, value]) => {
-      if (ALERT_SKIP_DETAIL_KEYS.has(key)) return;
-      addDetail(humanizeKey(key), value);
-    });
-  }
-
-  addDetail('Value', rule['rule_value']);
-  addDetail('Value', rule['value']);
-  addDetail('Value', source['rule_value']);
-  addDetail('Threshold', rule['threshold'] ?? source['threshold']);
-  addDetail('Window', rule['window'] ?? source['window']);
-
-  return Array.from(detailSet);
 }
 
 function formatDetail(label: string, value: unknown): string | null {
@@ -419,9 +419,9 @@ export function usePosition(symbol: string, opts?: { enabled?: boolean }) {
     enabled,
     staleTime: 60_000,
     refetchOnWindowFocus: true,
-    queryFn: async (): Promise<PositionOut | undefined> => {
+    queryFn: async (): Promise<PositionOut | null> => {
       const res = await fetch(`/api/v1/positions/${encodeURIComponent(symbol)}`);
-      if (res.status === 404) return undefined; // no saved position yet
+      if (res.status === 404) return null; // no saved position yet
       if (!res.ok) throw new Error(`Failed to load position: ${res.status}`);
       return res.json();
     },
@@ -474,3 +474,5 @@ export function useUnlockPosition() {
 export function invalidatePositionQueryKey(symbol: string) {
   return ['position', symbol] as const;
 }
+
+
