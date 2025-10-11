@@ -6,11 +6,11 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type GetNewsListSort = typeof GetNewsListSort[keyof typeof GetNewsListSort];
+export type ListAllNewsSort = typeof ListAllNewsSort[keyof typeof ListAllNewsSort];
 
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
-export const GetNewsListSort = {
+export const ListAllNewsSort = {
   impact_desc: 'impact_desc',
   published_desc: 'published_desc',
   confirmed_desc: 'confirmed_desc',

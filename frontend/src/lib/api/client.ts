@@ -35,12 +35,12 @@ import type {
   GetInstrumentIndicatorsParams,
   GetInstrumentPricesParams,
   GetLearning200,
-  GetNewsListParams,
   GetTopMoversParams,
   GetWatchlist200,
   HealthState,
   HistoryRow,
   IndicatorPoint,
+  ListAllNewsParams,
   ListHistoryParams,
   ListInstruments200,
   ListInstrumentsParams,
@@ -53,6 +53,7 @@ import type {
   NewsIngestBatch,
   NewsListResponse,
   NewsMoveAttributionResponse,
+  NewsWindowListResponse,
   PositionCreate,
   PositionOut,
   PositionUpdate,
@@ -2313,11 +2314,13 @@ export const useIngestNews = <TError = AxiosError<unknown>,
     }
     
 /**
- * @summary List news for a symbol and time window
+ * Returns paginated news clusters grouped by trading window without applying a symbol filter. Provide either `on` (with optional `align`) or an explicit `from`/`to` window.
+
+ * @summary List news across all symbols for a trading window
  */
-export const getNewsList = (
-    params: GetNewsListParams, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<NewsListResponse>> => {
+export const listAllNews = (
+    params?: ListAllNewsParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<NewsWindowListResponse>> => {
     
     return axios.default.get(
       `/api/v1/news/list`,{
@@ -2327,41 +2330,41 @@ export const getNewsList = (
   }
 
 
-export const getGetNewsListQueryKey = (params: GetNewsListParams,) => {
+export const getListAllNewsQueryKey = (params?: ListAllNewsParams,) => {
     return [`/api/v1/news/list`, ...(params ? [params]: [])] as const;
     }
 
     
-export const getGetNewsListQueryOptions = <TData = Awaited<ReturnType<typeof getNewsList>>, TError = AxiosError<unknown>>(params: GetNewsListParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNewsList>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListAllNewsQueryOptions = <TData = Awaited<ReturnType<typeof listAllNews>>, TError = AxiosError<unknown>>(params?: ListAllNewsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAllNews>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetNewsListQueryKey(params);
+  const queryKey =  queryOptions?.queryKey ?? getListAllNewsQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getNewsList>>> = ({ signal }) => getNewsList(params, { signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAllNews>>> = ({ signal }) => listAllNews(params, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getNewsList>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAllNews>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type GetNewsListQueryResult = NonNullable<Awaited<ReturnType<typeof getNewsList>>>
-export type GetNewsListQueryError = AxiosError<unknown>
+export type ListAllNewsQueryResult = NonNullable<Awaited<ReturnType<typeof listAllNews>>>
+export type ListAllNewsQueryError = AxiosError<unknown>
 
 /**
- * @summary List news for a symbol and time window
+ * @summary List news across all symbols for a trading window
  */
-export const useGetNewsList = <TData = Awaited<ReturnType<typeof getNewsList>>, TError = AxiosError<unknown>>(
- params: GetNewsListParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getNewsList>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const useListAllNews = <TData = Awaited<ReturnType<typeof listAllNews>>, TError = AxiosError<unknown>>(
+ params?: ListAllNewsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAllNews>>, TError, TData>>, axios?: AxiosRequestConfig}
 
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
-  const queryOptions = getGetNewsListQueryOptions(params,options)
+  const queryOptions = getListAllNewsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

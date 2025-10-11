@@ -161,6 +161,63 @@ def list_news_for_symbol(
         raise
 
 
+def list_all_news(
+    from_dt: datetime,
+    to_dt: datetime,
+    page: int,
+    per_page: int,
+    min_confidence: Optional[int],
+    event_filter: Optional[list[str]],
+    sort: Literal["impact_desc", "published_desc", "confirmed_desc"],
+) -> tuple[list[NewsCard], Optional[int]]:
+    t0 = _t0()
+    log.info(
+        "news.service.list_all_start",
+        extra={
+            "from": from_dt.isoformat(),
+            "to": to_dt.isoformat(),
+            "page": page,
+            "per_page": per_page,
+            "min_confidence": min_confidence,
+            "event_filter": event_filter,
+            "sort": sort,
+            "run_id": _runid(),
+        },
+    )
+    try:
+        ensure_news_storage_ready()
+        items, next_page = repo_list_news(
+            symbol=None,
+            from_dt=from_dt,
+            to_dt=to_dt,
+            page=page,
+            per_page=per_page,
+            min_confidence=min_confidence,
+            event_filter=event_filter,
+            sort=sort,
+        )
+        log.info(
+            "news.service.list_all_complete",
+            extra={
+                "items": len(items),
+                "next_page": next_page,
+                "ms": _ms(t0),
+                "run_id": _runid(),
+            },
+        )
+        if next_page is None:
+            log.debug("news.service.list_all_no_more_pages", extra={"run_id": _runid()})
+        return items, next_page
+    except Exception:
+        _exc(
+            "news.service.list_all_exception",
+            page=page,
+            per_page=per_page,
+            sort=sort,
+        )
+        raise
+
+
 def reason_for_move_candidates(
     symbol: str,
     at: datetime,

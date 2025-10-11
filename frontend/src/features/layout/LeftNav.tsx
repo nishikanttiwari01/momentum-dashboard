@@ -7,6 +7,7 @@ import DashboardIcon from '@mui/icons-material/SpaceDashboard';
 import ListIcon from '@mui/icons-material/ViewList';
 import BookmarkIcon from '@mui/icons-material/BookmarkBorder';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import ArticleIcon from '@mui/icons-material/Article';
 import HistoryIcon from '@mui/icons-material/History';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -21,6 +22,7 @@ export const NAV_WIDTH = 165;
 const items = [
   { to: '/', label: 'Dashboard', icon: <DashboardIcon /> },
   { to: '/screener', label: 'Screener', icon: <ListIcon /> },
+  { to: '/news', label: 'News', icon: <ArticleIcon /> },
   { to: '/history', label: 'Trades On', icon: <TrendingUpIcon  /> }, // ← renamed
   { to: '/learning', label: 'Learning', icon: <SchoolIcon /> },
   { to: '/watchlist', label: 'Watchlist', icon: <BookmarkIcon /> },

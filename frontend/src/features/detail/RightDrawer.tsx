@@ -153,7 +153,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
     refetch: refetchNews
   } = useNewsList(
     { symbol: sym, from: fromISO, to: toISO, page: 1, per_page: 50, sort: 'impact_desc' },
-    { staleTimeMs: 60_000 }
+    { staleTimeMs: 60_000, enabled: Boolean(sym) && tab === 1 }
   );
 
   const newsItems = (newsResp?.items ?? []) as NewsCard[];

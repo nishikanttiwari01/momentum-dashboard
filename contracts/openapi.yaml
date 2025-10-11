@@ -991,20 +991,33 @@ paths:
           description: Accepted
   /api/v1/news/list:
     get:
-      operationId: getNewsList
-      summary: List news for a symbol and time window
+      operationId: listAllNews
+      summary: List news across all symbols for a trading window
+      description: >
+        Returns paginated news clusters grouped by trading window without applying a symbol filter.
+        Provide either `on` (with optional `align`) or an explicit `from`/`to` window.
       parameters:
         - in: query
-          name: symbol
-          required: true
-          schema: { type: string, example: "TATAMOTORS.NS" }
+          name: on
+          required: false
+          description: Trading date (YYYY-MM-DD) in IST; ignored if explicit from/to provided
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: align
+          required: false
+          schema:
+            type: string
+            enum: [trading_day, calendar_day]
+            default: trading_day
         - in: query
           name: from
-          required: true
+          required: false
           schema: { type: string, format: date-time }
         - in: query
           name: to
-          required: true
+          required: false
           schema: { type: string, format: date-time }
         - in: query
           name: page
@@ -1038,7 +1051,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NewsListResponse"
+                $ref: "#/components/schemas/NewsWindowListResponse"
 
                 
 components:
@@ -2131,11 +2144,14 @@ components:
 
     NewsCard:
       type: object
-      required: [cluster_id, published, title, event_type, bullets, why, confidence_stars, source_count, sources]
+      required: [cluster_id, symbol, published, title, event_type, bullets, why, confidence_stars, source_count, sources]
       properties:
         cluster_id:
           type: string
           example: clu_x1y2z3
+        symbol:
+          type: string
+          description: Canonical symbol tagged to this news cluster
         published:
           type: string
           format: date-time
@@ -2196,6 +2212,28 @@ components:
       properties:
         symbol:
           type: string
+        window:
+          type: object
+          required: [from, to]
+          properties:
+            from: { type: string, format: date-time }
+            to:   { type: string, format: date-time }
+        page: { type: integer }
+        per_page: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/NewsCard" }
+        next_page:
+          type: integer
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    NewsWindowListResponse:
+      type: object
+      required: [window, page, per_page, items]
+      properties:
         window:
           type: object
           required: [from, to]

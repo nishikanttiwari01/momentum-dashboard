@@ -298,7 +298,7 @@ def _parquet_glob_between(from_dt: datetime, to_dt: datetime) -> str:
 
 
 def repo_list_news(
-    symbol: str,
+    symbol: Optional[str],
     from_dt: datetime,
     to_dt: datetime,
     page: int,
@@ -307,7 +307,7 @@ def repo_list_news(
     event_filter: Optional[list[str]],
     sort: Literal["impact_desc", "published_desc", "confirmed_desc"],
 ) -> tuple[list[NewsCard], Optional[int]]:
-    """Read Parquet via DuckDB and return paginated NewsCard rows for a symbol."""
+    """Read Parquet via DuckDB and return paginated NewsCard rows, optionally filtered by symbol."""
     ensure_news_storage_ready()
 
     f_utc = (from_dt.replace(tzinfo=timezone.utc)
@@ -317,15 +317,22 @@ def repo_list_news(
 
     glob = _parquet_glob_between(from_dt, to_dt)
     log.info("news.query_begin", extra={
-        "symbol": symbol, "from_utc": f_utc.isoformat(), "to_utc": t_utc.isoformat(),
+        "symbol": symbol or "*", "from_utc": f_utc.isoformat(), "to_utc": t_utc.isoformat(),
         "page": page, "per_page": per_page, "min_conf": min_confidence,
         "events": (event_filter or []), "sort": sort, "glob": glob, "run_id": _runid(),
     })
     t0 = _t0()
     con = duckdb.connect(database=":memory:")
     try:
-        where = ["symbol = ?", "published BETWEEN ? AND ?"]
-        params: list = [symbol, f_utc, t_utc]
+        where: list[str] = []
+        params: list = []
+
+        if symbol:
+            where.append("symbol = ?")
+            params.append(symbol)
+
+        where.append("published BETWEEN ? AND ?")
+        params.extend([f_utc, t_utc])
 
         if min_confidence:
             where.append("confidence_stars >= ?")
@@ -348,17 +355,30 @@ def repo_list_news(
           WHERE {" AND ".join(where)}
         """
 
-        total = con.execute(f"SELECT COUNT(*) {q_base}", params).fetchone()[0]
-
         offset = max(0, (page - 1) * per_page)
-        q = f"""
-          SELECT cluster_id, symbol, published, title, event_type, bullets, why,
-                 sentiment, confidence_stars, consensus_score, source_count,source_primary, source_url, sources      
-          {q_base}
-          ORDER BY {order}
-          LIMIT ? OFFSET ?
-        """
-        rows = con.execute(q, params + [per_page, offset]).fetchall()
+        try:
+            total = con.execute(f"SELECT COUNT(*) {q_base}", params).fetchone()[0]
+        except duckdb.IOException as exc:
+            msg = str(exc)
+            if "No files found" in msg:
+                log.info("news.query_no_matches", extra={
+                    "symbol": symbol or "*",
+                    "glob": glob,
+                    "run_id": _runid(),
+                })
+                total = 0
+                rows = []
+            else:
+                raise
+        else:
+            q = f"""
+              SELECT cluster_id, symbol, published, title, event_type, bullets, why,
+                     sentiment, confidence_stars, consensus_score, source_count, source_primary, source_url, sources
+              {q_base}
+              ORDER BY {order}
+              LIMIT ? OFFSET ?
+            """
+            rows = con.execute(q, params + [per_page, offset]).fetchall()
         log.info("news.query_rows_fetched", extra={
             "total": int(total), "returned": len(rows), "offset": offset,
             "ms": _elapsed_ms(t0), "run_id": _runid(),
@@ -373,8 +393,22 @@ def repo_list_news(
             log.debug("duckdb.close_failed", extra={"run_id": _runid()})
 
     items: list[NewsCard] = []
-    for (cluster_id, _symbol, published, title, event_type, bullets, why,
-         sentiment, confidence_stars, consensus_score, source_count, sources,source_primary,source_url) in rows:
+    for (
+        cluster_id,
+        row_symbol,
+        published,
+        title,
+        event_type,
+        bullets,
+        why,
+        sentiment,
+        confidence_stars,
+        consensus_score,
+        source_count,
+        source_primary,
+        source_url,
+        sources,
+    ) in rows:
 
         pub_dt: datetime = published  # duckdb returns tz-aware UTC
         src_refs: list[NewsSourceRef] = []
@@ -395,6 +429,7 @@ def repo_list_news(
         items.append(
             NewsCard(
                 cluster_id=cluster_id,
+                symbol=row_symbol,
                 published=pub_dt,
                 title=title,
                 event_type=event_type,
@@ -414,7 +449,7 @@ def repo_list_news(
 
     next_page = page + 1 if (offset + per_page) < total else None
     log.info("news.query_complete", extra={
-        "symbol": symbol, "items": len(items), "next_page": next_page,
+        "symbol": symbol or "*", "items": len(items), "next_page": next_page,
         "window_min": round((t_utc - f_utc).total_seconds() / 60.0, 1),
         "run_id": _runid(),
     })

@@ -2,12 +2,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, date, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Iterable
 
 from sqlalchemy import (
-    Column, Integer, String, DateTime, Date, JSON, Index, UniqueConstraint, func
+    Column, Integer, String, DateTime, Date, JSON, Index, UniqueConstraint, func, select
 )
 from sqlalchemy.orm import Session, declarative_base
+
+from app.repos.interfaces.base import AlertRuleVO
 
 # Prefer shared Base if available; fallback to a local Base for migrations/tests.
 try:
@@ -70,6 +72,51 @@ class AlertsRepo:
 
     def __init__(self, session: Session):
         self.s = session
+
+    # --- Rules ---
+    def list_alerts(self) -> list[AlertRuleVO]:
+        from app.repos.models import Alert  # local import to avoid circular dependency
+
+        rows: Iterable[Alert] = (
+            self.s.execute(select(Alert).order_by(Alert.created_at.desc())).scalars().all()
+        )
+        return [self._to_vo(row) for row in rows]
+
+    def create_alert(self, rule: AlertRuleVO) -> AlertRuleVO:
+        from app.repos.models import Alert  # local import to avoid circular dependency
+
+        payload = Alert(
+            symbol=(rule.symbol or '').upper(),
+            rule_type=rule.rule_type,
+            rule_value=rule.rule_value,
+            channels=list(rule.channels or []),
+            enabled=bool(rule.enabled),
+        )
+        self.s.add(payload)
+        self.s.flush()  # populate PK + timestamps
+        self.s.refresh(payload)
+        return self._to_vo(payload)
+
+    def enable_alert(self, alert_id: int, enabled: bool) -> None:
+        from app.repos.models import Alert  # local import to avoid circular dependency
+
+        row = self.s.query(Alert).filter(Alert.id == alert_id).one_or_none()
+        if not row:
+            raise ValueError(f'Alert with id={alert_id} not found')
+        row.enabled = bool(enabled)
+
+    @staticmethod
+    def _to_vo(row: 'Alert') -> AlertRuleVO:  # type: ignore[name-defined]
+        return AlertRuleVO(
+            id=row.id,
+            symbol=(row.symbol or '').upper(),
+            rule_type=row.rule_type,
+            rule_value=row.rule_value,
+            channels=list(row.channels or []),
+            enabled=bool(row.enabled),
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
 
     # --- State ---
     def get_state(self, symbol: str, rule_code: str) -> AlertState:

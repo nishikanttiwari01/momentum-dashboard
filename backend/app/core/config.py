@@ -58,6 +58,13 @@ class ScreenerCfg(BaseModel):
     # Universe preset used when none is supplied at runtime (e.g., GET /screener, POST /scan).
     default_universe: str = "ALL"  # e.g., NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL
 
+class TradingWindowCfg(BaseModel):
+    tz: str = "Asia/Kolkata"
+    days: List[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+    start: str = "09:15"
+    end: str = "15:30"
+
+
 class SchedulerCfg(BaseModel):
     # Whether background scans are enabled; if False, app runs without APScheduler.
     enabled: bool = False
@@ -65,6 +72,8 @@ class SchedulerCfg(BaseModel):
     interval_minutes: int = 15
     # Universe to use for scheduled scans; if None, fall back to screener.default_universe.
     universe: str | None = None
+    # Optional market trading window; if omitted the scheduler runs continuously.
+    trading_window: TradingWindowCfg | None = None
 
 class DataCfg(BaseModel):
     # Data adapter toggle: "stub" (deterministic tests) or "yahoo" (live).

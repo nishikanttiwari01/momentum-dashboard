@@ -57,10 +57,19 @@ def _now_in_trading_window(now_utc: Optional[datetime] = None) -> tuple[bool, Di
         return True, meta
 
     try:
+        if hasattr(tw, "model_dump"):
+            tw = tw.model_dump()
+        elif hasattr(tw, "dict"):
+            tw = tw.dict()
+        if not isinstance(tw, dict):
+            meta.update({"mode": "invalid_window_config", "value_type": type(tw).__name__})
+            log.warning("trading_window_invalid_type", extra=meta)
+            return True, meta
+
         tz_name = tw.get("tz", "Asia/Kolkata")
         start_str = tw.get("start", "09:15")
         end_str = tw.get("end", "15:30")
-        days = tw.get("days", [0, 1, 2, 3, 4])  # Mon–Fri by default (Monday=0)
+        days = tw.get("days", [0, 1, 2, 3, 4])  # Mon-Fri by default (Monday=0)
 
         tz = ZoneInfo(tz_name)
         now_utc = now_utc or datetime.now(timezone.utc)

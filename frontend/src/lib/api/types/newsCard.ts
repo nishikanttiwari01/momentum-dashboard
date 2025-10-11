@@ -55,6 +55,8 @@ export interface NewsCard {
    */
   source_url?: string | null;
   sources: NewsSourceRef[];
+  /** Canonical symbol tagged to this news cluster */
+  symbol: string;
   title: string;
   /** One-line reason why this matters for price/momentum */
   why: string;

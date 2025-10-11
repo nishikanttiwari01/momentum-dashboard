@@ -4,9 +4,15 @@ import type { NewsCard } from "../../lib/api/types/newsCard";
 import Link from "@mui/material/Link";
 import Typography from "@mui/material/Typography";
 
-export default function SourceCell({ item }: { item: NewsCard }) {
-  const fallback = item.sources && item.sources.length ? item.sources[0] : undefined;
-  const text = item.source_primary || fallback?.publisher || "—";
+type SourceItem = Partial<NewsCard>;
+
+export default function SourceCell({ item }: { item?: SourceItem }) {
+  if (!item) {
+    return null;
+  }
+  const sources = Array.isArray(item.sources) ? item.sources : [];
+  const fallback = sources.length ? sources[0] : undefined;
+  const text = item.source_primary || fallback?.publisher || "-";
   const href = item.source_url || fallback?.url || "";
 
   if (!href) {

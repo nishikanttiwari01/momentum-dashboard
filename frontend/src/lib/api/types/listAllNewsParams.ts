@@ -5,12 +5,17 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
-import type { GetNewsListSort } from './getNewsListSort';
+import type { ListAllNewsAlign } from './listAllNewsAlign';
+import type { ListAllNewsSort } from './listAllNewsSort';
 
-export type GetNewsListParams = {
-symbol: string;
-from: string;
-to: string;
+export type ListAllNewsParams = {
+/**
+ * Trading date (YYYY-MM-DD) in IST; ignored if explicit from/to provided
+ */
+on?: string;
+align?: ListAllNewsAlign;
+from?: string;
+to?: string;
 page?: number;
 per_page?: number;
 min_confidence?: number;
@@ -18,5 +23,5 @@ min_confidence?: number;
  * CSV of event types
  */
 event?: string;
-sort?: GetNewsListSort;
+sort?: ListAllNewsSort;
 };

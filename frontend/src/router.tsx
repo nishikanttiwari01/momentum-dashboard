@@ -4,6 +4,7 @@ import Dashboard from './pages/DashboardPage';
 import Screener from './pages/Screener';
 import Watchlist from './pages/Watchlist';
 import Trades from './pages/Trades';
+import News from './pages/News';
 import Alerts from './pages/Alerts';
 import Settings from './pages/Settings';
 import Learning from './pages/Learning'; // create stub if you don’t have it yet
@@ -15,6 +16,7 @@ export default function AppRouter() {
         <Route index element={<Dashboard />} />
         <Route path="/screener" element={<Screener />} />
         <Route path="/history" element={<Trades />} />
+        <Route path="/news" element={<News />} />
         <Route path="/watchlist" element={<Watchlist />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/settings" element={<Settings />} />

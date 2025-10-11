@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query, Path, Body, HTTPException
 # 👉 use your generated models location
 from app.schemas.generated.models import (
     NewsListResponse,
+    NewsWindowListResponse,
     NewsMoveAttributionResponse,
     NewsIngestBatch,
     Window,
@@ -22,6 +23,7 @@ from app.schemas.generated.models import (
 from app.core.config import load
 from app.services.news_service import (
     list_news_for_symbol,
+    list_all_news,
     reason_for_move_candidates,
     ingest_news_batch,
 )
@@ -166,7 +168,7 @@ def list_news(
         )
         return NewsListResponse(
             symbol=symbol,
-            window=Window(from_=from_dt, to=to_dt),
+            window=Window(**{"from": from_dt, "to": to_dt}),
             page=page,
             per_page=per_page,
             items=items,
@@ -238,42 +240,62 @@ def ingest_news(batch: NewsIngestBatch = Body(...)) -> dict:
     
 @router.get(
     "/news/list",
-    response_model=NewsListResponse,
-    summary="List news for a symbol and time window",
+    response_model=NewsWindowListResponse,
+    summary="List news across all symbols for a trading window",
 )
-def list_news(
-    symbol: str = Query(..., description="Symbol, e.g. RELIANCE.NS"),
-    from_: datetime = Query(..., alias="from"),
-    to: datetime = Query(...),
+def list_all_news_endpoint(
+    on: Optional[date] = Query(None),
+    align: Literal["trading_day", "calendar_day"] = Query("trading_day"),
+    from_: Optional[datetime] = Query(None, alias="from"),
+    to: Optional[datetime] = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=500),
     min_confidence: Optional[int] = Query(None, ge=1, le=5),
     event: Optional[str] = Query(None, description="CSV of event types"),
     sort: Literal["impact_desc", "published_desc", "confirmed_desc"] = Query("impact_desc"),
-) -> NewsListResponse:
+) -> NewsWindowListResponse:
     """
-    Lists news cards for the given symbol and time window.
+    Lists news cards across the universe for the requested trading window.
+    Provide either `on` (+ optional `align`) or explicit `from`/`to` timestamps.
     """
-    f_utc = _ts_aware(from_)
-    t_utc = _ts_aware(to)
+    from_dt, to_dt = _resolve_window(on, align, from_, to)
 
     event_filter = None
     if event:
         event_filter = [x.strip() for x in event.split(",") if x.strip()]
 
     t0 = _t0()
-    items, next_page = repo_list_news(
-        symbol=symbol,
-        from_dt=f_utc,
-        to_dt=t_utc,
-        page=page,
-        per_page=per_page,
-        min_confidence=min_confidence,
-        event_filter=event_filter,
-        sort=sort,
-    )
-    log.info(
-        "news.api.list_response",
-        extra={"items": len(items), "next_page": next_page, "ms": _ms(t0), "run_id": _runid()},
-    )
-    return NewsListResponse(items=items, next_page=next_page)
+    try:
+        items, next_page = list_all_news(
+            from_dt=from_dt,
+            to_dt=to_dt,
+            page=page,
+            per_page=per_page,
+            min_confidence=min_confidence,
+            event_filter=event_filter,
+            sort=sort,
+        )
+        log.info(
+            "news.api.list_all_response",
+            extra={"items": len(items), "next_page": next_page, "ms": _ms(t0), "run_id": _runid()},
+        )
+        return NewsWindowListResponse(
+            window=Window(**{"from": from_dt, "to": to_dt}),
+            page=page,
+            per_page=per_page,
+            items=items,
+            next_page=next_page,
+            note=None if items else "No consensus-grade news found in window",
+        )
+    except HTTPException:
+        log.warning("news.api.list_all_http_error", extra={"ms": _ms(t0), "run_id": _runid()})
+        raise
+    except Exception:
+        _exc(
+            "news.api.list_all_exception",
+            on=(on.isoformat() if on else None),
+            align=align,
+            page=page,
+            per_page=per_page,
+        )
+        raise
