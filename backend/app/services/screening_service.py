@@ -24,10 +24,9 @@ from app.adapters.yahoo_adapter import YahooAdapter  # ctor takes NO args
 import yfinance as yf
 
 # Phase 11 domain helpers (vectorized)
-from app.domain.indicators import (
-    ema, rsi, adx, atr, relvol, proximity_52w_high, returns_block
-)
-from app.domain.scoring import basic_score, full_score, recommendation_and_reason
+from app.domain.indicators import compute_indicator_frame
+from app.domain.scoring import compute_score
+from app.domain.rules.next_action import global_pre_gates
 
 log = logging.getLogger(__name__)
 
@@ -119,58 +118,7 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """
     Compute all indicators used by the Screener at the row's as_of.
     """
-    ind = pd.DataFrame(index=df.index)
-    ind["ema10"] = ema(df["close"], 10)
-    ind["ema50"] = ema(df["close"], 50)
-    ind["ema200"] = ema(df["close"], 200)
-
-    ind["rsi14"] = rsi(df["close"], 14)
-
-    adx_df = adx(df["high"], df["low"], df["close"], 14)
-    ind["adx14"] = adx_df["adx"]
-    ind["plus_di"] = adx_df["plus_di"]
-    ind["minus_di"] = adx_df["minus_di"]
-    ind["adx_slope_5"] = adx_df["adx_slope_5"]
-
-    ind["atr14_pct"] = (atr(df["high"], df["low"], df["close"], 14) / df["close"]) * 100.0
-    # NEW: ATR10% (tighter volatility proxy used by entry/exit heuristics)
-    ind["atr10_pct"] = (atr(df["high"], df["low"], df["close"], 10) / df["close"]) * 100.0
-    ind["relvol20"] = relvol(df["volume"], 20)
-    ind["proximity_52w_high_pct"] = proximity_52w_high(df["close"], df["high"], 252)
-
-    # NEW: Volume Z-score (20d)
-    vol_ma20 = df["volume"].rolling(20, min_periods=20).mean()
-    vol_sd20 = df["volume"].rolling(20, min_periods=20).std(ddof=0)
-    ind["vol_z20"] = (df["volume"] - vol_ma20) / vol_sd20.replace(0.0, np.nan)
-
-    # NEW: OBV block (level, MA, slope, above/under flag)
-    _delta = df["close"].diff()
-    _sgn = np.sign(_delta.fillna(0.0))
-    obv = (df["volume"] * _sgn).fillna(0.0).cumsum()
-    ind["obv"] = obv
-    ind["obv_ma30"] = obv.rolling(30, min_periods=30).mean()
-    ind["obv_slope_10"] = obv - obv.shift(10)
-    ind["obv_above_ma"] = ind["obv"] > ind["obv_ma30"]
-
-    # NEW: Pivot (prior 20d high), pivot clearance %, base length bars
-    pivot_20d = df["high"].rolling(20, min_periods=20).max().shift(1)
-    ind["pivot_20d"] = pivot_20d
-    ind["pivot_clear_pct"] = (df["close"] / pivot_20d - 1.0) * 100.0
-    # Base length: bars since last 20d high (tolerant to float noise)
-    hh20 = df["high"].rolling(20, min_periods=20).max()
-    is_new_high = df["high"] >= (hh20 * 0.999)
-    _idx = np.arange(len(df))
-    last_nh_idx = pd.Series(np.where(is_new_high, _idx, np.nan), index=df.index).ffill()
-    ind["base_len_bars"] = (_idx - last_nh_idx).astype(float)
-
-    # NEW: Behavior fields
-    ind["gap_up_pct"] = (df["open"] / df["close"].shift(1) - 1.0) * 100.0
-    rng = (df["high"] - df["low"])
-    ind["close_pos_in_bar"] = np.where(rng > 0, (df["close"] - df["low"]) / rng, np.nan)
-
-    rets = returns_block(df["adj_close"])
-    ind = ind.join(rets, how="left")
-    return ind
+    return compute_indicator_frame(df)
 
 
 # ---------------------- row construction ---------------------------
@@ -194,10 +142,7 @@ def _make_scores_row(
     df: pd.DataFrame,
     ind: pd.DataFrame,
 ) -> Dict[str, Any]:
-    """
-    Build the final Screener row for this symbol.
-    Includes indicators, returns, badges, recommendation, and both Full/Basic scores.
-    """
+    # Build the final Screener row for this symbol (spec 2025-10-12A).
     last = float(df["close"].iloc[-1]) if not df.empty else None
     prev = float(df["close"].iloc[-2]) if len(df) >= 2 else None
     change_pct = ((last - prev) * 100.0 / prev) if (last is not None and prev not in (None, 0)) else None
@@ -205,9 +150,6 @@ def _make_scores_row(
     r = ind.iloc[-1].to_dict() if not ind.empty else {}
     rsi14 = _maybe_float(r.get("rsi14"))
     adx14 = _maybe_float(r.get("adx14"))
-    adx_s5 = _maybe_float(r.get("adx_slope_5"))
-    plus_di = _maybe_float(r.get("plus_di"))
-    minus_di = _maybe_float(r.get("minus_di"))
     relvol20 = _maybe_float(r.get("relvol20"))
     prox_52w = _maybe_float(r.get("proximity_52w_high_pct"))
     vol_z20 = _maybe_float(r.get("vol_z20"))
@@ -216,52 +158,70 @@ def _make_scores_row(
     obv_ma30 = _maybe_float(r.get("obv_ma30"))
     obv_slope_10 = _maybe_float(r.get("obv_slope_10"))
     obv_above_ma = (bool(r.get("obv_above_ma")) if r.get("obv_above_ma") is not None else None)
-    pivot_20d = _maybe_float(r.get("pivot_20d"))
+    pivot_high_20 = _maybe_float(r.get("pivot_high_20"))
     pivot_clear_pct = _maybe_float(r.get("pivot_clear_pct"))
     base_len_bars = _maybe_float(r.get("base_len_bars"))
     gap_up_pct = _maybe_float(r.get("gap_up_pct"))
     close_pos_in_bar = _maybe_float(r.get("close_pos_in_bar"))
+    median_traded_value_20d = _maybe_float(r.get("median_traded_value_20d"))
+    delivery_ratio_20d = _maybe_float(r.get("delivery_ratio_20d"))
+    n_consecutive_up = _maybe_float(r.get("n_consecutive_up"))
+    n_consecutive_down = _maybe_float(r.get("n_consecutive_down"))
+    recent_failed_breakout_10d = bool(r.get("recent_failed_breakout_10d")) if r.get("recent_failed_breakout_10d") is not None else None
+    adx_slope_pos = bool(r.get("adx_slope_pos")) if r.get("adx_slope_pos") is not None else None
+    high_252 = _maybe_float(r.get("high_252"))
     ret_1w = _maybe_float(r.get("ret_1w"))
     ret_1m = _maybe_float(r.get("ret_1m"))
     ret_3m = _maybe_float(r.get("ret_3m"))
     ret_6m = _maybe_float(r.get("ret_6m"))
     ret_12_1m = _maybe_float(r.get("ret_12_1m"))
+    ret_5d = _maybe_float(r.get("ret_5d"))
     ema10 = _maybe_float(r.get("ema10"))
     ema50 = _maybe_float(r.get("ema50"))
     ema200 = _maybe_float(r.get("ema200"))
     atr14_pct = _maybe_float(r.get("atr14_pct"))
+    breadth_pct_50dma = _maybe_float(r.get("breadth_pct_50dma"))
+    nifty_regime = r.get("nifty_regime")
+    mansfield_rs_52 = _maybe_float(r.get("mansfield_rs_52"))
+    asm_gsm_flags = r.get("asm_gsm_flags")
+    upper_circuit_hits_60d = _maybe_float(r.get("upper_circuit_hits_60d"))
 
-    # Derivations formerly placeholders → now from computed indicators
-    is_new_52w_high = (prox_52w or -1) >= 0.0
-    vol_z = vol_z20
-    obv_slope_pos = (obv_slope_10 is not None and obv_slope_10 > 0)
+    score_inputs = {
+        "proximity_52w_high_pct": prox_52w,
+        "ret_5d": ret_5d if ret_5d is not None else ret_1w,
+        "ret_1m": ret_1m,
+        "ret_1w": ret_1w,
+        "relvol20": relvol20,
+        "vol_z20": vol_z20,
+        "obv_above_ma": obv_above_ma,
+        "obv_slope_10": obv_slope_10,
+        "close": last,
+        "ema10": ema10,
+        "ema50": ema50,
+        "ema200": ema200,
+        "rsi14": rsi14,
+        "adx14": adx14,
+        "adx_slope_pos": adx_slope_pos,
+        "mansfield_rs_52": mansfield_rs_52,
+        "breadth_pct_50dma": breadth_pct_50dma,
+        "delivery_ratio_20d": delivery_ratio_20d,
+        "nifty_regime": nifty_regime,
+        "gap_up_pct": gap_up_pct,
+        "close_pos_in_bar": close_pos_in_bar,
+        "pivot_clear_pct": pivot_clear_pct,
+        "n_consecutive_up": n_consecutive_up,
+        "n_consecutive_down": n_consecutive_down,
+    }
+    score_bundle = compute_score(score_inputs)
 
-    # Scores
-    basic_raw, basic_pct, basic_badges = basic_score(
-        rsi14, adx14, adx_s5, is_new_52w_high, pivot_clear_pct, base_len_bars,
-        relvol20, vol_z, bool(obv_above_ma) if obv_above_ma is not None else False
-    )
-    # full_score may return None if inputs are incomplete (as per updated scoring.py)
-    full_100, full_badges = full_score(
-        rsi14, adx14, adx_s5, plus_di, minus_di,
-        prox_52w, pivot_clear_pct, base_len_bars, 0,
-        relvol20, vol_z, obv_above_ma or False, obv_slope_pos or False,
-        None,  # delivery lift unknown
-        6 if (ema50 or 0) > (ema200 or 0) else 3 if (ema200 or 0) < (last or 0) else 0,  # rough regime proxy
-        2,  # sector RS placeholder
-        atr10_pct=atr10_pct,
-        gap_up_pct=gap_up_pct,
-        close_pos_in_bar=close_pos_in_bar
-    )
-
-    # ---------- canonical scoring + fallback metadata ----------
-    score_basic = basic_raw if basic_raw is not None else None
-    score_basic_normalized = int(round(basic_pct)) if basic_pct is not None else None
-    score_full = int(round(full_100)) if full_100 is not None else None
+    score_basic = score_bundle.score_basic
+    score_basic_normalized = score_basic
+    score_full = score_bundle.score_full
+    badges = score_bundle.badges or []
 
     full_required_keys = [
         "relvol20", "vol_z20", "obv", "obv_ma30", "obv_slope_10", "obv_above_ma",
-        "pivot_20d", "pivot_clear_pct", "base_len_bars",
+        "pivot_high_20", "pivot_clear_pct", "base_len_bars",
         "proximity_52w_high_pct", "atr14_pct", "ema10", "ema50", "ema200", "rsi14", "adx14"
     ]
     data_gaps: List[str] = []
@@ -279,26 +239,31 @@ def _make_scores_row(
     stale = False
     if score_full is not None and not data_gaps:
         score = int(score_full)
-        score_source = "full"
-        badges = (full_badges or [])
-        recommendation, reason = recommendation_and_reason(
-            score, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct,
-            atr14_pct=atr14_pct, atr10_pct=atr10_pct, gap_up_pct=gap_up_pct,
-            close_pos_in_bar=close_pos_in_bar
-        )
     else:
-        score = score_basic_normalized if score_basic_normalized is not None else 0
-        score_source = "basic_fallback"
+        score = int(score_basic) if score_basic is not None else 0
         stale = True
-        badges = (basic_badges or [])
-        if not badges:
-            badges = [{"category": "WATCH", "label": "⏳ Watch (data incomplete)"}]
+        score_source = "basic_fallback" if score_full is None else "full_incomplete"
 
-        recommendation, reason = recommendation_and_reason(
-            None, rsi14, adx14, prox_52w, relvol20, pivot_clear_pct
-        )
-        if data_gaps:
-            reason = f"{reason} · missing: {', '.join(sorted(set(data_gaps)))}"
+    if not badges:
+        badges = [{"category": "WATCH", "label": "Watch (data incomplete)"}]
+
+    reason_codes = list(score_bundle.reason_codes)
+    if data_gaps:
+        reason_codes.extend(f"missing:{gap}" for gap in sorted(set(data_gaps)))
+
+    recommendation = "Yes" if score >= 70 else "No"
+    reason = " | ".join(reason_codes[:6]) if reason_codes else score_bundle.band
+
+    components = score_bundle.components
+    score_breakdown = {
+        "proximity": round(components.proximity, 2),
+        "returns": round(components.returns, 2),
+        "accumulation": round(components.accumulation, 2),
+        "trend": round(components.trend, 2),
+        "context": round(components.context, 2),
+        "delivery_bonus": round(components.delivery_bonus, 2),
+    }
+    penalties_map = {k: round(v, 2) for k, v in components.penalties.items()}
 
     row: Dict[str, Any] = {
         "symbol": symbol,
@@ -312,26 +277,39 @@ def _make_scores_row(
         "ema50": ema50,
         "ema200": ema200,
         "relvol20": relvol20,
-        "proximity_52w_high_pct": prox_52w,  # canonical
+        "relvol20_raw": _maybe_float(r.get("relvol20_raw")),
+        "proximity_52w_high_pct": prox_52w,
         "atr14_pct": atr14_pct,
-        # persisted extras
         "atr10_pct": atr10_pct,
         "vol_z20": vol_z20,
+        "high_252": high_252,
         "obv": obv_val,
         "obv_ma30": obv_ma30,
         "obv_slope_10": obv_slope_10,
         "obv_above_ma": obv_above_ma,
-        "pivot_20d": pivot_20d,
+        "pivot_high_20": pivot_high_20,
+        "pivot_20d": pivot_high_20,
         "pivot_clear_pct": pivot_clear_pct,
         "base_len_bars": (int(round(base_len_bars)) if base_len_bars is not None else None),
         "gap_up_pct": gap_up_pct,
         "close_pos_in_bar": close_pos_in_bar,
+        "median_traded_value_20d": median_traded_value_20d,
+        "delivery_ratio_20d": delivery_ratio_20d,
+        "n_consecutive_up": (int(n_consecutive_up) if n_consecutive_up is not None else None),
+        "n_consecutive_down": (int(n_consecutive_down) if n_consecutive_down is not None else None),
+        "recent_failed_breakout_10d": recent_failed_breakout_10d,
+        "adx_slope_pos": adx_slope_pos,
         "ret_1w": ret_1w,
+        "ret_5d": ret_5d,
         "ret_1m": ret_1m,
         "ret_3m": ret_3m,
         "ret_6m": ret_6m,
         "ret_12_1m": ret_12_1m,
-        # scores
+        "breadth_pct_50dma": breadth_pct_50dma,
+        "nifty_regime": nifty_regime,
+        "mansfield_rs_52": mansfield_rs_52,
+        "asm_gsm_flags": asm_gsm_flags,
+        "upper_circuit_hits_60d": upper_circuit_hits_60d,
         "score": score,
         "score_full": score_full,
         "score_basic": score_basic,
@@ -339,23 +317,34 @@ def _make_scores_row(
         "score_source": score_source,
         "data_gaps": data_gaps,
         "stale": stale,
-        "rules_version": "scores_v2",
+        "rules_version": "2025-10-12A",
         "score_scale": "0-100",
         "badges": badges,
         "recommendation": recommendation,
         "reason": reason,
         "as_of": as_of_iso,
         "run_id": run_id,
+        "score_band": score_bundle.band,
+        "reason_codes": reason_codes,
+        "score_breakdown": score_breakdown,
+        "score_penalties": penalties_map,
+        "score_components_raw": {
+            "base": round(components.total_base(), 2),
+            "with_context": round(components.total_with_context(), 2),
+        },
     }
 
-    # === Back-fill legacy fields & small derivations ===
     row.setdefault("rsi", row.get("rsi14"))
     row.setdefault("adx", row.get("adx14"))
     row.setdefault("pct_from_52w_high", row.get("proximity_52w_high_pct"))
     row.setdefault("atr_pct", row.get("atr14_pct"))
     row.setdefault("pct_today", row.get("change_pct"))
 
-    # Liquidity: 20d avg traded value (₹)
+    try:
+        row["pre_gates_pass"] = global_pre_gates({**row, "close": row.get("last")})
+    except Exception:
+        row["pre_gates_pass"] = False
+
     if row.get("liquidity") is None:
         try:
             ser_liq = (df["close"] * df["volume"]).rolling(20, min_periods=5).mean()
@@ -363,7 +352,6 @@ def _make_scores_row(
         except Exception:
             row["liquidity"] = None
 
-    # Volume spike: z-score vs last 20d
     if row.get("vol_spike") is None:
         try:
             if "vol_z20" in ind.columns:
@@ -377,51 +365,46 @@ def _make_scores_row(
         except Exception:
             row["vol_spike"] = None
 
-    # Strength label (simple ADX-based)
     if not row.get("strength"):
         adx_val = row.get("adx")
         if isinstance(adx_val, (int, float)):
             row["strength"] = "High" if adx_val >= 35 else ("Medium" if adx_val >= 20 else "Low")
 
-    # Buy flag from score
     if row.get("buy") is None and isinstance(row.get("score"), (int, float)):
         row["buy"] = "Yes" if row["score"] >= 75 else "No"
 
-    # --------- Badge policy (minimal changes, normalized) ----------
     badges_in: List[Any] = row.get("badges") or []
-
-    # If no ACTION badge, append one based on score
     has_action = any(isinstance(b, dict) and b.get("category") == "ACTION" for b in badges_in)
     if not has_action and isinstance(row.get("score"), (int, float)):
         badges_in.append(
-            {"category": "ACTION", "label": "✅ Buy"} if row["score"] >= 75
-            else {"category": "ACTION", "label": "🕒 Watch"}
+            {"category": "ACTION", "label": "Buy"} if row["score"] >= 75 else {"category": "ACTION", "label": "Watch"}
         )
 
-    # Ensure a classification badge exists from {BREAKOUT, MOMENTUM, WATCH, IGNORE}
     cls_categories = {"BREAKOUT", "MOMENTUM", "WATCH", "IGNORE"}
+
     def _code_to_category(code: str) -> Optional[str]:
         c = (code or "").upper()
-        if "BREAKOUT" in c: return "BREAKOUT"
-        if "MOMENTUM" in c: return "MOMENTUM"
-        if "WATCH" in c: return "WATCH"
-        if "IGNORE" in c: return "IGNORE"
+        if "BREAKOUT" in c:
+            return "BREAKOUT"
+        if "MOMENTUM" in c:
+            return "MOMENTUM"
+        if "WATCH" in c:
+            return "WATCH"
+        if "IGNORE" in c:
+            return "IGNORE"
         return None
 
     has_classification = any(
-        isinstance(b, dict) and str(b.get("category", "")).upper() in cls_categories
-        for b in badges_in
+        isinstance(b, dict) and str(b.get("category", "")).upper() in cls_categories for b in badges_in
     )
     if not has_classification:
-        # Derive a simple classification if scoring didn't provide one
         if row["score"] is not None and row["score"] >= 85 and (rsi14 or 0) >= 60 and (adx14 or 0) >= 30 and (pivot_clear_pct or 0) >= 2.0:
-            badges_in.append({"category": "BREAKOUT", "label": "💥 Very High Breakout"})
+            badges_in.append({"category": "BREAKOUT", "label": "Very High Breakout"})
         elif row["score"] is not None and row["score"] >= 75:
-            badges_in.append({"category": "MOMENTUM", "label": "🔥 High Momentum"})
+            badges_in.append({"category": "MOMENTUM", "label": "High Momentum"})
         else:
-            badges_in.append({"category": "WATCH", "label": "⏳ Watch"})
+            badges_in.append({"category": "WATCH", "label": "Watch"})
 
-    # Normalize badge shape and also map legacy {code,text} to classification where possible
     norm_badges: List[Dict[str, str]] = []
     for b in badges_in:
         if isinstance(b, dict):
@@ -437,6 +420,7 @@ def _make_scores_row(
     row["badges"] = norm_badges
 
     return row
+
 
 
 # --------------------------- main orchestration -------------------------------

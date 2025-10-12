@@ -40,7 +40,7 @@ data:
   adapter: yahoo
 alerts:
   enabled: true
-  timezone: Asia/Singapore
+  timezone: Asia/Kolkata
   channels:
     telegram: true
     desktop: true
@@ -49,10 +49,24 @@ alerts:
     server: https://ntfy.sh
     topic: momentum-alerts-nishi
     token: null
-  rules:
-    momentum_score_gte:
-      threshold: 75
-      repeat_policy: once_per_day
+  min_score: 70
+  persistence_runs_intraday: 2
+  realert_score_jump: 10
+  cooloff_runs_after_sell: 2
+  cooloff_runs_after_failed_bo: 3
+  suppress_open_minutes: 15
+  suppress_close_minutes: 5
+  regime:
+    down:
+      min_score: 72
+      block_starter: true
+  breadth:
+    index: NIFTY500
+    pct_above_50dma_min: 35
+  india_safety:
+    block_asm_gsm: true
+    max_upper_circuit_hits_60d: 2
+    delivery_ratio_bonus_min: 0.45
   throttle:
     min_minutes_between: 60
   dedupe:
@@ -91,6 +105,53 @@ rules:
     require_base_len_bars: 15
     breakout_overrides_soft_gates: true
 features:
+  momentum:
+    rules_version: 2025-10-12A
+    liquidity:
+      min_traded_value_20d: 100000000
+    risk:
+      max_atr14_pct: 8.0
+      portfolio_risk_per_trade_pct: 0.5
+      init_atr_multiple: 1.0
+      trail_atr_multiple: 2.0
+    price:
+      min_close: 50
+    scores:
+      bands:
+        ignore: 40
+        watch: 55
+        high: 69
+        breakout: 78
+        elite: 99
+      prox52:
+        fresh_high_pts: 12
+      max_context_bonus: 5
+      penalties:
+        rsi_over_80: -3
+        gap_weak_base: -2
+        late_breakout_base: -2
+    actions:
+      breakout:
+        min_relvol20: 1.5
+        min_adx14: 25
+        max_pivot_clear_pct: 5
+        allow_consecutive_up_max: 2
+        adaptive_proximity:
+          base: -10.0
+          floor: -12.0
+          ceiling: -8.0
+          long_base_bars: 20
+          obv_bonus: 1.0
+          adx_slope_bonus: 0.5
+          recent_fail_penalty: 1.0
+      pullback:
+        min_relvol20: 1.2
+        min_reversal_close_pos: 0.6
+        ema10_atr_band: 1.5
+      starter:
+        min_adx14: 20
+        min_relvol20: 1.8
+        min_proximity_52w: -15
   news:
     enabled: true
     ui:

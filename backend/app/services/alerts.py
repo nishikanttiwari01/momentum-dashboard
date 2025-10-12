@@ -1,364 +1,396 @@
-
-# backend/app/services/alerts.py
 from __future__ import annotations
+
 from dataclasses import dataclass
-from datetime import datetime, timezone, date
+from datetime import datetime, date, timezone, time, timedelta
 from zoneinfo import ZoneInfo
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+import json
 import logging
 import os
+import math
 
 from app.repos.sql.alerts_repo import AlertsRepo
 from app.repos.sql.alerts_repo import AlertState as AlertStateDTO
 from app.repos.parquet.scores_repo import ScoresRepo
+from app.domain.rules.next_action import compute_next_action, global_pre_gates
 from app.notifs.telegram_toast import notify as notify_tg_toast
 from app.notifs.ntfy import notify as notify_ntfy
 
 log = logging.getLogger(__name__)
 
-try:
-    from app.core.db import get_session
-except Exception:
-    get_session = None
-
-RULE_MOMENTUM_GTE = "momentum_score_gte"
+RULE_CODE = "momentum_score_gte"
+ACTION_ORDER = {"BUY_STARTER": 1, "BUY_PULLBACK": 2, "BUY_BREAKOUT": 3}
 
 
 @dataclass
 class AlertsConfig:
     enabled: bool = True
-    threshold_raw: float = 800.0
-    repeat_policy: str = "once_per_day"
-    throttle_min_minutes: int = 60
-    tz_name: str = "Asia/Singapore"
-    channels: Dict[str, bool] = None  # kept as-is
+    min_score: int = 70
+    regime_down_min_score: int = 72
+    block_starter_in_down: bool = True
+    persistence_runs: int = 2
+    score_jump_realert: int = 10
+    cooloff_runs_after_alert: int = 0
+    cooloff_runs_failed_breakout: int = 3
+    suppress_open_minutes: int = 15
+    suppress_close_minutes: int = 5
+    min_breadth_breakout: float = 35.0
+    max_upper_circuit_hits: int = 2
+    tz_name: str = "Asia/Kolkata"
+    channels: Dict[str, bool] = None
 
     @staticmethod
     def from_settings(cfg: Dict[str, Any]) -> "AlertsConfig":
         alerts = cfg.get("alerts", {}) if cfg else {}
-        rules = alerts.get("rules", alerts)
-        rule = rules.get(RULE_MOMENTUM_GTE, rules.get("momentum_score_gte", {}))
-
-        thr = None
-        rep = "once_per_day"
-        if isinstance(rule, dict):
-            thr = rule.get("threshold", rule.get("value", rule.get("threshold_raw")))
-            rep = rule.get("repeat_policy", rep)
-        else:
-            thr = rule
-
-        if thr is None:
-            thr = 800
-        if isinstance(thr, str):
-            try:
-                thr = float(thr.strip())
-            except Exception:
-                thr = 800.0
-        thr = float(thr)
-
-        # Normalize: allow 800 -> 80, but accept 70/80 directly too
-        normalized = thr / 10.0 if thr >= 100 else thr
-
+        rules_cfg = alerts.get("alerts", alerts)
+        rules = alerts.get("rules", rules_cfg)
+        rules = rules.get("actions", rules)
+        # Fallback to top-level keys if nested structure absent
+        meta = alerts.get("alerts", {})
         channels = alerts.get("channels", {})
         return AlertsConfig(
             enabled=bool(alerts.get("enabled", True)),
-            threshold_raw=normalized,
-            repeat_policy=rep,
-            throttle_min_minutes=int(alerts.get("throttle", {}).get("min_minutes_between", 60)),
-            tz_name=cfg.get("app", {}).get("timezone", alerts.get("timezone", "Asia/Singapore")),
+            min_score=int(alerts.get("rules", {}).get("min_score", alerts.get("min_score", 70))),
+            regime_down_min_score=int(alerts.get("regime", {}).get("down", {}).get("min_score", 72)),
+            block_starter_in_down=bool(alerts.get("regime", {}).get("down", {}).get("block_starter", True)),
+            persistence_runs=int(alerts.get("alerts", {}).get("persistence_runs_intraday", alerts.get("persistence_runs_intraday", 2))),
+            score_jump_realert=int(alerts.get("alerts", {}).get("realert_score_jump", alerts.get("realert_score_jump", 10))),
+            cooloff_runs_after_alert=int(alerts.get("alerts", {}).get("cooloff_runs_after_sell", alerts.get("cooloff_runs_after_sell", 2))),
+            cooloff_runs_failed_breakout=int(alerts.get("alerts", {}).get("cooloff_runs_after_failed_bo", alerts.get("cooloff_runs_after_failed_bo", 3))),
+            suppress_open_minutes=int(alerts.get("alerts", {}).get("suppress_open_minutes", 15)),
+            suppress_close_minutes=int(alerts.get("alerts", {}).get("suppress_close_minutes", 5)),
+            min_breadth_breakout=float(alerts.get("breadth", {}).get("pct_above_50dma_min", 35)),
+            max_upper_circuit_hits=int(alerts.get("india_safety", {}).get("max_upper_circuit_hits_60d", 2)),
+            tz_name=str(cfg.get("app", {}).get("timezone", alerts.get("timezone", "Asia/Kolkata"))),
             channels={
-                "telegram": bool(channels.get("telegram", False)),  # default off
-                "desktop":  bool(channels.get("desktop",  False)),  # default off
-                "ntfy":     bool(channels.get("ntfy",     True)),   # default ON
+                "telegram": bool(channels.get("telegram", False)),
+                "desktop": bool(channels.get("desktop", False)),
+                "ntfy": bool(channels.get("ntfy", True)),
             },
         )
 
 
-def _iter_scores_for_run(run_id: Optional[str]) -> Iterable[Dict[str, Any]]:
-    """Fetch scored rows for a run (intraday/daily fallback supported)."""
-    repo = ScoresRepo()
-    run_hint = run_id.strip() if isinstance(run_id, str) else None
-    as_of_hint = None
-    if run_hint:
-        as_of_hint = ScoresRepo.run_id_to_date(run_hint)
-    items, *_ = repo.read(
-        run_id=run_hint,
-        as_of_str=as_of_hint,
-        filters=None,
-        sort=None,
-        page=1,
-        per_page=10_000,  # NOTE: repo expects per_page (not page_size)
-    )
-    if not items and not run_hint:
-        # ensure callers without run_id still get latest snapshot
-        items, *_ = repo.read(
-            run_id=None,
-            as_of_str=None,
-            filters=None,
-            sort=None,
-            page=1,
-            per_page=10_000,
-        )
-    return items
+def _parse_run_meta(last_fired_run_id: Optional[str]) -> Tuple[Optional[str], Dict[str, Any]]:
+    if not last_fired_run_id:
+        return None, {}
+    if "||" in last_fired_run_id:
+        run_id, meta_json = last_fired_run_id.split("||", 1)
+        try:
+            meta = json.loads(meta_json)
+        except json.JSONDecodeError:
+            meta = {}
+        return run_id or None, meta
+    return last_fired_run_id, {}
 
 
-def _parse_date_like(value: Any, tz: ZoneInfo) -> Optional[date]:
-    """Best-effort coercion of mixed date/datetime formats to a date object in the target tz."""
+def _format_run_meta(run_id: Optional[str], meta: Dict[str, Any]) -> Optional[str]:
+    if run_id is None and not meta:
+        return None
+    return f"{run_id or ''}||{json.dumps(meta, separators=(',', ':'))}"
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
     if value is None:
         return None
-
     if isinstance(value, datetime):
-        base = value if value.tzinfo else value.replace(tzinfo=tz)
-        return base.astimezone(tz).date()
-
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-
-    s = str(value).strip()
-    if not s:
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        text = str(value)
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except Exception:
         return None
 
-    # Handle ISO8601 with trailing Z
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
 
+def _row_trading_day(row: Dict[str, Any], tz: ZoneInfo) -> Tuple[date, datetime]:
+    dt = _parse_iso_datetime(row.get("as_of"))
+    if dt is None:
+        dt = datetime.now(timezone.utc)
+    local_dt = dt.astimezone(tz)
+    return local_dt.date(), local_dt
+
+
+def _within_suppressed_window(local_dt: datetime, cfg: AlertsConfig) -> bool:
+    suppress_start = time(9, 15)
+    open_window_end = (datetime.combine(local_dt.date(), suppress_start, tzinfo=local_dt.tzinfo)
+                       + timedelta(minutes=cfg.suppress_open_minutes)).time()
+    close_window_start = time(15, 30 - cfg.suppress_close_minutes)
+    current_time = local_dt.time()
+    if suppress_start <= current_time < open_window_end:
+        return True
+    if current_time >= close_window_start:
+        return True
+    return False
+
+
+def _breadth_allows_breakout(row: Dict[str, Any], cfg: AlertsConfig) -> bool:
+    breadth = _f(row.get("breadth_pct_50dma"))
+    if breadth is None:
+        return True
+    return breadth >= cfg.min_breadth_breakout
+
+
+def _f(value: Any) -> Optional[float]:
+    if value is None:
+        return None
     try:
-        dt = datetime.fromisoformat(s)
-    except ValueError:
-        dt = None
-
-    if dt is not None:
-        if dt.tzinfo:
-            return dt.astimezone(tz).date()
-        return dt.date()
-
-    for fmt, length in (("%Y%m%d%H%M%S", 14), ("%Y%m%d", 8), ("%Y-%m-%d", 10)):
-        if len(s) >= length:
-            try:
-                parsed = datetime.strptime(s[:length], fmt)
-                return parsed.date()
-            except ValueError:
-                continue
-
-    return None
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
 
 
-def _resolve_trading_day(
-    row: Dict[str, Any],
-    *,
-    tz: ZoneInfo,
-    default_day: Optional[date],
-) -> date:
-    """Choose the trading date for an alert row, falling back to run_id defaults."""
-    candidates = (
-        row.get("trading_day"),
-        row.get("trade_date"),
-        row.get("tradeDate"),
-        row.get("as_of"),
-        row.get("asof"),
-        row.get("as_of_date"),
-        row.get("date"),
-        row.get("timestamp"),
-    )
-    for cand in candidates:
-        chosen = _parse_date_like(cand, tz)
-        if chosen:
-            return chosen
+def evaluate_momentum_crossups(*, run_id: Optional[str], settings: Dict[str, Any]) -> int:
+    if not settings:
+        settings = {}
 
-    row_run_id = row.get("run_id")
-    if row_run_id:
-        rid = ScoresRepo.run_id_to_date(str(row_run_id)) or str(row_run_id)
-        chosen = _parse_date_like(rid, tz)
-        if chosen:
-            return chosen
-
-    if default_day:
-        return default_day
-
-    # Last resort: use current trading day in configured tz
-    return datetime.now(timezone.utc).astimezone(tz).date()
-
-
-def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) -> int:
-    run_short = (run_id or "")[:14]
-    log.info("evaluate_momentum_crossups run_id=%s", run_short, extra={"run_id": run_short})
     cfg = AlertsConfig.from_settings(settings)
     if not cfg.enabled:
+        log.info("alerts_disabled")
         return 0
 
-    # Pull ntfy config from YAML and expose as env (so app.notifs.ntfy can read it)
-    ntfy_cfg = (settings.get("alerts", {}) or {}).get("ntfy", {}) if isinstance(settings, dict) else {}
-    if isinstance(ntfy_cfg, dict):
-        os.environ.setdefault("NTFY_SERVER", str(ntfy_cfg.get("server", "")))
-        os.environ.setdefault("NTFY_TOPIC",  str(ntfy_cfg.get("topic",  "")))
-        os.environ.setdefault("NTFY_TOKEN",  str(ntfy_cfg.get("token",  "")))
-
-    threshold = cfg.threshold_raw
-    tz = ZoneInfo(cfg.tz_name or "Asia/Singapore")
-    now_utc = datetime.now(timezone.utc)
-    run_id_day: Optional[date] = None
-    if isinstance(run_id, str):
-        rid_clean = run_id.strip()
-        if rid_clean:
-            rid_source = ScoresRepo.run_id_to_date(rid_clean) or rid_clean
-            run_id_day = _parse_date_like(rid_source, tz)
-
-    items = list(_iter_scores_for_run(run_id))
-
-    # ---- Diagnostics: how many rows would qualify on pure threshold (independent of cross-up/state)
-    def _num(v):
-        try:
-            return float(v)
-        except Exception:
-            return float("nan")
-    ge_cnt = sum(1 for r in items if _num(r.get("score")) >= threshold)
-    try:
-        max_score = max((_num(r.get("score")) for r in items), default=float("nan"))
-    except Exception:
-        max_score = float("nan")
-    log.info("alerts_threshold_diagnostics max_score=%s", max_score,extra={
-        "run_id": run_short, "loaded": len(items), "threshold": threshold,
-        "ge_threshold_count": ge_cnt, "max_score": (None if max_score != max_score else max_score),
-    })
-
+    repo_scores = ScoresRepo()
+    items, *_ = repo_scores.read(run_id=run_id, as_of_str=None, filters=None, sort=None, page=1, per_page=10_000)
     if not items:
+        log.info("alerts_no_rows")
         return 0
 
-    if not get_session:
-        raise RuntimeError("get_session() not available")
+    tz = ZoneInfo(cfg.tz_name)
+    run_dt = None
+    if run_id:
+        run_dt = _parse_iso_datetime(run_id_to_iso(run_id))
+        if run_dt:
+            run_dt = run_dt.astimezone(tz)
 
     fired = 0
+    session_gen = get_session()
+    session = next(session_gen)
+    repo_alerts = AlertsRepo(session)
+    now_utc = datetime.now(timezone.utc)
 
-    # Borrow a Session from the FastAPI generator (same approach as scheduler)
-    gen = get_session()
-    s = next(gen)
     try:
-        repo = AlertsRepo(s)
-
         for row in items:
-            symbol = str(row.get("symbol") or row.get("Symbol") or "").upper()
+            symbol = str(row.get("symbol") or "").upper()
             if not symbol:
                 continue
 
-            score_val = row.get("score") or row.get("score_total_0_100") or row.get("Score")
+            score_val = row.get("score")
             try:
                 score = int(round(float(score_val)))
             except Exception:
                 continue
 
-            trading_day = _resolve_trading_day(row, tz=tz, default_day=run_id_day)
-
-            state: AlertStateDTO = repo.get_state(symbol, RULE_MOMENTUM_GTE)
-            prev = state.last_score if state.last_score is not None else 0
-
-            crossed_up = (prev < threshold) and (score >= threshold)
-            '''
-            if not crossed_up:
-                # Persist last_score so future crosses evaluate correctly
-                repo.upsert_state(
-                    symbol,
-                    RULE_MOMENTUM_GTE,
-                    last_score=score,
-                    last_fired_at_utc=state.last_fired_at_utc,
-                    last_fired_local_date=state.last_fired_local_date,
-                    last_fired_run_id=state.last_fired_run_id,
-                )
+            trading_day, local_dt = _row_trading_day(row, tz)
+            if run_dt is not None:
+                local_dt = run_dt
+                trading_day = run_dt.date()
+            if _within_suppressed_window(local_dt, cfg):
                 continue
 
-            '''
-            # MINIMAL FIX: only alert if today's score meets the threshold
-            if score < threshold:
-                repo.upsert_state(
-                    symbol,
-                    RULE_MOMENTUM_GTE,
-                    last_score=score,
-                    last_fired_at_utc=state.last_fired_at_utc,
-                    last_fired_local_date=state.last_fired_local_date,
-                    last_fired_run_id=state.last_fired_run_id,
-                )
+            state = repo_alerts.get_state(symbol, RULE_CODE)
+            prev_run_id, meta = _parse_run_meta(state.last_fired_run_id)
+            passes = int(meta.get("passes", 0))
+            cooloff = int(meta.get("cooloff", 0))
+            last_action = meta.get("last_action")
+            last_alert_score = meta.get("last_alert_score")
+
+            gating_pass, action_code, reason_codes, debug_refs = _evaluate_candidate(row, score, cfg)
+
+            if cooloff > 0:
+                cooloff -= 1
+                gating_pass = False
+
+            if gating_pass:
+                passes += 1
+            else:
+                passes = 0
+
+            persistence_ok = passes >= cfg.persistence_runs
+            if not persistence_ok:
+                _persist_state(repo_alerts, state, score, meta, passes, cooloff, last_action, last_alert_score, prev_run_id)
                 continue
-            # Once-per-day guard
-            if state.last_fired_local_date == trading_day:
-                repo.upsert_state(
-                    symbol,
-                    RULE_MOMENTUM_GTE,
-                    last_score=score,
-                    last_fired_at_utc=state.last_fired_at_utc,
-                    last_fired_local_date=state.last_fired_local_date,
-                    last_fired_run_id=state.last_fired_run_id,
-                )
+
+            if not gating_pass:
+                _persist_state(repo_alerts, state, score, meta, passes, cooloff, last_action, last_alert_score, prev_run_id)
                 continue
 
-            # Build notification body
-            title = f"Momentum >={int(threshold)}: {symbol}"
-            price = row.get("last") or row.get("close") or row.get("price")
-            run_str = run_short
-            body_lines = [
-                f"Score: {score}",
-                f"Latest Price: {price:.2f}" if isinstance(price, (float, int)) else f"Latest Price: {price}",
-                f"Run: {run_str}",
-                f"Crossed up from {prev} -> {score}",
-            ]
-            body = "\n".join([l for l in body_lines if l])
+            same_day = state.last_fired_local_date == trading_day
+            action_rank = ACTION_ORDER.get(action_code, 0)
+            last_action_rank = ACTION_ORDER.get(last_action, 0)
+            allow_realert = not same_day
+            if same_day:
+                upgrade = action_rank > last_action_rank
+                jump = (last_alert_score is not None) and (score - int(last_alert_score) >= cfg.score_jump_realert)
+                allow_realert = upgrade or jump
 
-            # Send notifications and record truthfully
-            channels_sent: Dict[str, Any] = {}
-            try:
-                # NTFY (warn loudly if topic missing)
-                if cfg.channels.get("ntfy", True):
-                    log.info("ntfy about to send", extra={"symbol": symbol, "run_id": run_str, "title": title})
-                    if not os.getenv("NTFY_TOPIC"):
-                        log.warning(
-                            "ntfy disabled: NTFY_TOPIC not set; skipping send",
-                            extra={"symbol": symbol, "run_id": run_str},
-                        )
-                        channels_sent["ntfy"] = False
-                    else:
-                        ok = bool(notify_ntfy(title=title, body=body, tags="chart_with_upwards_trend,rocket"))
-                        channels_sent["ntfy"] = ok
+            if not allow_realert:
+                _persist_state(repo_alerts, state, score, meta, passes, cooloff, last_action, last_alert_score, prev_run_id)
+                continue
 
-                # Telegram/Desktop toast (optional)
-                if cfg.channels.get("telegram", False) or cfg.channels.get("desktop", False):
-                    notify_tg_toast(
-                        title=title,
-                        body=body,
-                        severity="success",
-                        dedupe_tag=f"mom80:{symbol}:{trading_day.isoformat()}",
-                        enable_telegram=cfg.channels.get("telegram", False),
-                        enable_desktop=cfg.channels.get("desktop", False),
-                    )
-                    channels_sent["telegram"] = cfg.channels.get("telegram", False)
-                    channels_sent["desktop"] = cfg.channels.get("desktop", False)
+            channels_payload = {
+                "reason_codes": reason_codes,
+                "next_action": action_code,
+                "score": score,
+                "refs": debug_refs,
+            }
 
-            except Exception as e:
-                # Capture any send errors in the event record
-                channels_sent = {"error": str(e)}
-                log.exception("alert send failed", extra={"symbol": symbol, "run_id": run_str})
+            _send_notifications(symbol, score, action_code, run_id, cfg, channels_payload)
 
-            # Persist event + update state
-            repo.log_event(
+            fired += 1
+            meta.update({
+                "passes": 0,
+                "cooloff": cfg.cooloff_runs_after_alert,
+                "last_action": action_code,
+                "last_alert_score": score,
+            })
+            repo_alerts.log_event(
                 run_id=run_id or "",
                 symbol=symbol,
-                rule_code=RULE_MOMENTUM_GTE,
+                rule_code=RULE_CODE,
                 score=score,
-                channels_sent=channels_sent,
+                channels_sent=channels_payload,
             )
-            repo.upsert_state(
+            repo_alerts.upsert_state(
                 symbol,
-                RULE_MOMENTUM_GTE,
+                RULE_CODE,
                 last_score=score,
                 last_fired_at_utc=now_utc,
                 last_fired_local_date=trading_day,
-                last_fired_run_id=run_id,
+                last_fired_run_id=_format_run_meta(run_id, meta),
             )
-            fired += 1
-        s.commit()
+
+        session.commit()
     finally:
         try:
-            gen.close()
+            session_gen.close()
         except Exception:
             pass
-
-    # FIXED: proper final log (remove stray %s placeholders)
-    log.info("alerts evaluated", extra={"run_id": run_short, "fired": fired, "threshold": threshold, "loaded": len(items)})
     return fired
+
+
+def _evaluate_candidate(row: Dict[str, Any], score: int, cfg: AlertsConfig) -> Tuple[bool, str, List[str], Dict[str, Any]]:
+    reason_codes: List[str] = []
+    refs: Dict[str, Any] = {}
+
+    if not global_pre_gates(row):
+        return False, "NONE", ["gates:fail"], refs
+
+    action = compute_next_action(price=row.get("last"), indicators=row, position={})
+    action_code = action.get("code", "NONE")
+    if action_code not in {"BUY_BREAKOUT", "BUY_PULLBACK", "BUY_STARTER"}:
+        reason_codes.extend(action.get("reason_codes") or [])
+        reason_codes.append(f"action:{action_code}")
+        return False, action_code, reason_codes, refs
+
+    reason_codes.extend(action.get("reason_codes") or [])
+    regime = str(row.get("nifty_regime") or "").upper()
+    min_score = cfg.min_score
+    if regime == "DOWN":
+        min_score = cfg.regime_down_min_score
+        if cfg.block_starter_in_down and action_code == "BUY_STARTER":
+            reason_codes.append("regime_block:starter")
+            return False, action_code, reason_codes, refs
+    if score < min_score:
+        reason_codes.append(f"score<{min_score}")
+        return False, action_code, reason_codes, refs
+
+    if action_code == "BUY_BREAKOUT" and not _breadth_allows_breakout(row, cfg):
+        reason_codes.append("breadth:weak")
+        return False, action_code, reason_codes, refs
+
+    recent_fail = bool(row.get("recent_failed_breakout_10d"))
+    pivot_clear = _f(row.get("pivot_clear_pct"))
+    if action_code == "BUY_BREAKOUT" and recent_fail and (pivot_clear is None or pivot_clear < 1.0):
+        reason_codes.append("recent_fail_block")
+        return False, action_code, reason_codes, refs
+
+    asm_flags = row.get("asm_gsm_flags")
+    if asm_flags:
+        reason_codes.append("asm_gsm_block")
+        return False, action_code, reason_codes, refs
+
+    uc_hits = _f(row.get("upper_circuit_hits_60d"))
+    if uc_hits is not None and uc_hits > cfg.max_upper_circuit_hits:
+        reason_codes.append("uc_hits_block")
+        return False, action_code, reason_codes, refs
+
+    reason_codes.extend(row.get("reason_codes") or [])
+    refs.update(action.get("refs") or {})
+    refs["score"] = score
+    return True, action_code, reason_codes, refs
+
+
+def _persist_state(repo: AlertsRepo, state: AlertStateDTO, score: int, meta: Dict[str, Any], passes: int,
+                   cooloff: int, last_action: Optional[str], last_alert_score: Optional[int],
+                   prev_run_id: Optional[str]) -> None:
+    meta.update({
+        "passes": passes,
+        "cooloff": cooloff,
+        "last_action": last_action,
+        "last_alert_score": last_alert_score,
+    })
+    repo.upsert_state(
+        state.symbol,
+        RULE_CODE,
+        last_score=score,
+        last_fired_at_utc=state.last_fired_at_utc,
+        last_fired_local_date=state.last_fired_local_date,
+        last_fired_run_id=_format_run_meta(prev_run_id, meta),
+    )
+
+
+def _send_notifications(symbol: str, score: int, action_code: str, run_id: Optional[str],
+                        cfg: AlertsConfig, payload: Dict[str, Any]) -> None:
+    title = f"{action_code}: {symbol}"
+    body_lines = [
+        f"Score: {score}",
+        f"Action: {action_code}",
+        f"Run: {run_id or 'latest'}",
+        f"Reasons: {', '.join(payload.get('reason_codes', [])[:5])}",
+    ]
+    body = "\n".join(body_lines)
+
+    channels_sent: Dict[str, Any] = {}
+    if cfg.channels.get("ntfy", True):
+        if os.getenv("NTFY_TOPIC"):
+            ok = bool(notify_ntfy(title=title, body=body, tags="chart_with_upwards_trend"))
+            channels_sent["ntfy"] = ok
+        else:
+            log.warning("ntfy_topic_missing", extra={"symbol": symbol})
+            channels_sent["ntfy"] = False
+    if cfg.channels.get("telegram", False) or cfg.channels.get("desktop", False):
+        notify_tg_toast(
+            title=title,
+            body=body,
+            severity="success",
+            dedupe_tag=f"alert:{symbol}:{action_code}",
+            enable_telegram=cfg.channels.get("telegram", False),
+            enable_desktop=cfg.channels.get("desktop", False),
+        )
+        channels_sent["telegram"] = cfg.channels.get("telegram", False)
+        channels_sent["desktop"] = cfg.channels.get("desktop", False)
+    payload["channels_sent"] = channels_sent
+
+
+def run_id_to_iso(run_id: str) -> str:
+    if "T" in run_id:
+        if run_id.endswith("Z"):
+            return run_id
+        return f"{run_id}Z"
+    # assume YYYYMMDDHHMMSS
+    if len(run_id) >= 14:
+        return f"{run_id[0:4]}-{run_id[4:6]}-{run_id[6:8]}T{run_id[8:10]}:{run_id[10:12]}:{run_id[12:14]}Z"
+    return f"{run_id}Z"
+
+
+# Lazily import DB session generator to avoid circular import
+def get_session():
+    from app.core.db import get_session as _get_session
+
+    return _get_session()
+
+
+__all__ = ["evaluate_momentum_crossups"]
