@@ -2,7 +2,7 @@
 # backend/app/services/alerts.py
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, Iterable, Optional
 import logging
@@ -102,6 +102,83 @@ def _iter_scores_for_run(run_id: Optional[str]) -> Iterable[Dict[str, Any]]:
     return items
 
 
+def _parse_date_like(value: Any, tz: ZoneInfo) -> Optional[date]:
+    """Best-effort coercion of mixed date/datetime formats to a date object in the target tz."""
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        base = value if value.tzinfo else value.replace(tzinfo=tz)
+        return base.astimezone(tz).date()
+
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+
+    s = str(value).strip()
+    if not s:
+        return None
+
+    # Handle ISO8601 with trailing Z
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        dt = None
+
+    if dt is not None:
+        if dt.tzinfo:
+            return dt.astimezone(tz).date()
+        return dt.date()
+
+    for fmt, length in (("%Y%m%d%H%M%S", 14), ("%Y%m%d", 8), ("%Y-%m-%d", 10)):
+        if len(s) >= length:
+            try:
+                parsed = datetime.strptime(s[:length], fmt)
+                return parsed.date()
+            except ValueError:
+                continue
+
+    return None
+
+
+def _resolve_trading_day(
+    row: Dict[str, Any],
+    *,
+    tz: ZoneInfo,
+    default_day: Optional[date],
+) -> date:
+    """Choose the trading date for an alert row, falling back to run_id defaults."""
+    candidates = (
+        row.get("trading_day"),
+        row.get("trade_date"),
+        row.get("tradeDate"),
+        row.get("as_of"),
+        row.get("asof"),
+        row.get("as_of_date"),
+        row.get("date"),
+        row.get("timestamp"),
+    )
+    for cand in candidates:
+        chosen = _parse_date_like(cand, tz)
+        if chosen:
+            return chosen
+
+    row_run_id = row.get("run_id")
+    if row_run_id:
+        rid = ScoresRepo.run_id_to_date(str(row_run_id)) or str(row_run_id)
+        chosen = _parse_date_like(rid, tz)
+        if chosen:
+            return chosen
+
+    if default_day:
+        return default_day
+
+    # Last resort: use current trading day in configured tz
+    return datetime.now(timezone.utc).astimezone(tz).date()
+
+
 def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) -> int:
     run_short = (run_id or "")[:14]
     log.info("evaluate_momentum_crossups run_id=%s", run_short, extra={"run_id": run_short})
@@ -119,7 +196,12 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
     threshold = cfg.threshold_raw
     tz = ZoneInfo(cfg.tz_name or "Asia/Singapore")
     now_utc = datetime.now(timezone.utc)
-    local_day = now_utc.astimezone(tz).date()
+    run_id_day: Optional[date] = None
+    if isinstance(run_id, str):
+        rid_clean = run_id.strip()
+        if rid_clean:
+            rid_source = ScoresRepo.run_id_to_date(rid_clean) or rid_clean
+            run_id_day = _parse_date_like(rid_source, tz)
 
     items = list(_iter_scores_for_run(run_id))
 
@@ -164,6 +246,8 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
             except Exception:
                 continue
 
+            trading_day = _resolve_trading_day(row, tz=tz, default_day=run_id_day)
+
             state: AlertStateDTO = repo.get_state(symbol, RULE_MOMENTUM_GTE)
             prev = state.last_score if state.last_score is not None else 0
 
@@ -194,7 +278,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
                 )
                 continue
             # Once-per-day guard
-            if state.last_fired_local_date == local_day:
+            if state.last_fired_local_date == trading_day:
                 repo.upsert_state(
                     symbol,
                     RULE_MOMENTUM_GTE,
@@ -239,7 +323,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
                         title=title,
                         body=body,
                         severity="success",
-                        dedupe_tag=f"mom80:{symbol}:{local_day.isoformat()}",
+                        dedupe_tag=f"mom80:{symbol}:{trading_day.isoformat()}",
                         enable_telegram=cfg.channels.get("telegram", False),
                         enable_desktop=cfg.channels.get("desktop", False),
                     )
@@ -264,7 +348,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings: Dict[str, Any]) 
                 RULE_MOMENTUM_GTE,
                 last_score=score,
                 last_fired_at_utc=now_utc,
-                last_fired_local_date=local_day,
+                last_fired_local_date=trading_day,
                 last_fired_run_id=run_id,
             )
             fired += 1

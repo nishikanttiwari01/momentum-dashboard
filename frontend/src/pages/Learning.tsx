@@ -293,6 +293,31 @@ export default function Learning() {
               />
             </ListItem>
           </List>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', mb: 0.75 }}>
+              Exact scoring rule
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Score = Momentum (0-35) + Breakout Quality (0-30) + Accumulation (0-25) + Context (0-10), then the adjustments below.
+            </Typography>
+            <Stack spacing={0.75} sx={{ mt: 1 }}>
+              <Typography variant="body2">
+                <strong>Momentum (0-35):</strong> RSI bands award 0/8/14/20/14/8 points; ADX adds 0/5/10/13/15 with a +2 slope kicker when ADX slope is positive. If +DI is less than or equal to -DI, the ADX credit is halved.
+              </Typography>
+              <Typography variant="body2">
+                <strong>Breakout Quality (0-30):</strong> Up to 10 for trading at or making 52-week highs, up to 10 for pivot clearance (5 + 2.5 * clearance %, capped at 10), and up to 10 from base length plus squeeze flags.
+              </Typography>
+              <Typography variant="body2">
+                <strong>Accumulation (0-25):</strong> RelVol contributes 0-10, volume Z-score adds up to 5, OBV slope + moving average alignment adds 0/3/5, and delivery lift (when present) adds up to 5.
+              </Typography>
+              <Typography variant="body2">
+                <strong>Context (0-10):</strong> Regime scores supply 0/3/6 points and top-ranked sectors (ranks 1-4) add up to 4 more.
+              </Typography>
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Adjustments: +2 if ADX slope reaches 5 or more; -5 if RSI exceeds 80 or if ADX exceeds 45 while slope stays positive; subtract 1.5 points per pivot clearance percentage beyond 5% (capped at -10); -5 when ATR10% exceeds 8; -3 if a gap-up above 6% fades (close below midpoint). Final score is clamped to 0-100.
+            </Typography>
+          </Paper>
           <Typography variant="body2">Rule-of-thumb bands:</Typography>
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', mt: 0.5 }}>
             <BadgeChip category="MOMENTUM" label="≥ 85 Very High" />
