@@ -48,6 +48,15 @@ class AlertsConfig:
         # Fallback to top-level keys if nested structure absent
         meta = alerts.get("alerts", {})
         channels = alerts.get("channels", {})
+        alerts_inner = alerts.get("alerts", {})
+        cooloff_after_alert = alerts_inner.get(
+            "cooloff_runs_after_alert",
+            alerts_inner.get("cooloff_runs_after_sell", alerts.get("cooloff_runs_after_alert", alerts.get("cooloff_runs_after_sell", 2))),
+        )
+        cooloff_after_failed_bo = alerts_inner.get(
+            "cooloff_runs_after_failed_bo",
+            alerts.get("cooloff_runs_after_failed_bo", 3),
+        )
         return AlertsConfig(
             enabled=bool(alerts.get("enabled", True)),
             min_score=int(alerts.get("rules", {}).get("min_score", alerts.get("min_score", 70))),
@@ -55,13 +64,13 @@ class AlertsConfig:
             block_starter_in_down=bool(alerts.get("regime", {}).get("down", {}).get("block_starter", True)),
             persistence_runs=int(alerts.get("alerts", {}).get("persistence_runs_intraday", alerts.get("persistence_runs_intraday", 2))),
             score_jump_realert=int(alerts.get("alerts", {}).get("realert_score_jump", alerts.get("realert_score_jump", 10))),
-            cooloff_runs_after_alert=int(alerts.get("alerts", {}).get("cooloff_runs_after_sell", alerts.get("cooloff_runs_after_sell", 2))),
-            cooloff_runs_failed_breakout=int(alerts.get("alerts", {}).get("cooloff_runs_after_failed_bo", alerts.get("cooloff_runs_after_failed_bo", 3))),
+            cooloff_runs_after_alert=int(cooloff_after_alert),
+            cooloff_runs_failed_breakout=int(cooloff_after_failed_bo),
             suppress_open_minutes=int(alerts.get("alerts", {}).get("suppress_open_minutes", 15)),
             suppress_close_minutes=int(alerts.get("alerts", {}).get("suppress_close_minutes", 5)),
             min_breadth_breakout=float(alerts.get("breadth", {}).get("pct_above_50dma_min", 35)),
             max_upper_circuit_hits=int(alerts.get("india_safety", {}).get("max_upper_circuit_hits_60d", 2)),
-            tz_name=str(cfg.get("app", {}).get("timezone", alerts.get("timezone", "Asia/Kolkata"))),
+            tz_name=str(alerts.get("timezone", cfg.get("app", {}).get("timezone", "Asia/Kolkata"))),
             channels={
                 "telegram": bool(channels.get("telegram", False)),
                 "desktop": bool(channels.get("desktop", False)),
@@ -190,6 +199,14 @@ def evaluate_momentum_crossups(*, run_id: Optional[str], settings: Dict[str, Any
             if _within_suppressed_window(local_dt, cfg):
                 continue
 
+            market_time = local_dt.timetz() if hasattr(local_dt, "timetz") else local_dt.time()
+            is_eod = False
+            if market_time:
+                try:
+                    is_eod = (market_time.hour > 15) or (market_time.hour == 15 and market_time.minute >= 25)
+                except Exception:
+                    is_eod = False
+
             state = repo_alerts.get_state(symbol, RULE_CODE)
             prev_run_id, meta = _parse_run_meta(state.last_fired_run_id)
             passes = int(meta.get("passes", 0))
@@ -208,7 +225,7 @@ def evaluate_momentum_crossups(*, run_id: Optional[str], settings: Dict[str, Any
             else:
                 passes = 0
 
-            persistence_ok = passes >= cfg.persistence_runs
+            persistence_ok = (passes >= cfg.persistence_runs) or is_eod
             if not persistence_ok:
                 _persist_state(repo_alerts, state, score, meta, passes, cooloff, last_action, last_alert_score, prev_run_id)
                 continue

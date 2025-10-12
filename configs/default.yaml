@@ -52,7 +52,7 @@ alerts:
   min_score: 70
   persistence_runs_intraday: 2
   realert_score_jump: 10
-  cooloff_runs_after_sell: 2
+  cooloff_runs_after_alert: 2
   cooloff_runs_after_failed_bo: 3
   suppress_open_minutes: 15
   suppress_close_minutes: 5
@@ -152,6 +152,8 @@ features:
         min_adx14: 20
         min_relvol20: 1.8
         min_proximity_52w: -15
+    india_safety:
+      asm_gsm_symbols: []
   news:
     enabled: true
     ui:

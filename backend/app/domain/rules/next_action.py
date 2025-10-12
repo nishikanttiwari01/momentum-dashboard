@@ -163,6 +163,7 @@ def compute_next_action(*, price: Optional[float], indicators: Dict[str, Any], p
     price_now = _f(price) or _f(indicators.get("close") or indicators.get("last"))
     ind = dict(indicators)
     ind.setdefault("close", price_now)
+    regime = str(ind.get("nifty_regime") or "").upper()
 
     if position and position.get("entry_price_locked"):
         return _build_result(
@@ -277,7 +278,9 @@ def compute_next_action(*, price: Optional[float], indicators: Dict[str, Any], p
     obv_slope_ok_starter = _f(ind.get("obv_slope_10"))
     obv_slope_ok_starter = obv_slope_ok_starter is not None and obv_slope_ok_starter > 0
 
-    if prox_ok_starter and adx_ok_starter and relvol_ok_starter and obv_slope_ok_starter:
+    starter_allowed = regime != "DOWN"
+
+    if starter_allowed and prox_ok_starter and adx_ok_starter and relvol_ok_starter and obv_slope_ok_starter:
         codes = _reason_codes_common(ind)
         if mansfield is not None:
             codes.append(f"RS:{mansfield:.2f}")
@@ -290,6 +293,11 @@ def compute_next_action(*, price: Optional[float], indicators: Dict[str, Any], p
         }
         reasons = ["early_strength"]
         return _build_result("BUY_STARTER", text, reasons, refs, codes)
+
+    if not starter_allowed and prox_ok_starter and adx_ok_starter and relvol_ok_starter and obv_slope_ok_starter:
+        codes = _reason_codes_common(ind)
+        codes.append("starter_blocked:regime")
+        return _build_result("NONE", "Starter blocked in current regime", ["starter_blocked"], {}, codes)
 
     return _build_result("NONE", "No actionable setup", ["no_match"], {}, _reason_codes_common(ind))
 

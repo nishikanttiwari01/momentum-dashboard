@@ -26,7 +26,7 @@ import yfinance as yf
 # Phase 11 domain helpers (vectorized)
 from app.domain.indicators import compute_indicator_frame
 from app.domain.scoring import compute_score
-from app.domain.rules.next_action import global_pre_gates
+from app.domain.rules.next_action import global_pre_gates, compute_next_action
 
 log = logging.getLogger(__name__)
 
@@ -121,6 +121,48 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return compute_indicator_frame(df)
 
 
+def _resolve_nifty_regime(as_of_date: Optional[str]) -> Optional[str]:
+    df = _history_df("^NSEI", period="400d")
+    if df.empty:
+        return None
+    if as_of_date:
+        try:
+            cutoff = pd.to_datetime(as_of_date).date()
+            mask = pd.Series(df.index.date <= cutoff, index=df.index)
+            df = df.loc[mask[mask].index]
+        except Exception:
+            pass
+    if df.empty:
+        return None
+    ind = _compute_indicators(df)
+    if ind.empty:
+        return None
+    close_val = _maybe_float(df["close"].iloc[-1])
+    ema50 = _maybe_float(ind["ema50"].iloc[-1])
+    ema200 = _maybe_float(ind["ema200"].iloc[-1])
+    if close_val is None or ema50 is None or ema200 is None:
+        return None
+    if close_val > ema200 and ema50 > ema200:
+        return "UP"
+    if close_val < ema200:
+        return "DOWN"
+    return "NEUTRAL"
+
+
+def _count_upper_circuit_hits(df: pd.DataFrame, lookback: int = 60, threshold_pct: float = 9.9) -> int:
+    if df is None or df.empty or "close" not in df.columns:
+        return 0
+    try:
+        closes = df["close"].astype(float)
+    except Exception:
+        return 0
+    pct_change = closes.pct_change() * 100.0
+    window = pct_change.dropna().tail(lookback)
+    if window.empty:
+        return 0
+    return int((window >= threshold_pct).sum())
+
+
 # ---------------------- row construction ---------------------------
 
 def _maybe_float(v):
@@ -141,6 +183,9 @@ def _make_scores_row(
     run_id: str,
     df: pd.DataFrame,
     ind: pd.DataFrame,
+    breadth_hint: Optional[float] = None,
+    regime_hint: Optional[str] = None,
+    asm_hint: Optional[bool] = None,
 ) -> Dict[str, Any]:
     # Build the final Screener row for this symbol (spec 2025-10-12A).
     last = float(df["close"].iloc[-1]) if not df.empty else None
@@ -180,11 +225,12 @@ def _make_scores_row(
     ema50 = _maybe_float(r.get("ema50"))
     ema200 = _maybe_float(r.get("ema200"))
     atr14_pct = _maybe_float(r.get("atr14_pct"))
-    breadth_pct_50dma = _maybe_float(r.get("breadth_pct_50dma"))
-    nifty_regime = r.get("nifty_regime")
+    breadth_pct_50dma = breadth_hint if breadth_hint is not None else _maybe_float(r.get("breadth_pct_50dma"))
+    nifty_regime_raw = regime_hint if regime_hint is not None else r.get("nifty_regime")
+    nifty_regime = str(nifty_regime_raw).upper() if nifty_regime_raw else None
     mansfield_rs_52 = _maybe_float(r.get("mansfield_rs_52"))
-    asm_gsm_flags = r.get("asm_gsm_flags")
-    upper_circuit_hits_60d = _maybe_float(r.get("upper_circuit_hits_60d"))
+    asm_gsm_flags = bool(asm_hint) if asm_hint is not None else (bool(r.get("asm_gsm_flags")) if r.get("asm_gsm_flags") is not None else False)
+    upper_circuit_hits_60d = _count_upper_circuit_hits(df)
 
     score_inputs = {
         "proximity_52w_high_pct": prox_52w,
@@ -250,9 +296,7 @@ def _make_scores_row(
     reason_codes = list(score_bundle.reason_codes)
     if data_gaps:
         reason_codes.extend(f"missing:{gap}" for gap in sorted(set(data_gaps)))
-
-    recommendation = "Yes" if score >= 70 else "No"
-    reason = " | ".join(reason_codes[:6]) if reason_codes else score_bundle.band
+    score_reason_codes = list(reason_codes)
 
     components = score_bundle.components
     score_breakdown = {
@@ -320,12 +364,14 @@ def _make_scores_row(
         "rules_version": "2025-10-12A",
         "score_scale": "0-100",
         "badges": badges,
-        "recommendation": recommendation,
-        "reason": reason,
+        "recommendation": "No",
+        "buy": "No",
+        "reason": score_bundle.band,
         "as_of": as_of_iso,
         "run_id": run_id,
         "score_band": score_bundle.band,
-        "reason_codes": reason_codes,
+        "reason_codes": score_reason_codes,
+        "score_reason_codes": score_reason_codes,
         "score_breakdown": score_breakdown,
         "score_penalties": penalties_map,
         "score_components_raw": {
@@ -344,6 +390,38 @@ def _make_scores_row(
         row["pre_gates_pass"] = global_pre_gates({**row, "close": row.get("last")})
     except Exception:
         row["pre_gates_pass"] = False
+
+    try:
+        next_action = compute_next_action(price=row.get("last"), indicators=row, position={})
+    except Exception:
+        next_action = {"code": "NONE"}
+    next_action_code = str((next_action or {}).get("code") or "NONE").upper()
+    next_action_reasons = list(next_action.get("reason_codes") or [])
+    actionable = next_action_code in {"BUY_BREAKOUT", "BUY_PULLBACK", "BUY_STARTER"}
+
+    regime_for_threshold = str(row.get("nifty_regime") or "").upper()
+    min_score_required = 72 if regime_for_threshold == "DOWN" else 70
+    score_value = row.get("score")
+    meets_score = isinstance(score_value, (int, float)) and score_value >= min_score_required
+    yes = bool(row.get("pre_gates_pass") and actionable and meets_score)
+
+    row["recommendation"] = "Yes" if yes else "No"
+    row["buy"] = row["recommendation"]
+    row["next_action"] = next_action_code
+    row["next_action_code"] = next_action_code
+    row["next_action_reason_codes"] = next_action_reasons
+
+    combined_reason_codes = score_reason_codes[:]
+    if next_action_code != "NONE":
+        combined_reason_codes.append(f"next:{next_action_code}")
+    combined_reason_codes.extend(next_action_reasons)
+    combined_reason_codes = list(dict.fromkeys(combined_reason_codes))
+    if combined_reason_codes:
+        row["reason_codes"] = combined_reason_codes
+        row["reason"] = " | ".join(combined_reason_codes[:6])
+    else:
+        row["reason_codes"] = score_reason_codes
+        row["reason"] = score_bundle.band
 
     if row.get("liquidity") is None:
         try:
@@ -370,15 +448,10 @@ def _make_scores_row(
         if isinstance(adx_val, (int, float)):
             row["strength"] = "High" if adx_val >= 35 else ("Medium" if adx_val >= 20 else "Low")
 
-    if row.get("buy") is None and isinstance(row.get("score"), (int, float)):
-        row["buy"] = "Yes" if row["score"] >= 75 else "No"
-
     badges_in: List[Any] = row.get("badges") or []
-    has_action = any(isinstance(b, dict) and b.get("category") == "ACTION" for b in badges_in)
-    if not has_action and isinstance(row.get("score"), (int, float)):
-        badges_in.append(
-            {"category": "ACTION", "label": "Buy"} if row["score"] >= 75 else {"category": "ACTION", "label": "Watch"}
-        )
+    badges_in = [b for b in badges_in if not (isinstance(b, dict) and b.get("category") == "ACTION")]
+    badges_in.append({"category": "ACTION", "label": (next_action_code if yes else "Watch")})
+    row["badges"] = badges_in
 
     cls_categories = {"BREAKOUT", "MOMENTUM", "WATCH", "IGNORE"}
 
@@ -514,8 +587,18 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         except Exception:
             quotes = {}
 
+        features_cfg = getattr(cfg, "features", {}) or {}
+        momentum_features = features_cfg.get("momentum", {}) if isinstance(features_cfg, dict) else {}
+        india_safety_cfg = momentum_features.get("india_safety", {}) if isinstance(momentum_features, dict) else {}
+        asm_flag_symbols: set[str] = set()
+        raw_asm_flags = india_safety_cfg.get("asm_gsm_symbols") if isinstance(india_safety_cfg, dict) else None
+        if isinstance(raw_asm_flags, (list, tuple, set)):
+            asm_flag_symbols = {str(s).upper() for s in raw_asm_flags}
+
         # Compute full rows
-        rows: List[Dict[str, Any]] = []
+        prep_rows: List[Tuple[str, Dict[str, Any], pd.DataFrame, pd.DataFrame, bool]] = []
+        breadth_total = 0
+        breadth_above = 0
         for sym in symbols:
             df = _history_df(sym, period="400d")
             q = quotes.get(sym, {})
@@ -537,10 +620,43 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 continue
 
             ind = _compute_indicators(df_eff)
+            try:
+                last_for_breadth = float(df_eff["close"].iloc[-1])
+            except Exception:
+                last_for_breadth = None
+            try:
+                ema50_for_breadth = float(ind["ema50"].iloc[-1])
+            except Exception:
+                ema50_for_breadth = None
+            if last_for_breadth is not None and ema50_for_breadth is not None:
+                breadth_total += 1
+                if last_for_breadth >= ema50_for_breadth:
+                    breadth_above += 1
+            asm_flagged = sym.upper() in asm_flag_symbols
+            prep_rows.append((sym, q, df_eff, ind, asm_flagged))
+
+        breadth_pct = round((breadth_above * 100.0) / breadth_total, 2) if breadth_total else None
+        nifty_regime_value = _resolve_nifty_regime(as_of_date)
+        rows: List[Dict[str, Any]] = []
+        for sym, q, df_eff, ind, asm_flag in prep_rows:
             row = _make_scores_row(
-                symbol=sym, name=q.get("name"), sector=q.get("sector"),
-                as_of_iso=as_of_iso, run_id=job.run_id, df=df_eff, ind=ind
+                symbol=sym,
+                name=q.get("name"),
+                sector=q.get("sector"),
+                as_of_iso=as_of_iso,
+                run_id=job.run_id,
+                df=df_eff,
+                ind=ind,
+                breadth_hint=breadth_pct,
+                regime_hint=nifty_regime_value,
+                asm_hint=asm_flag,
             )
+            if breadth_pct is not None:
+                row["breadth_pct_50dma"] = breadth_pct
+            if nifty_regime_value is not None:
+                row["nifty_regime"] = nifty_regime_value
+            elif not row.get("nifty_regime"):
+                row["nifty_regime"] = "NEUTRAL"
             rows.append(row)
 
         rows_written = len(rows)
