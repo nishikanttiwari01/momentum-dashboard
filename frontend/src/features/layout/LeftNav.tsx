@@ -23,7 +23,7 @@ const items = [
   { to: '/', label: 'Dashboard', icon: <DashboardIcon /> },
   { to: '/screener', label: 'Screener', icon: <ListIcon /> },
   { to: '/news', label: 'News', icon: <ArticleIcon /> },
-  { to: '/history', label: 'Trades On', icon: <TrendingUpIcon  /> }, // ← renamed
+  { to: '/history', label: 'Trades', icon: <TrendingUpIcon  /> }, // ← renamed
   { to: '/learning', label: 'Learning', icon: <SchoolIcon /> },
   { to: '/watchlist', label: 'Watchlist', icon: <BookmarkIcon /> },
   { to: '/alerts', label: 'Alerts', icon: <NotificationsIcon /> },

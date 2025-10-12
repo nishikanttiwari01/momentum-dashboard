@@ -31,6 +31,7 @@ def test_close_and_reopen_records_history(tmp_path):
         assert len(rows) == 1
         record = rows[0]
         assert record["trade_on"] is False
+        assert record["qty"] == 10
         assert record["sell_price"] == pytest.approx(110.0)
         assert record["sold_at"] is not None
         assert record["realized_pl"] == pytest.approx(100.0)

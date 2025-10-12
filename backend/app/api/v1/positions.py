@@ -88,18 +88,9 @@ def update_position(
             raise HTTPException(status_code=400, detail="sell_price must be provided to close a trade")
 
     # Disallow entry_price_locked changes here (unlock->lock flow only)
-    row = repo.update_by_id(
-        id,
-        qty=fields.qty,
-        stop_now=fields.stop_now,
-        exit_close_threshold=fields.exit_close_threshold,
-        breakeven_active=fields.breakeven_active,
-        euphoria_on=fields.euphoria_on,
-        note=fields.note,
-        trade_on=fields.trade_on,
-        sell_price=fields.sell_price,
-        sold_at=fields.sold_at,
-    )
+    payload = fields.model_dump(exclude_unset=True)
+    payload.pop("entry_price_locked", None)
+    row = repo.update_by_id(id, **payload)
     if not row:
         raise HTTPException(status_code=500, detail="Update failed")
     return PositionOut.model_validate(row)
