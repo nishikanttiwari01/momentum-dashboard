@@ -16,6 +16,10 @@ export interface PositionUpdate {
   /** @nullable */
   qty?: number | null;
   /** @nullable */
+  sell_price?: number | null;
+  /** @nullable */
+  sold_at?: string | null;
+  /** @nullable */
   stop_now?: number | null;
   trade_on?: boolean;
 }

@@ -925,7 +925,7 @@ export const useGetInstrumentIndicators = <TData = Awaited<ReturnType<typeof get
 
 
 /**
- * @summary List positions (optionally filter by symbol)
+ * @summary List positions (optionally filter by symbol/status)
  */
 export const getApiV1Positions = (
     params?: GetApiV1PositionsParams, options?: AxiosRequestConfig
@@ -966,7 +966,7 @@ export type GetApiV1PositionsQueryResult = NonNullable<Awaited<ReturnType<typeof
 export type GetApiV1PositionsQueryError = AxiosError<unknown>
 
 /**
- * @summary List positions (optionally filter by symbol)
+ * @summary List positions (optionally filter by symbol/status)
  */
 export const useGetApiV1Positions = <TData = Awaited<ReturnType<typeof getApiV1Positions>>, TError = AxiosError<unknown>>(
  params?: GetApiV1PositionsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApiV1Positions>>, TError, TData>>, axios?: AxiosRequestConfig}
@@ -1100,7 +1100,7 @@ export const useGetApiV1PositionsSymbol = <TData = Awaited<ReturnType<typeof get
 
 
 /**
- * @summary Update mutable fields of a position
+ * @summary Update mutable fields of a position (including close)
  */
 export const putApiV1PositionsId = (
     id: number,
@@ -1139,7 +1139,7 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
     export type PutApiV1PositionsIdMutationError = AxiosError<void>
 
     /**
- * @summary Update mutable fields of a position
+ * @summary Update mutable fields of a position (including close)
  */
 export const usePutApiV1PositionsId = <TError = AxiosError<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof putApiV1PositionsId>>, TError,{id: number;data: PositionUpdate}, TContext>, axios?: AxiosRequestConfig}
@@ -1156,7 +1156,7 @@ export const usePutApiV1PositionsId = <TError = AxiosError<void>,
     }
     
 /**
- * @summary Unlock (delete row)
+ * @summary Soft-close a position (legacy delete)
  */
 export const deleteApiV1PositionsId = (
     id: number, options?: AxiosRequestConfig
@@ -1193,7 +1193,7 @@ const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
     export type DeleteApiV1PositionsIdMutationError = AxiosError<void>
 
     /**
- * @summary Unlock (delete row)
+ * @summary Soft-close a position (legacy delete)
  */
 export const useDeleteApiV1PositionsId = <TError = AxiosError<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteApiV1PositionsId>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}

@@ -10,6 +10,7 @@ import {
   DialogContent,
   DialogActions,
   Button,
+  TextField,
   Tabs,           // ⬅️ added
   Tab,            // ⬅️ added
   List,           // ⬅️ added
@@ -138,6 +139,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
   const [qtyLocal, setQtyLocal] = React.useState<string>(
     typeof qtyServer === 'number' ? String(qtyServer) : ''
   );
+  const activePosition = tradeOn ? (position ?? posFromDetail ?? null) : null;
 
   // Tabs state (0 = Overview, 1 = News)
   const [tab, setTab] = React.useState<number>(0);
@@ -216,6 +218,13 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
   // ⛳ gate to ignore sync effect while unlocking/refetching
   const unlockingRef = React.useRef(false);
 
+  const lockMut = useLockPosition();
+  const unlockMut = useUnlockPosition();
+  const [askConfirm, setAskConfirm] = React.useState(false);
+  const [sellPriceInput, setSellPriceInput] = React.useState('');
+  const [sellPriceError, setSellPriceError] = React.useState<string | null>(null);
+
+
   // keep in sync with server responses
   React.useEffect(() => {
     if (unlockingRef.current) return; // ignore during unlock window
@@ -236,19 +245,40 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
     computeSuggestedPriceStr,
   ]);
 
+  React.useEffect(() => {
+    if (!askConfirm) return;
+    const fallback =
+      typeof header?.price === 'number'
+        ? header.price
+        : typeof d?.price === 'number'
+        ? d?.price
+        : typeof refs?.entry_suggested === 'number'
+        ? refs.entry_suggested
+        : typeof roundedEffectiveEntry === 'number'
+        ? roundedEffectiveEntry
+        : undefined;
+    if (typeof fallback === 'number' && Number.isFinite(fallback)) {
+      setSellPriceInput(fallback.toFixed(2));
+    } else {
+      setSellPriceInput('');
+    }
+    setSellPriceError(null);
+  }, [askConfirm, header?.price, d?.price, refs?.entry_suggested, roundedEffectiveEntry]);
+
   const breakeven_active =
     String(ab?.breakeven_state || '').toUpperCase() === 'ACTIVE';
   const euphoria_on = String(ab?.euphoria_state || '').toUpperCase() === 'ON';
+
+  const formatDecimal = React.useCallback((value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '--';
+    return value.toFixed(2);
+  }, []);
 
   const alertTemplates = Array.isArray(d?.alert_templates)
     ? d.alert_templates.map((t: any) => ({
         label: t?.label ?? t?.code ?? t?.example ?? 'Alert',
       }))
     : [];
-
-  const lockMut = useLockPosition();
-  const unlockMut = useUnlockPosition();
-  const [askConfirm, setAskConfirm] = React.useState(false);
 
   async function lockNow() {
     const px =
@@ -277,19 +307,36 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
       return;
     }
 
-    // Optimistic local clear + pause sync while refetch catches up
+    const parsed = Number.parseFloat(sellPriceInput || '');
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setSellPriceError('Enter a valid sell price');
+      return;
+    }
+
+    const sellPrice = Number(parsed.toFixed(2));
+    const payload = {
+      trade_on: false,
+      sell_price: sellPrice,
+      sold_at: new Date().toISOString(),
+    } as const;
+
     unlockingRef.current = true;
-    setTradeOn(false);
-    setEntryPrice(computeSuggestedPriceStr()); // reset to clean suggestion
-    setQtyLocal('');                            // clear qty
+    setSellPriceError(null);
 
-    await unlockMut.mutateAsync({ id });
-    setAskConfirm(false);
-
-    await Promise.all([refetchPosition(), refetchDetail()]);
-
-    // allow sync again
-    unlockingRef.current = false;
+    try {
+      await unlockMut.mutateAsync({ id, data: payload });
+      setAskConfirm(false);
+      setTradeOn(false);
+      setEntryPrice(computeSuggestedPriceStr());
+      setQtyLocal('');
+      setSellPriceInput('');
+      await Promise.all([refetchPosition(), refetchDetail()]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to close trade';
+      setSellPriceError(message);
+    } finally {
+      unlockingRef.current = false;
+    }
   }
 
   return (
@@ -319,7 +366,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
         }}
       >
         <DrawerHeader
-          name={header?.name ?? d?.name ?? symbol ?? '—'}
+          name={header?.name ?? d?.name ?? symbol ?? '--'}
           sector={header?.sector ?? d?.sector}
           price={header?.price ?? d?.price}
           pctToday={pctToday}
@@ -354,6 +401,53 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
             />
 
             <IndicatorsGrid ind={ind} />
+
+            {tradeOn && activePosition ? (
+              <React.Fragment>
+                <SectionHeader>Active Position</SectionHeader>
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                    gap: 1.5,
+                    mb: 1.5,
+                  }}
+                >
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Entry Price
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {formatDecimal(activePosition?.entry_price_locked)}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Quantity
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {typeof activePosition?.qty === 'number' ? activePosition.qty : '--'}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Stop
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {formatDecimal(activePosition?.stop_now)}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Note
+                    </Typography>
+                    <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
+                      {activePosition?.note ? activePosition.note : '--'}
+                    </Typography>
+                  </Box>
+                </Box>
+              </React.Fragment>
+            ) : null}
 
             <EntryModule
               effectiveEntry={
@@ -531,15 +625,50 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
       </Box>
 
       {/* Unlock confirmation */}
-      <Dialog open={askConfirm} onClose={() => setAskConfirm(false)}>
-        <DialogTitle>Unlock trade?</DialogTitle>
-        <DialogContent>
-          Unlocking will clear the locked entry price for {sym}. Are you sure?
+      <Dialog
+        open={askConfirm}
+        onClose={() => {
+          setAskConfirm(false);
+          setSellPriceError(null);
+        }}
+      >
+        <DialogTitle>Close trade?</DialogTitle>
+        <DialogContent sx={{ pt: 2 }}>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Enter the sell price to mark {sym} as closed and capture realized P/L.
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            label="Sell price"
+            type="number"
+            value={sellPriceInput}
+            onChange={(event) => {
+              setSellPriceInput(event.target.value);
+              if (sellPriceError) setSellPriceError(null);
+            }}
+            inputProps={{ min: 0, step: '0.01' }}
+            error={Boolean(sellPriceError)}
+            helperText={sellPriceError || 'Example: 512.35'}
+          />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setAskConfirm(false)}>Cancel</Button>
-          <Button onClick={unlockNow} variant="contained" color="error">
-            Unlock
+          <Button
+            onClick={() => {
+              setAskConfirm(false);
+              setSellPriceError(null);
+            }}
+            disabled={unlockMut.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={unlockNow}
+            variant="contained"
+            color="error"
+            disabled={unlockMut.isPending}
+          >
+            Close trade
           </Button>
         </DialogActions>
       </Dialog>

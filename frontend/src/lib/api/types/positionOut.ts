@@ -19,6 +19,20 @@ export interface PositionOut {
   note?: string | null;
   /** @nullable */
   qty?: number | null;
+  /**
+   * Realized profit/loss (INR) when trade is closed.
+   * @nullable
+   */
+  realized_pl?: number | null;
+  /**
+   * Realized profit/loss percentage relative to entry.
+   * @nullable
+   */
+  realized_pl_pct?: number | null;
+  /** @nullable */
+  sell_price?: number | null;
+  /** @nullable */
+  sold_at?: string | null;
   /** @nullable */
   stop_now?: number | null;
   symbol: string;

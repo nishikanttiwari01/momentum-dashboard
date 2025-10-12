@@ -487,12 +487,17 @@ paths:
   /api/v1/positions:
     get:
       tags: [positions]
-      summary: List positions (optionally filter by symbol)
+      summary: List positions (optionally filter by symbol/status)
       parameters:
         - in: query
           name: symbol
           required: false
           schema: { type: string }
+        - in: query
+          name: active
+          required: false
+          schema: { type: boolean }
+          description: Filter by active (true) or inactive/closed (false) trades
       responses:
         "200":
           description: OK
@@ -538,7 +543,7 @@ paths:
   /api/v1/positions/{id}:
     put:
       tags: [positions]
-      summary: Update mutable fields of a position
+      summary: Update mutable fields of a position (including close)
       parameters:
         - in: path
           name: id
@@ -559,7 +564,7 @@ paths:
 
     delete:
       tags: [positions]
-      summary: Unlock (delete row)
+      summary: Soft-close a position (legacy delete)
       parameters:
         - in: path
           name: id
@@ -1637,6 +1642,24 @@ components:
         trade_on:
           type: boolean
           default: false
+        sell_price:
+          type: number
+          format: double
+          nullable: true
+        sold_at:
+          type: string
+          format: date-time
+          nullable: true
+        realized_pl:
+          type: number
+          format: double
+          nullable: true
+          description: Realized profit/loss (INR) when trade is closed.
+        realized_pl_pct:
+          type: number
+          format: double
+          nullable: true
+          description: Realized profit/loss percentage relative to entry.
         note:
           type: string
           nullable: true
@@ -1688,6 +1711,14 @@ components:
           type: boolean
         trade_on:
           type: boolean
+        sell_price:
+          type: number
+          format: double
+          nullable: true
+        sold_at:
+          type: string
+          format: date-time
+          nullable: true
         note:
           type: string
           nullable: true
@@ -1718,6 +1749,14 @@ components:
           type: number
           minimum: 0
           description: Close-below threshold to trigger exit (₹).
+        sell_price:
+          type: number
+          minimum: 0
+          description: Optional exit price when closing (INR).
+        sold_at:
+          type: string
+          format: date-time
+          description: Timestamp trade was closed (UTC).
         breakeven_active:
           type: boolean
           description: Whether breakeven rule is active.

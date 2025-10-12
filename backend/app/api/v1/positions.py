@@ -31,10 +31,13 @@ def _require_session():
 @router.get("", response_model=List[PositionOut])
 def list_positions(
     symbol: Optional[str] = Query(None),
+    active: Optional[bool] = Query(
+        None, description="Filter by active (true) or inactive (false) trades"
+    ),
     s: Session = Depends(_require_session()),
 ):
     repo = PositionsRepo(session=s)
-    rows = repo.list_positions(symbol=symbol)
+    rows = repo.list_positions(symbol=symbol, active=active)
     return [PositionOut.model_validate(r) for r in rows]
 
 
@@ -80,6 +83,10 @@ def update_position(
     if not repo.get_by_id(id):
         raise HTTPException(status_code=404, detail="Position not found")
 
+    if fields.trade_on is False:
+        if fields.sell_price is None or fields.sell_price <= 0:
+            raise HTTPException(status_code=400, detail="sell_price must be provided to close a trade")
+
     # Disallow entry_price_locked changes here (unlock->lock flow only)
     row = repo.update_by_id(
         id,
@@ -90,6 +97,8 @@ def update_position(
         euphoria_on=fields.euphoria_on,
         note=fields.note,
         trade_on=fields.trade_on,
+        sell_price=fields.sell_price,
+        sold_at=fields.sold_at,
     )
     if not row:
         raise HTTPException(status_code=500, detail="Update failed")

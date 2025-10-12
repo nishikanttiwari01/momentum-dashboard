@@ -73,7 +73,7 @@ class Watchlist(Base):
     __tablename__ = "watchlist"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
     note: Mapped[Optional[str]] = mapped_column(Text)
 
 
@@ -123,7 +123,7 @@ class Position(Base):
     __tablename__ = "positions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
 
     # must be nullable for unlock
     entry_price_locked: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -134,8 +134,13 @@ class Position(Base):
     breakeven_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     euphoria_on: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
-    # ✅ this is the missing one
     trade_on: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    sell_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sold_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_positions_symbol_trade_on", "symbol", "trade_on"),
+    )
 
     note: Mapped[Optional[str]] = mapped_column(Text)
 
@@ -153,5 +158,5 @@ class SnapshotPin(Base):
     __tablename__ = "snapshot_pins"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    symbol: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
     run_id: Mapped[str] = mapped_column(String(20), index=True)

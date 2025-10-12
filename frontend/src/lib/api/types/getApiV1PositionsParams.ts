@@ -8,4 +8,8 @@
 
 export type GetApiV1PositionsParams = {
 symbol?: string;
+/**
+ * Filter by active (true) or inactive/closed (false) trades
+ */
+active?: boolean;
 };

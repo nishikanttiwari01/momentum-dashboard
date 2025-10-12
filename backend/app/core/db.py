@@ -42,6 +42,7 @@ def _alembic_upgrade_head(sqlite_path: str) -> None:
     try:
         backend_dir = Path(__file__).resolve().parents[2]
         cfg = AlembicConfig(str(backend_dir / "alembic.ini"))
+        cfg.set_main_option("script_location", str(backend_dir / "alembic"))
         # Use posix path + short timeout to avoid indefinite lock waits on Windows
         db_url = f"sqlite:///{Path(sqlite_path).resolve().as_posix()}?timeout=2.0"
         cfg.set_main_option("sqlalchemy.url", db_url)

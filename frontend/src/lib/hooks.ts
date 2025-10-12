@@ -399,6 +399,10 @@ export type PositionOut = {
   breakeven_active?: boolean;
   euphoria_on?: boolean;
   trade_on?: boolean;
+   sell_price?: number | null;
+   sold_at?: string | null;
+   realized_pl?: number | null;
+   realized_pl_pct?: number | null;
   note?: string | null;
   created_at?: string;
   updated_at?: string;
@@ -450,22 +454,26 @@ export function useLockPosition() {
   });
 }
 
-// Unlock trade (delete position row)
+// Close trade (mark inactive with sell info)
 export function useUnlockPosition() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id }: { id: number }) => {
-      const res = await fetch(`/api/v1/positions/${id}`, { method: 'DELETE' });
-      // 204 is expected; some stacks still return 200 with empty body
-      if (!(res.status === 204 || res.ok)) {
-        throw new Error(`Unlock failed: ${res.status}`);
+    mutationFn: async ({ id, data }: { id: number; data: Partial<PositionOut> }) => {
+      const res = await fetch(`/api/v1/positions/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(detail || `Unlock failed: ${res.status}`);
       }
-      return id;
+      return (await res.json()) as PositionOut;
     },
-    // Caller refetches detail/position; we don't know the symbol here
-    onSuccess: () => {
-      // optional: could invalidate all 'position' queries, but not necessary
-      // qc.invalidateQueries({ queryKey: ['position'] });
+    onSuccess: (pos) => {
+      if (pos?.symbol) {
+        qc.invalidateQueries({ queryKey: ['position', pos.symbol] });
+      }
     },
   });
 }

@@ -36,6 +36,13 @@ export interface PositionUpsert {
    */
   qty?: number;
   /**
+   * Optional exit price when closing (INR).
+   * @minimum 0
+   */
+  sell_price?: number;
+  /** Timestamp trade was closed (UTC). */
+  sold_at?: string;
+  /**
    * Current trailing/soft stop level (₹).
    * @minimum 0
    */
