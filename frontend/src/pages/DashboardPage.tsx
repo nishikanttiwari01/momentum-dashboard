@@ -23,6 +23,7 @@ import { useGetTopMovers } from '@/lib/api/client';
 import { TopMoversPeriod } from '@/lib/api/types';
 import type { TopMoverEntry, TopMoversPeriod as TopMoversPeriodValue } from '@/lib/api/types';
 import MomentumTable from '../components/MomentumTable';
+import SectorHeatmap from '../components/SectorHeatmap';
 
 const PERIOD_OPTIONS: { label: string; value: TopMoversPeriodValue }[] = [
   { label: '1 Day', value: TopMoversPeriod['1d'] },
@@ -135,7 +136,9 @@ export default function Dashboard() {
   };
 
   return (
-    <>
+    <Stack spacing={3}>
+      <SectorHeatmap refetchIntervalMs={refetchIntervalMs} />
+
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
           <Typography variant="subtitle2">Top Movers</Typography>
@@ -171,7 +174,7 @@ export default function Dashboard() {
         )}
       </Paper>
 
-      <Paper sx={{ p: 2, width: '100%', mt: 3 }}>
+      <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
           <Typography variant="subtitle2">Screener</Typography>
           <Typography variant="caption" color="text.secondary">
@@ -189,7 +192,6 @@ export default function Dashboard() {
           />
         </Box>
       </Paper>
-    </>
+    </Stack>
   );
 }
-

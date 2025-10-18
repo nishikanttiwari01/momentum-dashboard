@@ -7,6 +7,7 @@
  */
 
 export * from './addToWatchlistBody';
+export * from './advanceDeclineSummary';
 export * from './alertRule';
 export * from './alertRuleChannels';
 export * from './alertRuleConditions';
@@ -42,6 +43,7 @@ export * from './getApiV1ScreenerUniverse';
 export * from './getInstrumentIndicatorsParams';
 export * from './getInstrumentPricesParams';
 export * from './getLearning200';
+export * from './getMomentumHeatmapParams';
 export * from './getTopMoversParams';
 export * from './getTopMoversPeriod';
 export * from './getWatchlist200';
@@ -74,6 +76,17 @@ export * from './meter';
 export * from './meterBasis';
 export * from './meterLevel';
 export * from './meterThresholds';
+export * from './momentumHeatmapConstituent';
+export * from './momentumHeatmapIndustry';
+export * from './momentumHeatmapIndustryAllOf';
+export * from './momentumHeatmapIndustryAllOfLevel';
+export * from './momentumHeatmapNodeBase';
+export * from './momentumHeatmapResponse';
+export * from './momentumHeatmapResponseMetadata';
+export * from './momentumHeatmapResponseSession';
+export * from './momentumHeatmapSector';
+export * from './momentumHeatmapSectorAllOf';
+export * from './momentumHeatmapSectorAllOfLevel';
 export * from './newsAttributionItem';
 export * from './newsAttributionItemDecision';
 export * from './newsCard';

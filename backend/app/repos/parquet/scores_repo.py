@@ -329,12 +329,19 @@ class ScoresRepo:
                 if alias in row and canon not in row:
                     row[canon] = row.get(alias)
 
-            # Canonical score: full → basic → legacy
+            # If both are None, keep whatever 'score' exists (legacy), else None
+            # Canonical score: full → basic_normalized → basic (legacy)
             if row.get("score_full") is not None:
                 row["score"] = row["score_full"]
+            elif row.get("score_basic_normalized") is not None:
+                row["score"] = row["score_basic_normalized"]
             elif row.get("score_basic") is not None:
-                row["score"] = row["score_basic"]
-            # If both are None, keep whatever 'score' exists (legacy), else None
+                # Older snapshots may only have score_basic.
+                # Treat it as canonical if it looks like a 0..100 value.
+                try:
+                    row["score"] = int(float(row["score_basic"]))
+                except Exception:
+                    pass
 
             # score_scale default
             if not row.get("score_scale"):

@@ -1,0 +1,12 @@
+    response_model=DrawerDetail,
+)
+def get_instrument_detail(
+    symbol: str = Path(..., description="Canonical ticker (e.g., RELIANCE.NS)"),
+    run_id: Optional[str] = Query(None, description="Snapshot run_id; absent → pinned or latest"),
+    deps: DetailDeps = Depends(_deps_runtime),
+) -> DrawerDetail:
+    # Normalize symbol for robustness against case/format drift
+    canonical_symbol = (symbol or "").strip().upper()
+
+    log.info("detail GET", extra={"symbol": canonical_symbol, "run_id_qp": run_id})
+

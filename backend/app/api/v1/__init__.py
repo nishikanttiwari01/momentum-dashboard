@@ -13,6 +13,7 @@ from . import settings
 from . import runs
 from . import scan
 from . import positions
+from . import momentum
 
 __all__: list[str] = [
     "health",
@@ -24,4 +25,5 @@ __all__: list[str] = [
     "runs",
     "scan",
     "positions",
+    "momentum",
 ]

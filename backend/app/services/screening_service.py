@@ -260,8 +260,17 @@ def _make_scores_row(
     }
     score_bundle = compute_score(score_inputs)
 
-    score_basic = score_bundle.score_basic
-    score_basic_normalized = score_basic
+    score_bundle = compute_score(score_inputs)
+    # domain.scoring returns score_basic on a 0..100 scale now.
+    # Contract requires BOTH:
+    # - score_basic (0..12 legacy)
+    # - score_basic_normalized (0..100)
+    score_basic_normalized = int(score_bundle.score_basic) if score_bundle.score_basic is not None else None
+    score_basic = (
+        int(round((score_basic_normalized / 100.0) * 12.0))
+        if score_basic_normalized is not None
+        else None
+    )    
     score_full = score_bundle.score_full
     badges = score_bundle.badges or []
 
@@ -286,7 +295,7 @@ def _make_scores_row(
     if score_full is not None and not data_gaps:
         score = int(score_full)
     else:
-        score = int(score_basic) if score_basic is not None else 0
+        score = int(score_basic_normalized) if score_basic_normalized is not None else 0
         stale = True
         score_source = "basic_fallback" if score_full is None else "full_incomplete"
 
@@ -454,6 +463,14 @@ def _make_scores_row(
     row["badges"] = badges_in
 
     cls_categories = {"BREAKOUT", "MOMENTUM", "WATCH", "IGNORE"}
+    badge_remap = {
+        "BAND": "MOMENTUM",
+        "PRICE": "MOMENTUM",
+        "VOLUME": "MOMENTUM",
+        "TREND": "MOMENTUM",
+        "INFO": "WATCH",
+        "DATA": "WATCH",
+    }
 
     def _code_to_category(code: str) -> Optional[str]:
         c = (code or "").upper()
@@ -485,12 +502,25 @@ def _make_scores_row(
             category = b.get("category")
             if not category:
                 cat_from_code = _code_to_category(str(b.get("code", "")))
-                category = cat_from_code or "INFO"
-            norm_badges.append({"category": str(category), "label": str(label)})
+                category = cat_from_code or ""
+            cat_upper = str(category or "").strip().upper()
+            cat_upper = badge_remap.get(cat_upper, cat_upper)
+            if cat_upper not in cls_categories and cat_upper != "ACTION":
+                cat_upper = "WATCH"
+            norm_badges.append({"category": cat_upper, "label": str(label).strip()})
         else:
-            norm_badges.append({"category": "INFO", "label": str(b)})
+            norm_badges.append({"category": "WATCH", "label": str(b).strip()})
 
-    row["badges"] = norm_badges
+    normalized_final: List[Dict[str, str]] = []
+    for badge in norm_badges:
+        cat = str((badge or {}).get("category") or "").strip().upper()
+        lab = str((badge or {}).get("label") or "").strip()
+        cat = badge_remap.get(cat, cat)
+        if cat not in cls_categories and cat != "ACTION":
+            cat = "WATCH"
+        normalized_final.append({"category": cat, "label": lab})
+
+    row["badges"] = normalized_final
 
     return row
 

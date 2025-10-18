@@ -15,6 +15,7 @@ tags:
 - name: Instruments
 - name: Positions
 - name: Snapshots
+- name: Momentum
 - name: Alerts
 - name: Watchlist
 - name: History
@@ -1064,6 +1065,114 @@ paths:
               schema:
                 $ref: "#/components/schemas/NewsWindowListResponse"
 
+  /api/v1/momentum/heatmap:
+    get:
+      tags:
+      - Momentum
+      summary: NSE sector and industry momentum heatmap snapshot
+      operationId: getMomentumHeatmap
+      parameters:
+      - $ref: '#/components/parameters/IfNoneMatch'
+      - in: query
+        name: as_of
+        required: false
+        description: >
+          Optional trading date (YYYY-MM-DD, IST) to retrieve a historical snapshot; defaults to the latest available run.
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: include_industries
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: Include industry-level breakdown nested within each sector.
+      - in: query
+        name: include_constituents
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: Include top/bottom constituent momentum summaries for each node.
+      responses:
+        '200':
+          description: Momentum heatmap snapshot
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MomentumHeatmapResponse'
+              examples:
+                example:
+                  value:
+                    as_of: '2025-10-12T10:45:00+05:30'
+                    trade_date: '2025-10-10'
+                    session: cash
+                    run_id: '20251012104500'
+                    source: nse
+                    latency_sec: 120
+                    sectors:
+                    - name: NIFTY IT
+                      symbol: NIFTYIT
+                      change_1d: 1.85
+                      change_1w: 3.12
+                      change_1m: 7.9
+                      momentum_score: 0.82
+                      turnover_ratio: 1.4
+                      total_turnover_cr: 3250.7
+                      last_updated: '2025-10-12T10:43:00+05:30'
+                      advance_decline:
+                        advancers: 18
+                        decliners: 4
+                        unchanged: 0
+                      industries:
+                      - name: IT Services
+                        symbol: NSEITSE
+                        change_1d: 1.9
+                        change_1w: 3.5
+                        change_1m: 8.4
+                        momentum_score: 0.85
+                        turnover_ratio: 1.5
+                        last_updated: '2025-10-12T10:43:00+05:30'
+                        leaders:
+                        - symbol: TCS
+                          name: Tata Consultancy Services
+                          last_price: 3725.5
+                          change_1d: 2.1
+                          change_1w: 4.3
+                          change_1m: 9.6
+                          momentum_score: 0.88
+                          turnover_ratio: 1.8
+                          weight_pct: 24.3
+                      leaders:
+                      - symbol: INFY
+                        name: Infosys
+                        last_price: 1498.4
+                        change_1d: 2.0
+                        change_1w: 3.1
+                        change_1m: 8.0
+                        momentum_score: 0.79
+                        turnover_ratio: 1.6
+                        weight_pct: 18.7
+                      laggards:
+                      - symbol: LTI
+                        name: LTIMindtree
+                        last_price: 5550.1
+                        change_1d: -0.6
+                        change_1w: 0.2
+                        change_1m: 3.4
+                        momentum_score: 0.41
+                        turnover_ratio: 0.9
+                        weight_pct: 6.2
+                    notes:
+                    - Sector momentum computed from NSE index series (price return %).
+                    - Turnover ratio compares current traded value vs 20-day average.
+        '304':
+          description: Not Modified
+
                 
 components:
   parameters:
@@ -1273,6 +1382,214 @@ components:
           type: string
         count:
           type: integer
+
+    AdvanceDeclineSummary:
+      type: object
+      description: Advancer/decliner counts within a basket.
+      required: [advancers, decliners]
+      properties:
+        advancers:
+          type: integer
+          minimum: 0
+        decliners:
+          type: integer
+          minimum: 0
+        unchanged:
+          type: integer
+          minimum: 0
+          nullable: true
+
+    MomentumHeatmapNodeBase:
+      type: object
+      description: Shared momentum metrics for sectors and industries.
+      required:
+      - name
+      - symbol
+      - change_1d
+      - change_1w
+      - change_1m
+      - turnover_ratio
+      - last_updated
+      properties:
+        name:
+          type: string
+          example: NIFTY IT
+        symbol:
+          type: string
+          example: NIFTYIT
+        change_1d:
+          type: number
+          format: float
+          description: Percentage change versus the previous close.
+        change_1w:
+          type: number
+          format: float
+          description: Percentage change over the trailing 5 trading days.
+        change_1m:
+          type: number
+          format: float
+          description: Percentage change over the trailing 21 trading days.
+        momentum_score:
+          type: number
+          format: float
+          minimum: -1
+          maximum: 1
+          nullable: true
+          description: Normalized composite score combining price & breadth factors.
+        turnover_ratio:
+          type: number
+          format: float
+          minimum: 0
+          description: Current traded value divided by the 20-session average.
+        turnover_label:
+          type: string
+          nullable: true
+          description: Preformatted turnover string (e.g., "1.4x").
+        last_updated:
+          type: string
+          format: date-time
+          description: IST timestamp when the last datapoint was observed.
+        note:
+          type: string
+          nullable: true
+
+    MomentumHeatmapConstituent:
+      type: object
+      required: [symbol, name, last_price, change_1d]
+      properties:
+        symbol:
+          type: string
+          example: INFY
+        name:
+          type: string
+          example: Infosys
+        last_price:
+          type: number
+          format: float
+          description: Last traded price in INR.
+        change_1d:
+          type: number
+          format: float
+        change_1w:
+          type: number
+          format: float
+          nullable: true
+        change_1m:
+          type: number
+          format: float
+          nullable: true
+        momentum_score:
+          type: number
+          format: float
+          nullable: true
+        turnover_ratio:
+          type: number
+          format: float
+          minimum: 0
+          nullable: true
+        avg_turnover_cr:
+          type: number
+          format: float
+          nullable: true
+          description: Average traded value (20-day) in INR crore.
+        weight_pct:
+          type: number
+          format: float
+          nullable: true
+          description: Weight of this constituent inside its parent basket.
+
+    MomentumHeatmapIndustry:
+      allOf:
+      - $ref: '#/components/schemas/MomentumHeatmapNodeBase'
+      - type: object
+        properties:
+          level:
+            type: string
+            enum: [industry]
+          parent_symbol:
+            type: string
+            description: NSE sector symbol this industry rolls into.
+          total_turnover_cr:
+            type: number
+            format: float
+            nullable: true
+          leaders:
+            type: array
+            items:
+              $ref: '#/components/schemas/MomentumHeatmapConstituent'
+          laggards:
+            type: array
+            items:
+              $ref: '#/components/schemas/MomentumHeatmapConstituent'
+
+    MomentumHeatmapSector:
+      allOf:
+      - $ref: '#/components/schemas/MomentumHeatmapNodeBase'
+      - type: object
+        properties:
+          level:
+            type: string
+            enum: [sector]
+          total_turnover_cr:
+            type: number
+            format: float
+            nullable: true
+            description: NSE traded value for the index (INR crore).
+          advance_decline:
+            $ref: '#/components/schemas/AdvanceDeclineSummary'
+          industries:
+            type: array
+            items:
+              $ref: '#/components/schemas/MomentumHeatmapIndustry'
+          leaders:
+            type: array
+            items:
+              $ref: '#/components/schemas/MomentumHeatmapConstituent'
+          laggards:
+            type: array
+            items:
+              $ref: '#/components/schemas/MomentumHeatmapConstituent'
+
+    MomentumHeatmapResponse:
+      type: object
+      required: [as_of, trade_date, session, sectors]
+      properties:
+        as_of:
+          type: string
+          format: date-time
+          description: IST timestamp when this snapshot was computed.
+        trade_date:
+          type: string
+          format: date
+          description: Trading date aligned to NSE calendar.
+        session:
+          type: string
+          enum: [pre, cash, post, closed]
+          description: NSE market session corresponding to the data.
+        run_id:
+          $ref: '#/components/schemas/RunId'
+        source:
+          type: string
+          example: nse
+        latency_sec:
+          type: integer
+          minimum: 0
+          description: Age in seconds of the newest upstream datapoint.
+        sectors:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/MomentumHeatmapSector'
+        notes:
+          type: array
+          items:
+            type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+
     Score:
       type: object
       properties:

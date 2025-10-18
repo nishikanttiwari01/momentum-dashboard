@@ -491,14 +491,36 @@ def list_screener(
         # Normalize badges → contract shape {category,label}
         badges = r.get("badges") or []
         norm_badges: List[dict] = []
+        allowed_categories = {"BREAKOUT", "MOMENTUM", "WATCH", "IGNORE", "ACTION"}
+        badge_remap = {
+            "BAND": "MOMENTUM",
+            "PRICE": "MOMENTUM",
+            "VOLUME": "MOMENTUM",
+            "TREND": "MOMENTUM",
+            "INFO": "WATCH",
+            "DATA": "WATCH",
+        }
+
         for b in badges:
             if isinstance(b, dict) and "category" in b and "label" in b:
-                norm_badges.append({"category": b["category"], "label": b["label"]})
+                cat = str(b["category"]).strip().upper()
+                cat = badge_remap.get(cat, cat)
+                if cat not in allowed_categories:
+                    cat = "WATCH"
+                norm_badges.append({"category": cat, "label": str(b["label"])})
             elif isinstance(b, dict):
                 norm_badges.append(_badge_to_contract_shape(b))
             elif isinstance(b, str):
                 # extremely defensive: turn free-text into a WATCH badge
                 norm_badges.append({"category": "WATCH", "label": b})
+        for b in norm_badges:
+            b["category"] = str(b["category"]).strip().upper()
+            if b["category"] not in allowed_categories:
+                log.error(
+                    "screener: badge normalization failed",
+                    extra={"raw": badges, "normalized": norm_badges},
+                )
+                b["category"] = "WATCH"
         r["badges"] = norm_badges
         # Clean up legacy helper
         r.pop("ret_1w", None)

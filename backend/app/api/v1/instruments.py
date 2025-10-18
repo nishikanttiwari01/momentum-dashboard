@@ -121,6 +121,55 @@ def get_instrument_detail(
     raw = build_drawer_detail(canonical_symbol, resolved_run_id, deps)
     log.info("detail built", extra={"keys": list(raw.keys())})
 
+    # Hard clamp score_basic fields to contract bounds (defensive against legacy parquet values)
+    raw_sb_before = raw.get("score_breakdown")
+    log.debug(
+        "detail score_breakdown pre-normalization",
+        extra={"symbol": canonical_symbol, "score_breakdown": str(raw_sb_before)},
+    )
+
+    try:
+        sb_container = raw.get("score_breakdown")
+        if isinstance(sb_container, dict):
+            sb_dict = dict(sb_container)
+        elif hasattr(sb_container, "model_dump"):
+            sb_dict = sb_container.model_dump()
+        elif hasattr(sb_container, "__dict__"):
+            sb_dict = dict(sb_container.__dict__)
+        else:
+            sb_dict = {}
+
+        sb_basic = sb_dict.get("score_basic")
+        if isinstance(sb_basic, str):
+            try:
+                sb_basic = float(sb_basic)
+            except ValueError:
+                sb_basic = None
+        if isinstance(sb_basic, (int, float)):
+            sb_dict["score_basic"] = max(0, min(int(sb_basic), 12))
+        else:
+            sb_dict["score_basic"] = None
+
+        sb_basic_norm = sb_dict.get("score_basic_normalized")
+        if isinstance(sb_basic_norm, str):
+            try:
+                sb_basic_norm = float(sb_basic_norm)
+            except ValueError:
+                sb_basic_norm = None
+        if isinstance(sb_basic_norm, (int, float)):
+            sb_dict["score_basic_normalized"] = max(0.0, min(float(sb_basic_norm), 100.0))
+        else:
+            sb_dict["score_basic_normalized"] = None
+
+        raw["score_breakdown"] = sb_dict
+    except Exception:
+        log.exception("detail score_breakdown normalization failed", extra={"symbol": canonical_symbol})
+    else:
+        log.debug(
+            "detail score_breakdown post-normalization",
+            extra={"symbol": canonical_symbol, "score_breakdown": str(raw.get("score_breakdown"))},
+        )
+
     # 5) Validate explicitly so we log exact mismatches
     try:
         model = DrawerDetail.model_validate(raw)

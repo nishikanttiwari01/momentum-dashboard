@@ -410,14 +410,6 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
     [],
   );
 
-  if (query.isError) {
-    return (
-      <Alert severity="error" sx={{ m: 1 }}>
-        Failed to load screener
-      </Alert>
-    );
-  }
-
   const boxSx = React.useMemo(() => ({
     width: '100%',
     minWidth: 0,           // let children shrink
@@ -426,6 +418,14 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
     minHeight: 0,          // important for flexbox overflow
     overflowX: 'hidden',   // avoid page-level horizontal scroll
   }), []);
+
+  if (query.isError) {
+    return (
+      <Alert severity="error" sx={{ m: 1 }}>
+        Failed to load screener
+      </Alert>
+    );
+  }
 
   return (
     <Box className="datagrid-elevated" sx={boxSx}>

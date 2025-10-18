@@ -1,0 +1,234 @@
+import * as React from 'react';
+import {
+  alpha,
+  useTheme,
+} from '@mui/material/styles';
+import {
+  Box,
+  Chip,
+  CircularProgress,
+  Grid,
+  Paper,
+  Stack,
+  Tooltip,
+  Typography,
+} from '@mui/material';
+import dayjs from 'dayjs';
+
+import { useGetMomentumHeatmap } from '@/lib/api/client';
+import type { MomentumHeatmapSector } from '@/lib/api/types';
+
+const percentFormatter = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 2,
+  signDisplay: 'exceptZero',
+});
+
+const ratioFormatter = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 2,
+});
+
+const momentFormatter = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 2,
+  signDisplay: 'exceptZero',
+});
+
+const turnoverLabel = (value?: number | null) =>
+  value == null ? '—' : `${ratioFormatter.format(value)}×`;
+const percentLabel = (value?: number | null) =>
+  value == null ? '—' : `${percentFormatter.format(value)}%`;
+
+const useTileColors = (delta: number) => {
+  const theme = useTheme();
+  const abs = Math.abs(delta);
+  const intensity = Math.min(abs / 6, 1);
+  const base = delta >= 0 ? theme.palette.success.main : theme.palette.error.main;
+  return {
+    chipColor: delta >= 0 ? 'success' : 'error',
+    borderColor: alpha(base, 0.6),
+    background: alpha(base, 0.12 + intensity * 0.25),
+  };
+};
+
+type HeatmapCardProps = {
+  sector: MomentumHeatmapSector;
+};
+
+const HeatmapCard: React.FC<HeatmapCardProps> = ({ sector }) => {
+  const colors = useTileColors(sector.change_1d ?? 0);
+
+  return (
+    <Box
+      sx={{
+        p: 2,
+        height: '100%',
+        borderRadius: 2,
+        bgcolor: colors.background,
+        border: '1px solid',
+        borderColor: colors.borderColor,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1.5,
+      }}
+    >
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+        <Box>
+          <Typography variant="subtitle2" sx={{ lineHeight: 1.1 }}>
+            {sector.name}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {sector.symbol}
+          </Typography>
+        </Box>
+        <Chip
+          size="small"
+          color={colors.chipColor as any}
+          label={percentLabel(sector.change_1d)}
+          sx={{ fontWeight: 600 }}
+        />
+      </Stack>
+
+      <Grid container spacing={1}>
+        <Grid item xs={6}>
+          <Metric label="1 Week" value={percentLabel(sector.change_1w)} tone={sector.change_1w ?? 0} />
+        </Grid>
+        <Grid item xs={6}>
+          <Metric label="1 Month" value={percentLabel(sector.change_1m)} tone={sector.change_1m ?? 0} />
+        </Grid>
+        <Grid item xs={6}>
+          <Metric label="Turnover" value={turnoverLabel(sector.turnover_ratio)} />
+        </Grid>
+        <Grid item xs={6}>
+          <Metric
+            label="Momentum"
+            value={
+              sector.momentum_score != null ? momentFormatter.format(sector.momentum_score * 100) + '%' : '—'
+            }
+            tone={sector.momentum_score ?? 0}
+          />
+        </Grid>
+      </Grid>
+
+      {sector.advance_decline ? (
+        <Typography variant="caption" color="text.secondary">
+          Adv {sector.advance_decline.advancers} • Dec {sector.advance_decline.decliners}
+          {sector.advance_decline.unchanged != null
+            ? ` • Unch ${sector.advance_decline.unchanged}`
+            : null}
+        </Typography>
+      ) : null}
+
+      {sector.note ? (
+        <Tooltip title={sector.note}>
+          <Typography variant="caption" color="warning.main" noWrap>
+            {sector.note}
+          </Typography>
+        </Tooltip>
+      ) : null}
+    </Box>
+  );
+};
+
+type MetricProps = {
+  label: string;
+  value: string;
+  tone?: number;
+};
+
+const Metric: React.FC<MetricProps> = ({ label, value, tone }) => {
+  const theme = useTheme();
+  let color: string | undefined;
+  if (tone != null) {
+    color =
+      tone > 0
+        ? theme.palette.success.dark
+        : tone < 0
+        ? theme.palette.error.dark
+        : theme.palette.text.secondary;
+  }
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+      <Typography variant="body2" fontWeight={600} color={color}>
+        {value}
+      </Typography>
+    </Box>
+  );
+};
+
+type SectorHeatmapProps = {
+  refetchIntervalMs?: number | false;
+};
+
+const REFRESH_DEFAULT = 5 * 60 * 1000;
+
+const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
+  const heatmapQuery = useGetMomentumHeatmap(
+    { include_constituents: false, include_industries: false },
+    {
+      axios: { baseURL: '' },
+      query: {
+        staleTime: 60_000,
+        refetchInterval: refetchIntervalMs ?? REFRESH_DEFAULT,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        retry: 1,
+      },
+    }
+  );
+
+  const payload = heatmapQuery.data?.data;
+
+  return (
+    <Paper sx={{ p: 2, width: '100%' }}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
+        <Box>
+          <Typography variant="subtitle2">Sector Momentum Heatmap</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {payload
+              ? `Session ${payload.session.toUpperCase()} • ${dayjs(payload.as_of).format('DD MMM, HH:mm')} IST`
+              : 'Awaiting latest data'}
+          </Typography>
+        </Box>
+        {payload ? (
+          <Typography variant="caption" color="text.secondary">
+            NSE trade date {dayjs(payload.trade_date).format('DD MMM YYYY')}
+          </Typography>
+        ) : null}
+      </Stack>
+
+      {heatmapQuery.isError ? (
+        <Typography color="error">Unable to load momentum heatmap right now.</Typography>
+      ) : heatmapQuery.isLoading && !payload ? (
+        <Stack alignItems="center" justifyContent="center" sx={{ py: 4 }}>
+          <CircularProgress size={24} />
+        </Stack>
+      ) : payload ? (
+        <Grid container spacing={2}>
+          {payload.sectors.map((sector) => (
+            <Grid item key={sector.symbol} xs={12} sm={6} md={4} lg={3}>
+              <HeatmapCard sector={sector} />
+            </Grid>
+          ))}
+        </Grid>
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          No sectors available.
+        </Typography>
+      )}
+
+      {payload?.notes?.length ? (
+        <Box sx={{ mt: 2 }}>
+          {payload.notes.map((note) => (
+            <Typography key={note} variant="caption" color="text.secondary" display="block">
+              • {note}
+            </Typography>
+          ))}
+        </Box>
+      ) : null}
+    </Paper>
+  );
+};
+
+export default SectorHeatmap;

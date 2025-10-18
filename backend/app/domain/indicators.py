@@ -129,7 +129,7 @@ def _adjusted_ohlcv(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
         close_f = _ensure_float(close)
         adj_f = _ensure_float(adj_close)
         factor = adj_f / close_f.replace(0.0, np.nan)
-        factor = factor.replace([np.inf, -np.inf], np.nan).fillna(method="ffill").fillna(1.0)
+        factor = factor.replace([np.inf, -np.inf], np.nan).ffill().fillna(1.0)
 
     adj = pd.DataFrame(index=df.index)
     for col in ("open", "high", "low", "close"):

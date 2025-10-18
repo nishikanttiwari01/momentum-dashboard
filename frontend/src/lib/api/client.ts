@@ -35,6 +35,7 @@ import type {
   GetInstrumentIndicatorsParams,
   GetInstrumentPricesParams,
   GetLearning200,
+  GetMomentumHeatmapParams,
   GetTopMoversParams,
   GetWatchlist200,
   HealthState,
@@ -50,6 +51,7 @@ import type {
   ListSnapshotPinsParams,
   ListUniverse200,
   ListUniverseParams,
+  MomentumHeatmapResponse,
   NewsIngestBatch,
   NewsListResponse,
   NewsMoveAttributionResponse,
@@ -2365,6 +2367,67 @@ export const useListAllNews = <TData = Awaited<ReturnType<typeof listAllNews>>, 
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
   const queryOptions = getListAllNewsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * @summary NSE sector and industry momentum heatmap snapshot
+ */
+export const getMomentumHeatmap = (
+    params?: GetMomentumHeatmapParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<MomentumHeatmapResponse>> => {
+    
+    return axios.default.get(
+      `/api/v1/momentum/heatmap`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getGetMomentumHeatmapQueryKey = (params?: GetMomentumHeatmapParams,) => {
+    return [`/api/v1/momentum/heatmap`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getGetMomentumHeatmapQueryOptions = <TData = Awaited<ReturnType<typeof getMomentumHeatmap>>, TError = AxiosError<void>>(params?: GetMomentumHeatmapParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMomentumHeatmap>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMomentumHeatmapQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMomentumHeatmap>>> = ({ signal }) => getMomentumHeatmap(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMomentumHeatmap>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMomentumHeatmapQueryResult = NonNullable<Awaited<ReturnType<typeof getMomentumHeatmap>>>
+export type GetMomentumHeatmapQueryError = AxiosError<void>
+
+/**
+ * @summary NSE sector and industry momentum heatmap snapshot
+ */
+export const useGetMomentumHeatmap = <TData = Awaited<ReturnType<typeof getMomentumHeatmap>>, TError = AxiosError<void>>(
+ params?: GetMomentumHeatmapParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMomentumHeatmap>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getGetMomentumHeatmapQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

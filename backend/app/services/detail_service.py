@@ -614,8 +614,29 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
     meters, next_action = _compute_meters_and_next(price_now, indicators, position)
     meters = _normalize_meters_to_contract(meters, indicators)
 
+    valid_codes = {
+        "SELL_NOW",
+        "SELL_TOMORROW",
+        "HOLD",
+        "HOLD_BREAKEVEN",
+        "HOLD_TIGHT",
+        "BUY_BREAKOUT",
+        "BUY_PULLBACK",
+        "BUY_STARTER",
+        "WATCH",
+        "IGNORE",
+    }
+
     if isinstance(next_action, dict):
         code = (next_action.get("code") or "").upper()
+        if code not in valid_codes:
+            log.warning("next: invalid code '%s' -> coercing to WATCH", code)
+            code = "WATCH"
+            next_action["code"] = code
+            if not next_action.get("text"):
+                next_action["text"] = "Watch (no clear signal)"
+        else:
+            next_action["code"] = code
         refs_in = next_action.get("refs") or {}
         numeric_refs = {k: float(v) for k, v in refs_in.items() if _is_number(v)}
         # Only attach entry bands/suggestion for pullback or starter
@@ -673,11 +694,47 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
 
     trend_rank = _trend_rank_from_adx(indicators["adx14"])
     breakout_quality = _breakout_quality(indicators.get("proximity_52w_high_pct"), (row or {}).get("pivot_clear_pct"), (row or {}).get("base_len_bars"))
+    score_basic_raw = (row or {}).get("score_basic")
+    if isinstance(score_basic_raw, str):
+        try:
+            score_basic_raw = float(score_basic_raw)
+        except ValueError:
+            score_basic_raw = None
+
+    # Prefer normalized→12 mapping if raw appears to be 0..100
+    score_basic_norm_raw = (row or {}).get("score_basic_normalized")
+    if isinstance(score_basic_norm_raw, str):
+        try:
+            score_basic_norm_raw = float(score_basic_norm_raw)
+        except ValueError:
+            score_basic_norm_raw = None
+    if isinstance(score_basic_raw, (int, float)) and float(score_basic_raw) <= 12:
+        score_basic = max(0, min(int(score_basic_raw), 12))
+    elif isinstance(score_basic_norm_raw, (int, float)):
+        score_basic = max(0, min(int(round((float(score_basic_norm_raw) / 100.0) * 12.0)), 12))
+    elif isinstance(score_basic_raw, (int, float)):
+        # Fallback: raw > 12 but normalized missing — scale heuristically
+        score_basic = max(0, min(int(round((float(score_basic_raw) / 100.0) * 12.0)), 12))
+    else:
+        score_basic = None
+    # Normalized (0..100)
+    if isinstance(score_basic_norm_raw, (int, float)):
+        score_basic_normalized = max(0, min(float(score_basic_norm_raw), 100))
+    elif isinstance(score_basic_raw, (int, float)) and float(score_basic_raw) > 12:
+        score_basic_normalized = max(0, min(float(score_basic_raw), 100))
+    else:
+        score_basic_normalized = None
+
+
+    if row is not None:
+        row["score_basic"] = score_basic
+        row["score_basic_normalized"] = score_basic_normalized
+
     score_breakdown = {
         "score_total_0_100": int(score) if score is not None else 0,
         "score_source": (row or {}).get("score_source"),
-        "score_basic": (row or {}).get("score_basic"),
-        "score_basic_normalized": (row or {}).get("score_basic_normalized"),
+        "score_basic": score_basic,
+        "score_basic_normalized": score_basic_normalized,
         "rsi14": indicators["rsi14"],
         "adx14": indicators["adx14"],
         "relvol20": indicators["relvol20"],
