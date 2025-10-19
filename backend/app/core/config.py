@@ -157,7 +157,6 @@ class Settings(BaseModel):
         return str((REPO_ROOT / 'backend' / 'parquet').resolve())
 
 
-
 # ----------------- YAML helpers (unchanged) -----------------
 def _read_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
@@ -211,6 +210,22 @@ def load() -> Settings:
     app_config = os.getenv("APP_CONFIG")
     if app_config:
         data = _maybe_merge(data, Path(app_config).expanduser().resolve())
+
+    # --- Back-compat shim: features.news.enabled -> news.enabled if not set ---
+    # (Lets older UIs control backend until all configs are migrated.)
+    try:
+        features_cfg = data.get("features") or {}
+        if isinstance(features_cfg, dict):
+            fnews = features_cfg.get("news") or {}
+            if isinstance(fnews, dict) and ("enabled" in fnews):
+                news_cfg = data.get("news") or {}
+                if not isinstance(news_cfg, dict):
+                    news_cfg = {}
+                if "enabled" not in news_cfg:
+                    data = _deep_merge(data, {"news": {"enabled": bool(fnews.get("enabled"))}})
+    except Exception:
+        # best effort; never block load()
+        pass
 
     # Normalize storage paths to be absolute (respect repo root for relative inputs)
     storage_cfg = data.get("storage") or {}
@@ -327,6 +342,13 @@ def load() -> Settings:
 def api_prefix() -> str:
     return load().app.api_prefix
 
-# Back-compat for modules that still call get_settings()
+# Convenience helpers
 def get_settings() -> Settings:
     return load()
+
+def news_enabled() -> bool:
+    """Convenience boolean for gates at call sites; defaults to True if misconfigured."""
+    try:
+        return bool(load().news.enabled)
+    except Exception:
+        return True

@@ -2,8 +2,11 @@ from __future__ import annotations
 from typing import Dict, Any
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
+import logging
 from .base import DeliveryResult
 from .. import persist as P
+
+log = logging.getLogger(__name__)
 
 # simple in-process rate counters keyed by channel -> (window_minute, count)
 _RATE_BUCKET: dict[str, tuple[int, int]] = {}
@@ -20,11 +23,14 @@ def _in_quiet_hours(now_local: datetime, quiet_hours: dict[str, Any], severity: 
         t = now_local.time()
         a, b = time(hh_from, mm_from), time(hh_to, mm_to)
         if a <= b:
-            return a <= t < b
+            in_window = a <= t < b
         else:
             # spans midnight
-            return not (b <= t < a)
-    except Exception:
+            in_window = not (b <= t < a)
+        log.debug("Quiet hours check time=%s window=%s-%s severity=%s => %s", t, a, b, severity, in_window)
+        return in_window
+    except Exception as exc:
+        log.warning("Quiet hours parsing failed data=%s error=%s", quiet_hours, exc)
         return False
 
 def _rate_ok(channel: str, limit_per_minute: int) -> bool:
@@ -34,10 +40,19 @@ def _rate_ok(channel: str, limit_per_minute: int) -> bool:
     prev = _RATE_BUCKET.get(channel)
     if not prev or prev[0] != now_min:
         _RATE_BUCKET[channel] = (now_min, 1)
+        log.debug("Rate bucket reset channel=%s minute=%s", channel, now_min)
         return True
     if prev[1] < limit_per_minute:
         _RATE_BUCKET[channel] = (prev[0], prev[1] + 1)
+        log.debug(
+            "Rate bucket increment channel=%s minute=%s count=%s limit=%s",
+            channel,
+            prev[0],
+            prev[1] + 1,
+            limit_per_minute,
+        )
         return True
+    log.info("Channel %s exceeded rate limit %s/min for window=%s", channel, limit_per_minute, prev[0])
     return False
 
 def _merge_channel_cfg(defaults: dict, override: dict | None) -> dict:
@@ -45,6 +60,7 @@ def _merge_channel_cfg(defaults: dict, override: dict | None) -> dict:
     if override:
         for k, v in override.items():
             out[k] = v
+    log.debug("Merged channel cfg defaults_keys=%s override_keys=%s", list((defaults or {}).keys()), list((override or {}).keys()))
     return out
 
 def deliver_event(
@@ -64,9 +80,18 @@ def deliver_event(
     """
     summary: Dict[str, Any] = {}
     now_local = datetime.now(ZoneInfo(local_tz))
+    log.info(
+        "Delivering alert event id=%s rule=%s severity=%s channels=%s",
+        event["id"],
+        event["rule_code"],
+        severity,
+        list((channels_cfg or {}).keys()),
+    )
 
     # Quiet hours check (per event, before any channel)
     is_quiet = _in_quiet_hours(now_local, quiet_hours or {}, severity)
+    if is_quiet:
+        log.info("Quiet hours active for severity=%s event_id=%s", severity, event["id"])
 
     retry_cfg = ((send_policy or {}).get("retry")) or {}
     attempts = int(retry_cfg.get("attempts", 1))
@@ -81,10 +106,12 @@ def deliver_event(
     def run_channel(name: str, sender_func, limit_per_min: int, chan_cfg: dict[str, Any]):
         nonlocal summary
         if not chan_cfg or not chan_cfg.get("enabled", False):
+            log.debug("Channel %s disabled via config", name)
             return
         # idempotency: skip if already SENT for this (event, channel)
         if P.delivery_exists(conn, event_id=event["id"], channel=name):
             summary[name] = {"status": "SKIPPED", "reason": "DUPLICATE"}
+            log.debug("Channel %s already delivered for event_id=%s", name, event["id"])
             return
 
         if is_quiet:
@@ -92,6 +119,7 @@ def deliver_event(
                               attempt_no=1, response_code=None,
                               response_meta={"reason": "QUIET_HOURS"})
             summary[name] = {"status": "SKIPPED", "reason": "QUIET_HOURS"}
+            log.debug("Channel %s skipped due to quiet hours event_id=%s", name, event["id"])
             return
 
         if not _rate_ok(name, limit_per_min):
@@ -99,13 +127,16 @@ def deliver_event(
                               attempt_no=1, response_code=None,
                               response_meta={"reason": "RATELIMIT"})
             summary[name] = {"status": "SKIPPED", "reason": "RATELIMIT"}
+            log.warning("Channel %s rate limited; event_id=%s", name, event["id"])
             return
 
         last_result: DeliveryResult | None = None
         for i in range(1, max(1, attempts) + 1):
             try:
+                log.debug("Channel %s attempt=%s sending event_id=%s", name, i, event["id"])
                 last_result = sender_func(event, content, chan_cfg)
             except Exception as e:
+                log.exception("Channel %s attempt=%s failed event_id=%s", name, i, event["id"], exc_info=True)
                 last_result = DeliveryResult(status="FAILED", response_code=None, response_meta={"error": repr(e)}, attempts=i)
 
             # persist attempt
@@ -118,11 +149,14 @@ def deliver_event(
                               response_meta=last_result.response_meta)
 
             if last_result.status == "SENT":
+                log.info("Channel %s sent event_id=%s code=%s", name, event["id"], last_result.response_code)
                 break
             # backoff if another attempt remains
             if i < attempts and backoff:
                 from time import sleep
-                sleep(backoff[min(i-1, len(backoff)-1)])
+                wait = backoff[min(i-1, len(backoff)-1)]
+                log.debug("Channel %s backing off %s seconds before attempt %s", name, wait, i + 1)
+                sleep(wait)
 
         summary[name] = {
             "status": last_result.status if last_result else "FAILED",
@@ -146,4 +180,5 @@ def deliver_event(
 
     # Save summary back to the event row
     P.update_event_channels_summary(conn, event_id=event["id"], summary=summary)
+    log.info("Delivery summary event_id=%s summary=%s", event["id"], summary)
     return summary

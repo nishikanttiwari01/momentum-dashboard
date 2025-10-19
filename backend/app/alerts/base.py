@@ -2,7 +2,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Callable
 from datetime import datetime, date
+import logging
 from .types import Mode, Severity
+
+log = logging.getLogger(__name__)
 
 MetricGetter = Callable[[str, str], Any]  # (symbol, metric_name) -> value
 
@@ -30,8 +33,11 @@ class EvalContext:
     def metric(self, symbol: str, name: str, default: Any = None) -> Any:
         try:
             v = self.metric_getter(symbol, name)
+            if v is None:
+                log.debug("Metric %s for %s missing, returning default=%r", name, symbol, default)
             return v if v is not None else default
         except Exception:
+            log.exception("Metric getter raised for symbol=%s metric=%s; returning default=%r", symbol, name, default)
             return default
 
 @dataclass
@@ -50,4 +56,5 @@ class BaseRule:
     CODE = "GENERIC"
 
     def evaluate(self, ctx: EvalContext, symbol: str) -> Optional[EvalResult]:
+        log.debug("BaseRule.evaluate called for %s without implementation", self.__class__.__name__)
         raise NotImplementedError("implement in rule module")

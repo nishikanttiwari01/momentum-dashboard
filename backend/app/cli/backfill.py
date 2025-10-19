@@ -460,6 +460,20 @@ def _run_eod_alerts(trading_day: date) -> None:
             pass
 # =============================================================================
 
+# --- NEW: tiny helper to read the top-level news.enabled gate -----------------
+def _news_enabled() -> bool:
+    try:
+        # Prefer the convenience helper if present
+        if hasattr(_cfg_mod, "news_enabled"):
+            return bool(_cfg_mod.news_enabled())
+        # Fallback to direct Settings access
+        return bool(_cfg_mod.load().news.enabled)
+    except Exception as e:
+        log.warning("news_enabled_resolve_failed", extra={"error": str(e)})
+        # Preserve historical behavior (enabled) if config is unreadable
+        return True
+# -----------------------------------------------------------------------------
+
 
 def main(argv: list[str] | None = None) -> int:
     _setup_logging()
@@ -531,85 +545,85 @@ def main(argv: list[str] | None = None) -> int:
             # NEWS: run only when backfill actually wrote a new daily snapshot
             wrote_new = (status == 201) or (rows_written > 0)
             if wrote_new:
-                provider_cmd_env = (os.getenv("NEWS_PROVIDER_CMD") or "").strip()
-                provider_cmd = provider_cmd_env or None
-                log.info("news_backfill_provider_resolved", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
+                # === NEW: obey top-level news.enabled gate ===
+                if not _news_enabled():
+                    log.info("news_backfill_skipped(disabled)", extra={"date": d.isoformat()})
+                else:
+                    provider_cmd_env = (os.getenv("NEWS_PROVIDER_CMD") or "").strip()
+                    provider_cmd = provider_cmd_env or None
+                    log.info("news_backfill_provider_resolved", extra={"date": d.isoformat(), "provider_cmd": provider_cmd_env or "internal"})
 
-                from app.cli.news_pull import run_backfill as run_news_backfill  # local import
+                    from app.cli.news_pull import run_backfill as run_news_backfill  # local import
 
-                news_concurrency = 1
-                conc_env = (os.getenv("NEWS_CONCURRENCY") or "").strip()
-                #conc_env = 20
-                log.info(
-                    "conc_env= %s", conc_env)
-                if conc_env:
-                    try:
-                        news_concurrency = int(conc_env)
-                    except ValueError:
-                        log.warning(
-                            "news_concurrency_invalid",
-                            extra={"date": d.isoformat(), "value": conc_env},
-                        )
-                        news_concurrency = 1
-                if news_concurrency < 1:
                     news_concurrency = 1
+                    conc_env = (os.getenv("NEWS_CONCURRENCY") or "").strip()
+                    log.info("conc_env= %s", conc_env)
+                    if conc_env:
+                        try:
+                            news_concurrency = int(conc_env)
+                        except ValueError:
+                            log.warning(
+                                "news_concurrency_invalid",
+                                extra={"date": d.isoformat(), "value": conc_env},
+                            )
+                            news_concurrency = 1
+                    if news_concurrency < 1:
+                        news_concurrency = 1
 
-                shard_size: Optional[int] = None
-                shard_env = (os.getenv("NEWS_SHARD_SIZE") or "").strip()
-                #shard_env = 50
-                log.info(
-                    "shard_env= %s", shard_env)
-                if shard_env:
-                    try:
-                        parsed = int(shard_env)
-                        if parsed > 0:
-                            shard_size = parsed
-                    except ValueError:
-                        log.warning(
-                            "news_shard_size_invalid",
-                            extra={"date": d.isoformat(), "value": shard_env},
-                        )
+                    shard_size: Optional[int] = None
+                    shard_env = (os.getenv("NEWS_SHARD_SIZE") or "").strip()
+                    log.info("shard_env= %s", shard_env)
+                    if shard_env:
+                        try:
+                            parsed = int(shard_env)
+                            if parsed > 0:
+                                shard_size = parsed
+                        except ValueError:
+                            log.warning(
+                                "news_shard_size_invalid",
+                                extra={"date": d.isoformat(), "value": shard_env},
+                            )
 
-                symbols_file_env = (os.getenv("NEWS_SYMBOLS_FILE") or "").strip()
-                symbols_all_file = symbols_file_env or None
+                    symbols_file_env = (os.getenv("NEWS_SYMBOLS_FILE") or "").strip()
+                    symbols_all_file = symbols_file_env or None
 
-                log.info(
-                    "news_backfill_begin",
-                    extra={
-                        "date": d.isoformat(),
-                        "provider_cmd": provider_cmd_env or "internal",
-                        "concurrency": news_concurrency,
-                        "shard_size": (shard_size or 0),
-                        "symbols_file": bool(symbols_all_file),
-                    },
-                )
-
-                try:
-                    run_news_backfill(
-                        api_base=API,
-                        trading_day=d,
-                        provider_cmd=provider_cmd,
-                        extra_env={},
-                        symbols_all_file=symbols_all_file,
-                        symbol_limit=None,
-                        shard_size=shard_size,
-                        concurrency=news_concurrency,
-                    )
                     log.info(
-                        "news_backfill_ok",
-                        extra={
-                            "date": d.isoformat(),
-                            "mode": ("multi" if news_concurrency > 1 else "single"),
-                        },
-                    )
-                except Exception:
-                    log.exception(
-                        "news_backfill_failed",
+                        "news_backfill_begin",
                         extra={
                             "date": d.isoformat(),
                             "provider_cmd": provider_cmd_env or "internal",
+                            "concurrency": news_concurrency,
+                            "shard_size": (shard_size or 0),
+                            "symbols_file": bool(symbols_all_file),
                         },
                     )
+
+                    try:
+                        run_news_backfill(
+                            api_base=API,
+                            trading_day=d,
+                            provider_cmd=provider_cmd,
+                            extra_env={},
+                            symbols_all_file=symbols_all_file,
+                            symbol_limit=None,
+                            shard_size=shard_size,
+                            concurrency=news_concurrency,
+                        )
+                        log.info(
+                            "news_backfill_ok",
+                            extra={
+                                "date": d.isoformat(),
+                                "mode": ("multi" if news_concurrency > 1 else "single"),
+                            },
+                        )
+                    except Exception:
+                        log.exception(
+                            "news_backfill_failed",
+                            extra={
+                                "date": d.isoformat(),
+                                "provider_cmd": provider_cmd_env or "internal",
+                            },
+                        )
 
             if _should_export_utilities(status, resp) and d not in exported_dates:
                 # Always wait briefly for daily snapshot visibility (commit marker or parquet)

@@ -116,6 +116,7 @@ features:
       show_sector_macro: true
       right_drawer_hours: 168
 news:
+  enabled: false
   trading_timezone: Asia/Kolkata
   storage:
     parquet_root: data/parquet/news_clusters

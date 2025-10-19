@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Iterable, Dict, Any
 from datetime import datetime, date
+import logging
 from sqlalchemy.engine import Connection
 from .types import Mode
 from .base import EvalContext
@@ -10,6 +11,8 @@ from . import persist as P
 from . import dedupe as D
 from .registry import load_rule_handler
 from .channels.dispatcher import deliver_event
+
+log = logging.getLogger(__name__)
 
 def _resolve_defaults(alerts_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return alerts_cfg.get("defaults", {}) if alerts_cfg else {}
@@ -56,11 +59,23 @@ def run(
     created_ids: list[int] = []
     per_symbol_count: dict[str, int] = {}
 
+    log.info(
+        "Alert orchestrator start mode=%s trading_date=%s now=%s items=%d profile=%s bucket_ord=%s",
+        mode.value,
+        trading_date,
+        now_utc,
+        len(items),
+        profile,
+        bucket_ord,
+    )
+
     for item in items:
         mode_cfg = item.get("mode") or {}
         if mode == Mode.INTRADAY and not mode_cfg.get("allow_intraday", False):
+            log.debug("Skipping item %s for mode=%s (intraday disabled)", item.get("code"), mode.value)
             continue
         if mode == Mode.EOD and not mode_cfg.get("allow_eod", True):
+            log.debug("Skipping item %s for mode=%s (EOD disabled)", item.get("code"), mode.value)
             continue
 
         rule_code = str(item["code"]).strip()
@@ -74,11 +89,22 @@ def run(
         channels_cfg_eff.update(chan_override)
 
         handler = load_rule_handler(rule_code)
+        log.debug("Loaded handler for rule=%s channels=%s", rule_code, list(channels_cfg_eff.keys()))
 
         for sym in symbols:
             if len(created_ids) >= max_alerts_per_run:
+                log.warning(
+                    "Alert run reached max_alerts_per_run=%s; stopping further processing",
+                    max_alerts_per_run,
+                )
                 break
             if per_symbol_count.get(sym, 0) >= max_per_symbol_day:
+                log.debug(
+                    "Skipping symbol=%s rule=%s due to per-symbol limit %s",
+                    sym,
+                    rule_code,
+                    max_per_symbol_day,
+                )
                 continue
 
             ctx = EvalContext(
@@ -96,17 +122,31 @@ def run(
 
             ok, capture = F.passes_filters(ctx, sym, item_filters)
             if not ok:
+                log.debug("Filters failed for rule=%s symbol=%s capture=%s", rule_code, sym, capture)
                 continue
 
             if D.exists_event(conn, rule_code, sym, trading_date, mode.value, bucket_ord):
+                log.debug(
+                    "Existing event found rule=%s symbol=%s trading_date=%s bucket=%s; skipping",
+                    rule_code,
+                    sym,
+                    trading_date,
+                    bucket_ord,
+                )
                 continue
             if D.in_cooldown(conn, rule_code, sym, now_utc):
+                log.debug("Rule=%s symbol=%s still in cooldown", rule_code, sym)
                 continue
 
             res = handler.evaluate(ctx, sym)
             if res is None or res.triggered is not True:
                 from .base import EvalResult
                 res = EvalResult(triggered=True, severity=severity, context_json={}, details_json={})
+                log.debug("Handler %s returned None/False; using default EvalResult", rule_code)
+            else:
+                log.debug(
+                    "Handler %s triggered for symbol=%s severity=%s", rule_code, sym, res.severity
+                )
 
             context_json = {
                 "code": rule_code,
@@ -146,6 +186,13 @@ def run(
                 fired_at_utc=now_utc,
             )
             created_ids.append(event_id)
+            log.info(
+                "Alert event inserted id=%s rule=%s symbol=%s severity=%s",
+                event_id,
+                rule_code,
+                sym,
+                res.severity,
+            )
             per_symbol_count[sym] = per_symbol_count.get(sym, 0) + 1
 
             # Channel delivery (ntfy/email/webhook)
@@ -178,6 +225,13 @@ def run(
             if cooldown_min > 0:
                 from datetime import timedelta
                 cooldown_until = now_utc + timedelta(minutes=cooldown_min)
+            log.debug(
+                "Updating state rule=%s symbol=%s cooldown=%s minutes=%s",
+                rule_code,
+                sym,
+                cooldown_until,
+                cooldown_min,
+            )
             P.upsert_state(
                 conn,
                 rule_code=rule_code,
@@ -191,4 +245,5 @@ def run(
                 cooldown_until_utc=cooldown_until,
             )
 
+    log.info("Alert orchestrator completed created_events=%s", len(created_ids))
     return created_ids

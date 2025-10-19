@@ -662,6 +662,12 @@ def run_intraday(
             "run_id": _runid(),
         },
     )
+    settings = load_settings()
+    if not getattr(settings.news, "enabled", True):
+        log.info("news.run_intraday_disabled", extra={"run_id": _runid()})
+        _stderr("[info] news disabled in config; skipping intraday ingestion")
+        return
+
     since_minutes = _parse_since_expr(since_expr)
     cohorts, rid, as_of = build_intraday_symbol_set(
         watchlist_file=watchlist_file,
@@ -682,7 +688,7 @@ def run_intraday(
         return
 
     # ADDED: log the lookup window with a clear anchor (intraday uses 'now - since')
-    tz_cfg = (load_settings().news.trading_timezone or "Asia/Kolkata")
+    tz_cfg = (settings.news.trading_timezone or "Asia/Kolkata")
     tz_ist = _get_tz(tz_cfg)
     if tz_ist:
         now_ist = datetime.now(tz_ist)
@@ -746,6 +752,14 @@ def run_backfill(
         },
     )
     settings = load_settings()
+    if not getattr(settings.news, "enabled", True):
+        log.info(
+            "news.run_backfill_disabled",
+            extra={"trading_day": trading_day.isoformat(), "run_id": _runid()},
+        )
+        _stderr("[info] news disabled in config; skipping news backfill")
+        return
+
     if symbols_all_file:
         symbols = _load_watchlist_symbols(symbols_all_file)
     else:
@@ -949,6 +963,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     d = _settings_defaults()
     s = load_settings()
     api_base_default = f"http://{s.server.host}:{s.server.port}"
+    if not getattr(s.news, "enabled", True):
+        log.info("news.cli_disabled", extra={"run_id": _runid()})
+        _stderr("[info] news disabled in config; exiting without work")
+        return 0
 
     # NEW: env fallbacks for concurrency & sharding
     env_conc = int(os.getenv("NEWS_CONCURRENCY", "1") or "1")

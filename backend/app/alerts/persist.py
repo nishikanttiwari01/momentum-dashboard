@@ -3,6 +3,9 @@ from typing import Dict, Any, Optional
 from sqlalchemy import text
 from datetime import datetime, date
 import json
+import logging
+
+log = logging.getLogger(__name__)
 
 def insert_event(conn, *,
                  rule_code: str,
@@ -25,6 +28,15 @@ def insert_event(conn, *,
                  details_json: Dict[str, Any],
                  channels_summary_json: Dict[str, Any],
                  fired_at_utc: datetime) -> int:
+    log.debug(
+        "Inserting alert_event rule=%s symbol=%s severity=%s mode=%s trading_date=%s bucket=%s",
+        rule_code,
+        symbol,
+        severity,
+        mode,
+        trading_date,
+        bucket_ord,
+    )
     q = text("""
         INSERT INTO alert_events
         (rule_code, symbol, severity, digest_bucket, mode, trading_date,
@@ -62,11 +74,21 @@ def insert_event(conn, *,
         "fired_at_utc": fired_at_utc,
     })
     row = conn.execute(text("SELECT last_insert_rowid()")).first()
-    return int(row[0]) if row else 0
+    event_id = int(row[0]) if row else 0
+    log.debug("Inserted alert_event id=%s rule=%s symbol=%s", event_id, rule_code, symbol)
+    return event_id
 
 def insert_delivery(conn, *, event_id: int, channel: str, status: str,
                     attempt_no: int = 1, sent_at_utc: datetime | None = None,
                     response_code: int | None = None, response_meta: dict | None = None) -> None:
+    log.debug(
+        "Recording delivery event_id=%s channel=%s status=%s attempt=%s code=%s",
+        event_id,
+        channel,
+        status,
+        attempt_no,
+        response_code,
+    )
     q = text("""
         INSERT INTO alert_deliveries
         (event_id, channel, status, attempt_no, sent_at_utc, response_code, response_meta)
@@ -88,9 +110,12 @@ def delivery_exists(conn, *, event_id: int, channel: str) -> bool:
          WHERE event_id=:event_id AND channel=:channel AND status='SENT'
          LIMIT 1
     """), {"event_id": event_id, "channel": channel}).first()
-    return row is not None
+    exists = row is not None
+    log.debug("Delivery exists check event_id=%s channel=%s => %s", event_id, channel, exists)
+    return exists
 
 def update_event_channels_summary(conn, *, event_id: int, summary: dict) -> None:
+    log.debug("Updating channels summary event_id=%s summary_keys=%s", event_id, list(summary.keys()))
     conn.execute(text("""
         UPDATE alert_events
            SET channels_summary_json = :summary
@@ -101,6 +126,14 @@ def upsert_state(conn, *, rule_code: str, symbol: str,
                  fired_at_utc, trading_date, mode: str, bucket_ord: int,
                  score_at_fire: float | None, next_action_code: str | None,
                  cooldown_until_utc) -> None:
+    log.debug(
+        "Upserting alert state rule=%s symbol=%s mode=%s bucket=%s cooldown=%s",
+        rule_code,
+        symbol,
+        mode,
+        bucket_ord,
+        cooldown_until_utc,
+    )
     upd = text("""
         UPDATE alert_state
            SET last_fired_at_utc=:fired_at_utc,
@@ -124,6 +157,7 @@ def upsert_state(conn, *, rule_code: str, symbol: str,
         "symbol": symbol,
     })
     if res.rowcount == 0:
+        log.debug("No existing state found for rule=%s symbol=%s; inserting new row", rule_code, symbol)
         ins = text("""
             INSERT INTO alert_state
             (rule_code, symbol, last_fired_at_utc, last_trading_date, last_mode, last_bucket_ord,
