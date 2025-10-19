@@ -633,95 +633,95 @@ paths:
       responses:
         '204':
           description: Unpinned
-  /api/v1/alerts:
+  /api/v1/alert-events:
     get:
       tags:
       - Alerts
-      operationId: listAlerts
-      summary: List alert rules and states
+      operationId: listAlertEvents
+      summary: List alert events
+      parameters:
+      - name: symbol
+        in: query
+        schema:
+          type: string
+      - name: trading_date
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: trading_date_from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: trading_date_to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: severity
+        in: query
+        schema:
+          type: string
+          enum:
+          - INFO
+          - WARN
+          - CRITICAL
+      - name: digest_bucket
+        in: query
+        schema:
+          type: string
+          enum:
+          - BUY
+          - SELL
+          - MGMT
+          - SCORE
+      - name: mode
+        in: query
+        schema:
+          type: string
+          enum:
+          - EOD
+          - INTRADAY
+      - name: rule_code
+        in: query
+        schema:
+          type: string
+      - name: next_action_code
+        in: query
+        schema:
+          type: string
+      - name: channel_status
+        in: query
+        schema:
+          type: string
+          enum:
+          - SENT
+          - FAILED
+          - SKIPPED
+      - name: profile
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+      - name: cursor
+        in: query
+        schema:
+          type: string
       responses:
         '200':
-          description: Alerts
+          description: Alert events
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AlertState'
-              examples:
-                example:
-                  $ref: '#/components/examples/Alerts'
-    post:
-      tags:
-      - Alerts
-      operationId: createAlert
-      summary: Create alert rule
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AlertRule'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AlertState'
-  /api/v1/alerts/{id}:
-    put:
-      tags:
-      - Alerts
-      operationId: updateAlert
-      summary: Update alert rule
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AlertRule'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AlertState'
-    delete:
-      tags:
-      - Alerts
-      operationId: deleteAlert
-      summary: Delete alert rule
-      parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-      responses:
-        '204':
-          description: Deleted
-  /api/v1/alerts/digest:
-    get:
-      tags:
-      - Alerts
-      operationId: previewAlertDigest
-      summary: Preview digest (no send)
-      responses:
-        '200':
-          description: Digest preview
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
+                  $ref: '#/components/schemas/AlertEvent'
   /api/v1/instruments/{symbol}/detail:
     get:
       tags:
@@ -1896,6 +1896,157 @@ components:
           type: string
           format: date-time
           nullable: true
+    AlertChannelStatus:
+      type: object
+      description: Aggregated delivery outcome for a single channel.
+      properties:
+        status:
+          type: string
+          description: Final status for the most recent attempt.
+          enum:
+          - SENT
+          - FAILED
+          - SKIPPED
+        attempts:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Attempts performed for this channel.
+        code:
+          type: integer
+          nullable: true
+          description: Response/status code returned by channel (if any).
+        reason:
+          type: string
+          nullable: true
+          description: Reason for skipped/failed delivery (if available).
+    AlertDeliveryAttempt:
+      type: object
+      description: Raw delivery attempt recorded for an alert event.
+      properties:
+        channel:
+          type: string
+          description: Channel identifier (e.g., ntfy, email, webhook).
+        status:
+          type: string
+          enum:
+          - SENT
+          - FAILED
+          - SKIPPED
+        attempt_no:
+          type: integer
+          minimum: 1
+        sent_at_utc:
+          type: string
+          format: date-time
+          nullable: true
+        response_code:
+          type: integer
+          nullable: true
+        response_meta:
+          type: object
+          nullable: true
+          additionalProperties: true
+    AlertEvent:
+      type: object
+      required:
+      - id
+      - symbol
+      - rule_code
+      - severity
+      - digest_bucket
+      - mode
+      - trading_date
+      - bucket_ord
+      - send_type
+      - title_rendered
+      - body_rendered
+      - fired_at_utc
+      properties:
+        id:
+          type: integer
+        symbol:
+          type: string
+        rule_code:
+          type: string
+        severity:
+          type: string
+          enum:
+          - INFO
+          - WARN
+          - CRITICAL
+        digest_bucket:
+          type: string
+          enum:
+          - BUY
+          - SELL
+          - MGMT
+          - SCORE
+        mode:
+          type: string
+          enum:
+          - EOD
+          - INTRADAY
+        trading_date:
+          type: string
+          format: date
+        fired_at_utc:
+          type: string
+          format: date-time
+        bucket_ord:
+          type: integer
+        intraday_bucket_label:
+          type: string
+          nullable: true
+        send_type:
+          type: string
+          enum:
+          - IMMEDIATE
+          - DIGEST
+        digest_id:
+          type: string
+          nullable: true
+        title_rendered:
+          type: string
+        body_rendered:
+          type: string
+        score_at_fire:
+          type: number
+          format: double
+          nullable: true
+        next_action_code:
+          type: string
+          nullable: true
+        triggered_by:
+          type: string
+          enum:
+          - SCHEDULE
+          - MANUAL
+          - STARTUP_CATCHUP
+        profile:
+          type: string
+          nullable: true
+        config_version:
+          type: integer
+          nullable: true
+        context_json:
+          type: object
+          nullable: true
+          additionalProperties: true
+        details_json:
+          type: object
+          nullable: true
+          additionalProperties: true
+        channels_summary_json:
+          type: object
+          nullable: true
+          additionalProperties:
+            $ref: '#/components/schemas/AlertChannelStatus'
+        deliveries:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/AlertDeliveryAttempt'
     HistoryRow:
       type: object
       properties:

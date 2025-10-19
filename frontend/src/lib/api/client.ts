@@ -26,8 +26,7 @@ import type {
 } from 'axios'
 import type {
   AddToWatchlistBody,
-  AlertRule,
-  AlertState,
+  AlertEvent,
   DrawerDetail,
   GetApiV1InstrumentsSymbolDetailParams,
   GetApiV1PositionsParams,
@@ -41,6 +40,7 @@ import type {
   HealthState,
   HistoryRow,
   IndicatorPoint,
+  ListAlertEventsParams,
   ListAllNewsParams,
   ListHistoryParams,
   ListInstruments200,
@@ -59,7 +59,6 @@ import type {
   PositionCreate,
   PositionOut,
   PositionUpdate,
-  PreviewAlertDigest200,
   PriceCandle,
   Problem,
   ReasonForMoveParams,
@@ -1382,277 +1381,55 @@ export const useUnpinSnapshot = <TError = AxiosError<unknown>,
     }
     
 /**
- * @summary List alert rules and states
+ * @summary List alert events
  */
-export const listAlerts = (
-     options?: AxiosRequestConfig
- ): Promise<AxiosResponse<AlertState[]>> => {
+export const listAlertEvents = (
+    params?: ListAlertEventsParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<AlertEvent[]>> => {
     
     return axios.default.get(
-      `/api/v1/alerts`,options
+      `/api/v1/alert-events`,{
+    ...options,
+        params: {...params, ...options?.params},}
     );
   }
 
 
-export const getListAlertsQueryKey = () => {
-    return [`/api/v1/alerts`] as const;
+export const getListAlertEventsQueryKey = (params?: ListAlertEventsParams,) => {
+    return [`/api/v1/alert-events`, ...(params ? [params]: [])] as const;
     }
 
     
-export const getListAlertsQueryOptions = <TData = Awaited<ReturnType<typeof listAlerts>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlerts>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const getListAlertEventsQueryOptions = <TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = AxiosError<unknown>>(params?: ListAlertEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
 ) => {
 
 const {query: queryOptions, axios: axiosOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListAlertsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListAlertEventsQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlerts>>> = ({ signal }) => listAlerts({ signal, ...axiosOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAlertEvents>>> = ({ signal }) => listAlertEvents(params, { signal, ...axiosOptions });
 
       
 
       
 
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAlerts>>, TError, TData> & { queryKey: QueryKey }
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData> & { queryKey: QueryKey }
 }
 
-export type ListAlertsQueryResult = NonNullable<Awaited<ReturnType<typeof listAlerts>>>
-export type ListAlertsQueryError = AxiosError<unknown>
+export type ListAlertEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listAlertEvents>>>
+export type ListAlertEventsQueryError = AxiosError<unknown>
 
 /**
- * @summary List alert rules and states
+ * @summary List alert events
  */
-export const useListAlerts = <TData = Awaited<ReturnType<typeof listAlerts>>, TError = AxiosError<unknown>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlerts>>, TError, TData>>, axios?: AxiosRequestConfig}
+export const useListAlertEvents = <TData = Awaited<ReturnType<typeof listAlertEvents>>, TError = AxiosError<unknown>>(
+ params?: ListAlertEventsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAlertEvents>>, TError, TData>>, axios?: AxiosRequestConfig}
 
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
-  const queryOptions = getListAlertsQueryOptions(options)
-
-  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
-
-  query.queryKey = queryOptions.queryKey ;
-
-  return query;
-}
-
-
-
-
-/**
- * @summary Create alert rule
- */
-export const createAlert = (
-    alertRule: AlertRule, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<AlertState>> => {
-    
-    return axios.default.post(
-      `/api/v1/alerts`,
-      alertRule,options
-    );
-  }
-
-
-
-export const getCreateAlertMutationOptions = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAlert>>, TError,{data: AlertRule}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof createAlert>>, TError,{data: AlertRule}, TContext> => {
-const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAlert>>, {data: AlertRule}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createAlert(data,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateAlertMutationResult = NonNullable<Awaited<ReturnType<typeof createAlert>>>
-    export type CreateAlertMutationBody = AlertRule
-    export type CreateAlertMutationError = AxiosError<unknown>
-
-    /**
- * @summary Create alert rule
- */
-export const useCreateAlert = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAlert>>, TError,{data: AlertRule}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationResult<
-        Awaited<ReturnType<typeof createAlert>>,
-        TError,
-        {data: AlertRule},
-        TContext
-      > => {
-
-      const mutationOptions = getCreateAlertMutationOptions(options);
-
-      return useMutation(mutationOptions);
-    }
-    
-/**
- * @summary Update alert rule
- */
-export const updateAlert = (
-    id: number,
-    alertRule: AlertRule, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<AlertState>> => {
-    
-    return axios.default.put(
-      `/api/v1/alerts/${id}`,
-      alertRule,options
-    );
-  }
-
-
-
-export const getUpdateAlertMutationOptions = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAlert>>, TError,{id: number;data: AlertRule}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof updateAlert>>, TError,{id: number;data: AlertRule}, TContext> => {
-const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAlert>>, {id: number;data: AlertRule}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  updateAlert(id,data,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateAlertMutationResult = NonNullable<Awaited<ReturnType<typeof updateAlert>>>
-    export type UpdateAlertMutationBody = AlertRule
-    export type UpdateAlertMutationError = AxiosError<unknown>
-
-    /**
- * @summary Update alert rule
- */
-export const useUpdateAlert = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAlert>>, TError,{id: number;data: AlertRule}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationResult<
-        Awaited<ReturnType<typeof updateAlert>>,
-        TError,
-        {id: number;data: AlertRule},
-        TContext
-      > => {
-
-      const mutationOptions = getUpdateAlertMutationOptions(options);
-
-      return useMutation(mutationOptions);
-    }
-    
-/**
- * @summary Delete alert rule
- */
-export const deleteAlert = (
-    id: number, options?: AxiosRequestConfig
- ): Promise<AxiosResponse<void>> => {
-    
-    return axios.default.delete(
-      `/api/v1/alerts/${id}`,options
-    );
-  }
-
-
-
-export const getDeleteAlertMutationOptions = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlert>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationOptions<Awaited<ReturnType<typeof deleteAlert>>, TError,{id: number}, TContext> => {
-const {mutation: mutationOptions, axios: axiosOptions} = options ?? {};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAlert>>, {id: number}> = (props) => {
-          const {id} = props ?? {};
-
-          return  deleteAlert(id,axiosOptions)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteAlertMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAlert>>>
-    
-    export type DeleteAlertMutationError = AxiosError<unknown>
-
-    /**
- * @summary Delete alert rule
- */
-export const useDeleteAlert = <TError = AxiosError<unknown>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAlert>>, TError,{id: number}, TContext>, axios?: AxiosRequestConfig}
-): UseMutationResult<
-        Awaited<ReturnType<typeof deleteAlert>>,
-        TError,
-        {id: number},
-        TContext
-      > => {
-
-      const mutationOptions = getDeleteAlertMutationOptions(options);
-
-      return useMutation(mutationOptions);
-    }
-    
-/**
- * @summary Preview digest (no send)
- */
-export const previewAlertDigest = (
-     options?: AxiosRequestConfig
- ): Promise<AxiosResponse<PreviewAlertDigest200>> => {
-    
-    return axios.default.get(
-      `/api/v1/alerts/digest`,options
-    );
-  }
-
-
-export const getPreviewAlertDigestQueryKey = () => {
-    return [`/api/v1/alerts/digest`] as const;
-    }
-
-    
-export const getPreviewAlertDigestQueryOptions = <TData = Awaited<ReturnType<typeof previewAlertDigest>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewAlertDigest>>, TError, TData>>, axios?: AxiosRequestConfig}
-) => {
-
-const {query: queryOptions, axios: axiosOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getPreviewAlertDigestQueryKey();
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof previewAlertDigest>>> = ({ signal }) => previewAlertDigest({ signal, ...axiosOptions });
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof previewAlertDigest>>, TError, TData> & { queryKey: QueryKey }
-}
-
-export type PreviewAlertDigestQueryResult = NonNullable<Awaited<ReturnType<typeof previewAlertDigest>>>
-export type PreviewAlertDigestQueryError = AxiosError<unknown>
-
-/**
- * @summary Preview digest (no send)
- */
-export const usePreviewAlertDigest = <TData = Awaited<ReturnType<typeof previewAlertDigest>>, TError = AxiosError<unknown>>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof previewAlertDigest>>, TError, TData>>, axios?: AxiosRequestConfig}
-
-  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
-
-  const queryOptions = getPreviewAlertDigestQueryOptions(options)
+  const queryOptions = getListAlertEventsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

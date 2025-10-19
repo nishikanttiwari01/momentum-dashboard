@@ -3,57 +3,84 @@ import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
 import {
-  Paper,
-  Stack,
-  Typography,
-  Divider,
-  IconButton,
-  Tooltip,
-  Chip,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
-  Skeleton,
+  Alert as MuiAlert,
   Box,
   Button,
+  Chip,
+  CircularProgress,
+  Divider,
+  Drawer,
+  IconButton,
+  Paper,
+  Skeleton,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
+  Tooltip,
+  Typography,
 } from '@mui/material';
-import MuiAlert from '@mui/material/Alert';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import MailOutlineIcon from '@mui/icons-material/MailOutline';
-import DesktopWindowsIcon from '@mui/icons-material/DesktopWindows';
-import WhatsAppIcon from '@mui/icons-material/WhatsApp';
+import HttpIcon from '@mui/icons-material/Http';
 
-import { useAlerts, type AlertListItem, type AlertChannelFlags } from '@/lib/hooks';
+import { useAlerts, type AlertEventListItem } from '@/lib/hooks';
+import type { ListAlertEventsParams } from '@/lib/api/types';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
 
-const CHANNEL_ORDER = ['desktop', 'email', 'whatsapp'] as const;
+const CHANNEL_ICONS: Record<
+  string,
+  { icon: React.ReactElement; label: string }
+> = {
+  ntfy: { icon: <NotificationsActiveIcon fontSize='small' />, label: 'ntfy' },
+  email: { icon: <MailOutlineIcon fontSize='small' />, label: 'Email' },
+  webhook: { icon: <HttpIcon fontSize='small' />, label: 'Webhook' },
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  SENT: 'success.main',
+  FAILED: 'error.main',
+  SKIPPED: 'text.secondary',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  SENT: 'Delivered',
+  FAILED: 'Failed',
+  SKIPPED: 'Skipped',
+};
+
+const MODE_LABELS: Record<string, string> = {
+  EOD: 'EOD',
+  INTRADAY: 'Intraday',
+};
 
 export default function Alerts() {
+  const today = React.useMemo(() => dayjs().format('YYYY-MM-DD'), []);
+  const tz = React.useMemo(() => (typeof dayjs.tz === 'function' ? dayjs.tz.guess() : 'UTC'), []);
+
+  const [selectedDate, setSelectedDate] = React.useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = React.useState<AlertEventListItem | null>(null);
+
+  const queryParams = React.useMemo<ListAlertEventsParams | undefined>(() => {
+    if (!selectedDate) return undefined;
+    return { trading_date: selectedDate };
+  }, [selectedDate]);
+
   const {
     data: alerts = [],
     isLoading,
     isFetching,
     isError,
-    refetch,
     error,
+    refetch,
     dataUpdatedAt,
-  } = useAlerts();
-
-  const today = React.useMemo(() => dayjs().format('YYYY-MM-DD'), []);
-  const [selectedDate, setSelectedDate] = React.useState<string | null>(null);
-
-  const tz = React.useMemo(() => {
-    if (typeof dayjs.tz === 'function') {
-      return dayjs.tz.guess();
-    }
-    return 'UTC';
-  }, []);
+  } = useAlerts(queryParams, { staleTimeMs: 60_000 });
 
   const lastUpdatedLabel = React.useMemo(() => {
     if (!dataUpdatedAt) return null;
@@ -71,7 +98,7 @@ export default function Alerts() {
         return dayjs(base).add(delta, 'day').format('YYYY-MM-DD');
       });
     },
-    [today]
+    [today],
   );
 
   const handleDateChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,181 +114,270 @@ export default function Alerts() {
     setSelectedDate(null);
   }, []);
 
-  const filteredAlerts = React.useMemo(() => {
-    if (!selectedDate) return alerts;
-    return alerts.filter((alert) => {
-      const candidate = alert.lastFiredAt ?? alert.lastFiredLocalDate ?? null;
-      if (!candidate) return false;
-      return dayjs(candidate).format('YYYY-MM-DD') === selectedDate;
-    });
-  }, [alerts, selectedDate]);
-
   const showSkeleton = isLoading && alerts.length === 0;
-  const showEmpty = !isLoading && filteredAlerts.length === 0 && !isError;
-
-  const hasDate = selectedDate !== null;
-  const isToday = hasDate && selectedDate === today;
-
-  const totalLabel = hasDate
-    ? `${filteredAlerts.length}/${alerts.length} ${alerts.length === 1 ? 'alert' : 'alerts'}`
-    : `${alerts.length} ${alerts.length === 1 ? 'alert' : 'alerts'}`;
+  const showEmpty = !isLoading && alerts.length === 0 && !isError;
 
   return (
     <Paper sx={{ p: 2, width: '100%' }} elevation={1}>
-      <Stack
-        direction={{ xs: 'column', sm: 'row' }}
-        alignItems={{ xs: 'flex-start', sm: 'center' }}
-        justifyContent='space-between'
-        spacing={1.5}
-      >
-        <Stack spacing={0.25}>
-          <Typography variant='h6'>Alerts</Typography>
-          <Typography variant='caption' color='text.secondary'>
-            Snapshot of alert states straight from the engine.
-          </Typography>
-          {lastUpdatedLabel ? (
-            <Typography variant='caption' color='text.secondary'>
-              Last refreshed: {lastUpdatedLabel} ({tz})
-            </Typography>
-          ) : null}
-        </Stack>
+      <Header
+        tz={tz}
+        lastUpdatedLabel={lastUpdatedLabel}
+        totalCount={alerts.length}
+        selectedDate={selectedDate}
+        onRefresh={handleRefresh}
+        isRefreshing={isFetching}
+      />
 
-        <Stack spacing={1} alignItems={{ xs: 'flex-start', sm: 'flex-end' }}>
-          <Stack direction='row' spacing={1} alignItems='center'>
-            <Chip
-              size='small'
-              icon={<NotificationsActiveIcon fontSize='small' />}
-              label={totalLabel}
-              variant='outlined'
-            />
-            <Tooltip title='Refresh'>
-              <span style={{ display: 'inline-flex' }}>
-                <IconButton
-                  size='small'
-                  aria-label='Refresh alerts'
-                  onClick={handleRefresh}
-                  disabled={isFetching}
-                >
-                  <RefreshIcon fontSize='small' />
-                </IconButton>
-              </span>
-            </Tooltip>
-          </Stack>
+      <Divider sx={{ my: 2 }} />
 
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={1}
-            alignItems={{ xs: 'stretch', sm: 'center' }}
-            justifyContent='flex-end'
-          >
-            <Button variant='outlined' size='small' onClick={() => handleShift(-1)}>
-              Previous
-            </Button>
-            <TextField
-              size='small'
-              label='Date'
-              type='date'
-              value={selectedDate ?? ''}
-              onChange={handleDateChange}
-              InputLabelProps={{ shrink: true }}
-            />
-            <Button
-              variant='outlined'
-              size='small'
-              onClick={() => handleShift(1)}
-              disabled={!hasDate || isToday}
-            >
-              Next
-            </Button>
-            <Button variant='contained' size='small' onClick={handleToday} disabled={isToday}>
-              Today
-            </Button>
-            <Button variant='text' size='small' onClick={handleClear} disabled={!hasDate}>
-              All
-            </Button>
-          </Stack>
-        </Stack>
-      </Stack>
+      <FilterBar
+        selectedDate={selectedDate}
+        onShift={handleShift}
+        onDateChange={handleDateChange}
+        onToday={handleToday}
+        onClear={handleClear}
+        today={today}
+      />
 
       {isError ? (
-        <MuiAlert severity='error' sx={{ mt: 2 }}>
-          Failed to load alerts
-          {error instanceof Error && error.message ? `: ${error.message}` : ''}
-        </MuiAlert>
+        <Box sx={{ mt: 3 }}>
+          <MuiAlert severity='error'>
+            {error instanceof Error ? error.message : 'Failed to load alert events.'}
+          </MuiAlert>
+        </Box>
       ) : null}
-
-      <Divider sx={{ mt: 2, mb: 2 }} />
 
       {showSkeleton ? (
         <AlertsSkeleton />
       ) : showEmpty ? (
-        <AlertsEmptyState filtered={hasDate} />
+        <AlertsEmptyState selectedDate={selectedDate} />
       ) : (
-        <AlertsTable items={filteredAlerts} tz={tz} />
+        <AlertsTable
+          alerts={alerts}
+          tz={tz}
+          onSelect={setSelectedEvent}
+          selectedId={selectedEvent?.id ?? null}
+        />
       )}
+
+      <AlertDetailsDrawer
+        alert={selectedEvent}
+        onClose={() => setSelectedEvent(null)}
+        tz={tz}
+      />
     </Paper>
   );
 }
 
-function AlertsTable({ items, tz }: { items: AlertListItem[]; tz: string }) {
+type HeaderProps = {
+  tz: string;
+  lastUpdatedLabel: string | null;
+  totalCount: number;
+  selectedDate: string | null;
+  onRefresh: () => void;
+  isRefreshing: boolean;
+};
+
+function Header({
+  tz,
+  lastUpdatedLabel,
+  totalCount,
+  selectedDate,
+  onRefresh,
+  isRefreshing,
+}: HeaderProps) {
+  const subtitle = selectedDate
+    ? `Showing alert events for ${selectedDate}`
+    : 'Showing latest alert events';
+
   return (
-    <Box sx={{ width: '100%', overflowX: 'auto' }}>
+    <Stack
+      direction={{ xs: 'column', sm: 'row' }}
+      alignItems={{ xs: 'flex-start', sm: 'center' }}
+      justifyContent='space-between'
+      spacing={1.5}
+    >
+      <Stack spacing={0.25}>
+        <Typography variant='h6'>Alerts</Typography>
+        <Typography variant='caption' color='text.secondary'>
+          {subtitle} · Local timezone: {tz}
+        </Typography>
+        {lastUpdatedLabel ? (
+          <Typography variant='caption' color='text.secondary'>
+            Last refreshed: {lastUpdatedLabel}
+          </Typography>
+        ) : null}
+      </Stack>
+      <Stack direction='row' spacing={1} alignItems='center'>
+        <Typography variant='caption' color='text.secondary'>
+          {totalCount} {totalCount === 1 ? 'event' : 'events'}
+        </Typography>
+        <Tooltip title='Refresh'>
+          <span>
+            <IconButton onClick={onRefresh} disabled={isRefreshing} size='small'>
+              {isRefreshing ? <CircularProgress size={18} /> : <RefreshIcon fontSize='small' />}
+            </IconButton>
+          </span>
+        </Tooltip>
+      </Stack>
+    </Stack>
+  );
+}
+
+type FilterBarProps = {
+  selectedDate: string | null;
+  onShift: (delta: number) => void;
+  onDateChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onToday: () => void;
+  onClear: () => void;
+  today: string;
+};
+
+function FilterBar({ selectedDate, onShift, onDateChange, onToday, onClear, today }: FilterBarProps) {
+  const hasDate = selectedDate !== null;
+  const isToday = hasDate && selectedDate === today;
+
+  return (
+    <Stack
+      direction={{ xs: 'column', md: 'row' }}
+      spacing={1}
+      alignItems={{ xs: 'flex-start', md: 'center' }}
+      justifyContent='space-between'
+    >
+      <Stack direction='row' spacing={1}>
+        <Button variant='outlined' size='small' onClick={() => onShift(-1)}>
+          Previous
+        </Button>
+        <Button variant='outlined' size='small' onClick={() => onShift(1)} disabled={!hasDate}>
+          Next
+        </Button>
+        <Button
+          variant='outlined'
+          size='small'
+          onClick={onToday}
+          disabled={isToday}
+        >
+          Today
+        </Button>
+        <Button variant='outlined' size='small' onClick={onClear} disabled={!hasDate}>
+          Clear
+        </Button>
+      </Stack>
+      <TextField
+        type='date'
+        size='small'
+        value={selectedDate ?? ''}
+        onChange={onDateChange}
+        InputLabelProps={{ shrink: true }}
+        sx={{ width: 200 }}
+      />
+    </Stack>
+  );
+}
+
+type AlertsTableProps = {
+  alerts: AlertEventListItem[];
+  tz: string;
+  onSelect: (item: AlertEventListItem) => void;
+  selectedId: number | null;
+};
+
+function AlertsTable({ alerts, tz, onSelect, selectedId }: AlertsTableProps) {
+  return (
+    <Box sx={{ mt: 3, overflowX: 'auto' }}>
       <Table size='small'>
-        <AlertsTableHead />
+        <TableHead>
+          <TableRow>
+            <TableCell sx={{ minWidth: 160 }}>Time (Local)</TableCell>
+            <TableCell sx={{ minWidth: 80 }}>Symbol</TableCell>
+            <TableCell sx={{ minWidth: 220 }}>Alert</TableCell>
+            <TableCell sx={{ minWidth: 110 }}>Severity</TableCell>
+            <TableCell sx={{ minWidth: 110 }}>Category</TableCell>
+            <TableCell sx={{ minWidth: 140 }}>Mode</TableCell>
+            <TableCell align='right' sx={{ minWidth: 90 }}>
+              Score
+            </TableCell>
+            <TableCell align='right' sx={{ minWidth: 130 }}>
+              Next Action
+            </TableCell>
+            <TableCell sx={{ minWidth: 160 }}>Channels</TableCell>
+          </TableRow>
+        </TableHead>
         <TableBody>
-          {items.map((alert) => {
-            const rowKey =
-              alert.id ?? `${alert.symbol}-${alert.ruleCode}-${alert.lastFiredRunId ?? ''}`;
+          {alerts.map((item) => {
+            const isSelected = selectedId === item.id;
             return (
-              <TableRow key={rowKey}>
-                <TableCell sx={{ minWidth: 100 }}>
-                  <Typography variant='subtitle2'>{alert.symbol || '--'}</Typography>
-                </TableCell>
-                <TableCell sx={{ minWidth: 180 }}>
+              <TableRow
+                key={item.id}
+                hover
+                selected={isSelected}
+                onClick={() => onSelect(item)}
+                sx={{ cursor: 'pointer' }}
+              >
+                <TableCell>
                   <Stack spacing={0.5}>
-                    <Typography variant='subtitle2'>{alert.ruleCode || 'Alert'}</Typography>
-                    {alert.ruleValue ? (
-                      <Typography variant='body2' color='text.secondary'>
-                        Value: {alert.ruleValue}
-                      </Typography>
-                    ) : null}
-                    {alert.description ? (
-                      <Typography variant='body2' color='text.secondary'>
-                        {alert.description}
+                    <Typography variant='body2'>{formatLocalTime(item.firedAtUtc, tz)}</Typography>
+                    <Typography variant='caption' color='text.secondary'>
+                      {formatTimeSubtitle(item)}
+                    </Typography>
+                  </Stack>
+                </TableCell>
+                <TableCell>
+                  <Typography variant='body2' fontWeight={600}>
+                    {item.symbol}
+                  </Typography>
+                  <Typography variant='caption' color='text.secondary'>
+                    {item.sendType}
+                  </Typography>
+                </TableCell>
+                <TableCell>
+                  <Stack spacing={0.25}>
+                    <Typography variant='body2'>{item.title}</Typography>
+                    <Typography variant='caption' color='text.secondary' noWrap>
+                      {item.raw.rule_code} · {truncate(item.body, 120)}
+                    </Typography>
+                  </Stack>
+                </TableCell>
+                <TableCell>
+                  <SeverityChip value={item.severity} />
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    size='small'
+                    label={item.digestBucket}
+                    color={item.digestBucket === 'BUY' ? 'success' : item.digestBucket === 'SELL' ? 'error' : 'default'}
+                    variant='outlined'
+                  />
+                </TableCell>
+                <TableCell>
+                  <Stack spacing={0.25}>
+                    <Typography variant='body2'>{MODE_LABELS[item.mode] ?? item.mode}</Typography>
+                    {item.mode === 'INTRADAY' ? (
+                      <Typography variant='caption' color='text.secondary'>
+                        #{item.bucketOrd}{item.intradayBucketLabel ? ` · ${item.intradayBucketLabel}` : ''}
                       </Typography>
                     ) : null}
                   </Stack>
                 </TableCell>
-                <TableCell sx={{ minWidth: 160 }}>
-                  <ChannelsCell item={alert} />
+                <TableCell align='right'>
+                  {item.scoreAtFire !== null ? item.scoreAtFire.toFixed(1) : '--'}
                 </TableCell>
-                <TableCell sx={{ minWidth: 100 }}>
-                  <Typography variant='body2' color='text.primary'>
-                    {alert.lastScore ?? '--'}
-                  </Typography>
+                <TableCell align='right'>
+                  {item.nextActionCode ? (
+                    <Chip
+                      size='small'
+                      label={item.nextActionCode}
+                      variant='outlined'
+                      sx={{ fontFamily: 'monospace' }}
+                    />
+                  ) : (
+                    <Typography variant='body2' color='text.secondary'>
+                      --
+                    </Typography>
+                  )}
                 </TableCell>
-                <TableCell sx={{ minWidth: 180 }}>
-                  <Typography variant='body2' color='text.secondary'>
-                    {formatDate(alert.lastFiredAt, tz)}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ minWidth: 140 }}>
-                  <Typography variant='body2' color='text.secondary'>
-                    {formatDateOnly(alert.lastFiredLocalDate)}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ minWidth: 140 }}>
-                  <Typography variant='body2' color='text.secondary'>
-                    {alert.lastFiredRunId ?? '--'}
-                  </Typography>
-                </TableCell>
-                <TableCell sx={{ minWidth: 120 }}>
-                  <Chip
-                    size='small'
-                    label={alert.enabled ? 'Enabled' : 'Disabled'}
-                    color={alert.enabled ? 'success' : 'default'}
-                    variant={alert.enabled ? 'filled' : 'outlined'}
-                  />
+                <TableCell>
+                  <ChannelsSummary summary={item.channelsSummary} />
                 </TableCell>
               </TableRow>
             );
@@ -272,66 +388,18 @@ function AlertsTable({ items, tz }: { items: AlertListItem[]; tz: string }) {
   );
 }
 
-function AlertsSkeleton() {
-  return (
-    <Box sx={{ width: '100%', overflowX: 'auto' }}>
-      <Table size='small'>
-        <AlertsTableHead />
-        <TableBody>
-          {Array.from({ length: 4 }).map((_, rowIdx) => (
-            <TableRow key={rowIdx}>
-              {Array.from({ length: 8 }).map((__, cellIdx) => (
-                <TableCell key={cellIdx}>
-                  <Skeleton
-                    variant='text'
-                    width={cellIdx === 1 ? '75%' : '60%'}
-                    height={20}
-                  />
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </Box>
-  );
+function SeverityChip({ value }: { value: string }) {
+  const lower = value.toUpperCase();
+  let color: 'default' | 'success' | 'warning' | 'error' | 'info' = 'default';
+  if (lower === 'CRITICAL') color = 'error';
+  else if (lower === 'WARN') color = 'warning';
+  else if (lower === 'INFO') color = 'info';
+  return <Chip size='small' label={lower} color={color} variant='outlined' />;
 }
 
-function AlertsEmptyState({ filtered }: { filtered: boolean }) {
-  return (
-    <Box sx={{ textAlign: 'center', py: 6 }}>
-      <Typography variant='subtitle1' color='text.secondary'>
-        {filtered ? 'No alerts found for the selected date.' : 'No alerts recorded yet.'}
-      </Typography>
-      <Typography variant='body2' color='text.secondary'>
-        {filtered
-          ? 'Adjust the date picker or clear the filter to see all alert states.'
-          : 'Run the alert scanner or ingest sample data to populate this view.'}
-      </Typography>
-    </Box>
-  );
-}
-
-function AlertsTableHead() {
-  return (
-    <TableHead>
-      <TableRow>
-        <TableCell sx={{ minWidth: 100 }}>Symbol</TableCell>
-        <TableCell sx={{ minWidth: 180 }}>Rule</TableCell>
-        <TableCell sx={{ minWidth: 160 }}>Channels</TableCell>
-        <TableCell sx={{ minWidth: 100 }}>Score</TableCell>
-        <TableCell sx={{ minWidth: 180 }}>Last Signal (UTC)</TableCell>
-        <TableCell sx={{ minWidth: 140 }}>Local Day</TableCell>
-        <TableCell sx={{ minWidth: 140 }}>Run ID</TableCell>
-        <TableCell sx={{ minWidth: 120 }}>Status</TableCell>
-      </TableRow>
-    </TableHead>
-  );
-}
-
-function ChannelsCell({ item }: { item: AlertListItem }) {
-  const keys = getSortedChannelKeys(item.channelFlags);
-  if (keys.length === 0) {
+function ChannelsSummary({ summary }: { summary: Record<string, { status?: string; attempts?: number | null; code?: number | null; reason?: string | null }> }) {
+  const entries = Object.entries(summary);
+  if (entries.length === 0) {
     return (
       <Typography variant='body2' color='text.secondary'>
         --
@@ -340,82 +408,309 @@ function ChannelsCell({ item }: { item: AlertListItem }) {
   }
 
   return (
-    <Stack direction='row' spacing={0.5} sx={{ flexWrap: 'wrap' }}>
-      {keys.map((key) => {
-        const icon = getChannelIcon(key);
+    <Stack direction='row' spacing={1} sx={{ flexWrap: 'wrap' }}>
+      {entries.map(([channel, info]) => {
+        const meta = CHANNEL_ICONS[channel] ?? {
+          icon: <NotificationsActiveIcon fontSize='small' />,
+          label: channel,
+        };
+        const status = (info?.status ?? 'UNKNOWN').toUpperCase();
+        const color = STATUS_COLORS[status] ?? 'text.secondary';
+        const reason = info?.reason;
+        const attempts = info?.attempts ?? null;
+        const code = info?.code ?? null;
+        const tooltip = [
+          `${meta.label}: ${STATUS_LABELS[status] ?? status}`,
+          attempts ? `Attempts: ${attempts}` : null,
+          code ? `Code: ${code}` : null,
+          reason ? `Reason: ${reason}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+
         return (
-          <Chip
-            key={key}
-            size='small'
-            icon={icon}
-            label={formatChannelLabel(key)}
-            variant='outlined'
-          />
+          <Tooltip key={channel} title={tooltip}>
+            <Box
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                px: 0.75,
+                py: 0.25,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'divider',
+                color,
+                fontSize: '0.75rem',
+                gap: 0.5,
+              }}
+            >
+              {React.cloneElement(meta.icon, { sx: { color } })}
+              <span>{meta.label}</span>
+            </Box>
+          </Tooltip>
         );
       })}
     </Stack>
   );
 }
 
-function getSortedChannelKeys(flags: AlertChannelFlags): string[] {
-  const keys = Object.entries(flags)
-    .filter(([, active]) => active)
-    .map(([key]) => key);
+function formatLocalTime(iso: string, tz: string): string {
+  const parsed = dayjs(iso);
+  if (!parsed.isValid()) return iso;
+  return parsed.tz(tz).format('YYYY-MM-DD HH:mm');
+}
 
-  return keys.sort((a, b) => {
-    const aIndex = CHANNEL_ORDER.indexOf(a as (typeof CHANNEL_ORDER)[number]);
-    const bIndex = CHANNEL_ORDER.indexOf(b as (typeof CHANNEL_ORDER)[number]);
-    if (aIndex === -1 && bIndex === -1) {
-      return a.localeCompare(b);
+function formatTimeSubtitle(item: AlertEventListItem): string {
+  const parts = [item.tradingDate];
+  if (item.mode === 'INTRADAY') {
+    if (item.intradayBucketLabel) {
+      parts.push(item.intradayBucketLabel);
     }
-    if (aIndex === -1) return 1;
-    if (bIndex === -1) return -1;
-    return aIndex - bIndex;
-  });
+    parts.push(`#${item.bucketOrd}`);
+  }
+  return parts.filter(Boolean).join(' · ');
 }
 
-function getChannelIcon(key: string) {
-  switch (key) {
-    case 'desktop':
-      return <DesktopWindowsIcon fontSize='small' />;
-    case 'email':
-      return <MailOutlineIcon fontSize='small' />;
-    case 'whatsapp':
-      return <WhatsAppIcon fontSize='small' />;
-    default:
-      return undefined;
+function truncate(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}…`;
+}
+
+function AlertsSkeleton() {
+  return (
+    <Box sx={{ mt: 3 }}>
+      {[1, 2, 3, 4, 5].map((key) => (
+        <Skeleton
+          key={key}
+          variant='rectangular'
+          height={48}
+          animation='wave'
+          sx={{ mb: 1, borderRadius: 1 }}
+        />
+      ))}
+    </Box>
+  );
+}
+
+function AlertsEmptyState({ selectedDate }: { selectedDate: string | null }) {
+  return (
+    <Box sx={{ textAlign: 'center', py: 6 }}>
+      <Typography variant='subtitle1' color='text.secondary'>
+        {selectedDate ? 'No alert events for the selected date.' : 'No alert events recorded yet.'}
+      </Typography>
+      <Typography variant='body2' color='text.secondary'>
+        {selectedDate
+          ? 'Adjust the date picker or clear the filter to view more events.'
+          : 'Run the alert engine or ingest sample data to populate this view.'}
+      </Typography>
+    </Box>
+  );
+}
+
+type AlertDetailsDrawerProps = {
+  alert: AlertEventListItem | null;
+  onClose: () => void;
+  tz: string;
+};
+
+function AlertDetailsDrawer({ alert, onClose, tz }: AlertDetailsDrawerProps) {
+  return (
+    <Drawer anchor='right' open={Boolean(alert)} onClose={onClose}>
+      <Box
+        sx={{
+          width: { xs: 320, sm: 380, md: 420 },
+          p: 2,
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+        }}
+      >
+        {alert ? (
+          <>
+            <Stack spacing={0.5}>
+              <Typography variant='overline' color='text.secondary'>
+                {alert.symbol} · {alert.raw.rule_code}
+              </Typography>
+              <Typography variant='h6'>{alert.title}</Typography>
+              <Stack direction='row' spacing={1} alignItems='center' flexWrap='wrap'>
+                <SeverityChip value={alert.severity} />
+                <Chip size='small' label={alert.digestBucket} variant='outlined' />
+                <Chip
+                  size='small'
+                  label={`${MODE_LABELS[alert.mode] ?? alert.mode}`}
+                  variant='outlined'
+                />
+                {alert.nextActionCode ? (
+                  <Chip
+                    size='small'
+                    label={alert.nextActionCode}
+                    variant='outlined'
+                    sx={{ fontFamily: 'monospace' }}
+                  />
+                ) : null}
+              </Stack>
+              <Typography variant='caption' color='text.secondary'>
+                Fired at {formatLocalTime(alert.firedAtUtc, tz)} ({alert.firedAtUtc})
+              </Typography>
+              <Typography variant='caption' color='text.secondary'>
+                Trading date: {alert.tradingDate} · Send type: {alert.sendType}
+              </Typography>
+              {alert.digestId ? (
+                <Typography variant='caption' color='text.secondary'>
+                  Digest id: {alert.digestId}
+                </Typography>
+              ) : null}
+            </Stack>
+
+            <Divider />
+
+            <Section title='Body'>
+              <Typography variant='body2' sx={{ whiteSpace: 'pre-wrap' }}>
+                {alert.body}
+              </Typography>
+            </Section>
+
+            <Section title='Channels'>
+              <ChannelsSummary summary={alert.channelsSummary} />
+            </Section>
+
+            <Section title='Context'>
+              <KeyValueList data={alert.context} emptyLabel='No context variables.' />
+            </Section>
+
+            <Section title='Details'>
+              <KeyValueList data={alert.details} emptyLabel='No additional details.' />
+            </Section>
+
+            <Section title='Deliveries'>
+              <DeliveriesTable deliveries={alert.deliveries} tz={tz} />
+            </Section>
+          </>
+        ) : null}
+      </Box>
+    </Drawer>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Stack spacing={1}>
+      <Typography variant='subtitle2'>{title}</Typography>
+      {children}
+    </Stack>
+  );
+}
+
+function KeyValueList({
+  data,
+  emptyLabel,
+}: {
+  data: Record<string, unknown>;
+  emptyLabel: string;
+}) {
+  const entries = Object.entries(data);
+  if (entries.length === 0) {
+    return (
+      <Typography variant='body2' color='text.secondary'>
+        {emptyLabel}
+      </Typography>
+    );
+  }
+  return (
+    <Stack spacing={0.5}>
+      {entries.map(([key, value]) => (
+        <Stack key={key} direction='row' spacing={1} alignItems='flex-start'>
+          <Typography
+            variant='body2'
+            sx={{ minWidth: 96, fontWeight: 500, color: 'text.secondary' }}
+          >
+            {key}
+          </Typography>
+          <Typography variant='body2' sx={{ wordBreak: 'break-word' }}>
+            {formatValue(value)}
+          </Typography>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (err) {
+    return String(value);
   }
 }
 
-function formatChannelLabel(key: string): string {
-  return key
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function formatDate(value: string | null, tz: string): string {
-  if (!value) return '--';
-  const parsed = dayjs(value);
-  if (parsed.isValid()) {
-    return parsed.tz(tz).format('YYYY-MM-DD HH:mm');
+function DeliveriesTable({
+  deliveries,
+  tz,
+}: {
+  deliveries: AlertEventListItem['deliveries'];
+  tz: string;
+}) {
+  if (!deliveries || deliveries.length === 0) {
+    return (
+      <Typography variant='body2' color='text.secondary'>
+        No delivery attempts recorded.
+      </Typography>
+    );
   }
-  const numeric = Number(value);
-  if (Number.isFinite(numeric)) {
-    const asDate = dayjs(numeric);
-    if (asDate.isValid()) {
-      return asDate.tz(tz).format('YYYY-MM-DD HH:mm');
-    }
-  }
-  return value;
-}
-
-function formatDateOnly(value: string | null): string {
-  if (!value) return '--';
-  const parsed = dayjs(value);
-  if (parsed.isValid()) {
-    return parsed.format('YYYY-MM-DD');
-  }
-  return value;
+  return (
+    <Stack spacing={1}>
+      {deliveries.map((delivery, idx) => (
+        <Box
+          key={`${delivery.channel}-${delivery.attempt_no}-${idx}`}
+          sx={{
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1,
+            p: 1,
+          }}
+        >
+          <Stack direction='row' spacing={1} alignItems='center'>
+            <Typography variant='body2' fontWeight={600}>
+              {delivery.channel ?? 'unknown'}
+            </Typography>
+            <Chip
+              size='small'
+              label={delivery.status ?? 'UNKNOWN'}
+              color={
+                delivery.status === 'SENT'
+                  ? 'success'
+                  : delivery.status === 'FAILED'
+                  ? 'error'
+                  : 'default'
+              }
+              variant='outlined'
+            />
+            <Typography variant='caption' color='text.secondary'>
+              Attempt #{delivery.attempt_no ?? '?'}
+            </Typography>
+          </Stack>
+          <Typography variant='caption' color='text.secondary'>
+            Sent at:{' '}
+            {delivery.sent_at_utc
+              ? `${formatLocalTime(delivery.sent_at_utc, tz)} (${delivery.sent_at_utc})`
+              : '—'}
+          </Typography>
+          {delivery.response_code ? (
+            <Typography variant='caption' color='text.secondary'>
+              Response code: {delivery.response_code}
+            </Typography>
+          ) : null}
+          {delivery.response_meta && Object.keys(delivery.response_meta).length > 0 ? (
+            <Typography variant='caption' color='text.secondary' sx={{ display: 'block', mt: 0.5 }}>
+              Meta: {JSON.stringify(delivery.response_meta)}
+            </Typography>
+          ) : null}
+        </Box>
+      ))}
+    </Stack>
+  );
 }

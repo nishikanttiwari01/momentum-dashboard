@@ -6,7 +6,7 @@ import {
   useGetApiV1Screener,
   useGetApiV1InstrumentsSymbolDetail,
   useListRuns,
-  useListAlerts,
+  useListAlertEvents,
   useListNewsBySymbol,
   useListAllNews,
   listAllNews,
@@ -23,7 +23,15 @@ import type {
   ListAllNewsParams,
   NewsListResponse,
   NewsWindowListResponse,
-  AlertState,
+  AlertEvent,
+  AlertEventDigestBucket,
+  AlertEventMode,
+  AlertEventSendType,
+  AlertEventSeverity,
+  AlertEventTriggeredBy,
+  AlertChannelStatus,
+  AlertDeliveryAttempt,
+  ListAlertEventsParams,
 } from './api/types';
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 
@@ -89,41 +97,48 @@ export function useAllNewsInfinite(
 /* --------------------------------------------
  * Alerts
  * ------------------------------------------*/
-type RawAlert = AlertState | Record<string, unknown>;
+type RawAlertEvent = AlertEvent | Record<string, unknown>;
 
-export type AlertChannelFlags = Record<string, boolean>;
-
-export type AlertListItem = {
-  id: number | null;
+export type AlertEventListItem = {
+  id: number;
   symbol: string;
-  ruleCode: string;
-  ruleValue: string | null;
-  label: string;
-  description: string | null;
-  details: string[];
-  channels: string[];
-  channelFlags: AlertChannelFlags;
-  enabled: boolean;
-  lastScore: number | null;
-  lastFiredAt: string | null;
-  lastFiredLocalDate: string | null;
-  lastFiredRunId: string | null;
-  mutedUntil: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
-  raw: RawAlert;
+  firedAtUtc: string;
+  tradingDate: string;
+  intradayBucketLabel: string | null;
+  bucketOrd: number;
+  mode: AlertEventMode;
+  title: string;
+  body: string;
+  severity: AlertEventSeverity;
+  digestBucket: AlertEventDigestBucket;
+  sendType: AlertEventSendType;
+  digestId: string | null;
+  scoreAtFire: number | null;
+  nextActionCode: string | null;
+  triggeredBy?: AlertEventTriggeredBy;
+  profile: string | null;
+  configVersion: number | null;
+  channelsSummary: Record<string, AlertChannelStatus>;
+  deliveries: AlertDeliveryAttempt[];
+  context: Record<string, unknown>;
+  details: Record<string, unknown>;
+  raw: AlertEvent;
 };
 
-export function useAlerts(opts?: { staleTimeMs?: number; enabled?: boolean }) {
+export function useAlerts(
+  params?: ListAlertEventsParams,
+  opts?: { staleTimeMs?: number; enabled?: boolean }
+) {
   const { staleTimeMs = 60_000, enabled = true } = opts ?? {};
-  return useListAlerts<AlertListItem[]>({
+  return useListAlertEvents<AlertEventListItem[]>(params, {
     query: {
       select: (res) => {
-        const payload = Array.isArray(res.data) ? (res.data as RawAlert[]) : [];
-        return payload.map((item) => normalizeAlertRecord(item));
+        const payload = Array.isArray(res.data) ? (res.data as RawAlertEvent[]) : [];
+        return payload
+          .map((item) => normalizeAlertEvent(item))
+          .filter((item): item is AlertEventListItem => item !== null);
       },
       staleTime: staleTimeMs,
-      refetchOnMount: 'always',
       refetchOnWindowFocus: true,
       refetchOnReconnect: true,
       enabled,
@@ -131,209 +146,86 @@ export function useAlerts(opts?: { staleTimeMs?: number; enabled?: boolean }) {
   });
 }
 
-function normalizeAlertRecord(input: unknown): AlertListItem {
-  const source = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
-  const ruleCandidate =
-    source['rule'] && typeof source['rule'] === 'object'
-      ? (source['rule'] as Record<string, unknown>)
-      : null;
-  const rule = ruleCandidate && Object.keys(ruleCandidate).length > 0 ? ruleCandidate : null;
-
-  const ruleConditions =
-    rule && rule['conditions'] && typeof rule['conditions'] === 'object'
-      ? (rule['conditions'] as Record<string, unknown>)
-      : null;
-
-  const symbolValue = (rule?.['symbol'] ?? source['symbol'] ?? '').toString();
-  const symbol = symbolValue.toUpperCase();
-
-  const ruleType = rule?.['rule_type'] ?? rule?.['ruleType'] ?? '';
-  const ruleCodeValue =
-    source['rule_code'] ??
-    source['ruleCode'] ??
-    ruleConditions?.['code'] ??
-    ruleType ??
-    '';
-  const ruleCode = typeof ruleCodeValue === 'string' ? ruleCodeValue : String(ruleCodeValue ?? '');
-
-  const ruleValueRaw = rule?.['rule_value'] ?? rule?.['ruleValue'] ?? null;
-  const ruleValue =
-    ruleValueRaw == null || ruleValueRaw === ''
-      ? null
-      : typeof ruleValueRaw === 'string'
-      ? ruleValueRaw
-      : String(ruleValueRaw);
-
-  const enabledValue = rule?.['enabled'] ?? source['enabled'];
-  const enabled = enabledValue === undefined ? true : Boolean(enabledValue);
-
-  const { channelFlags, channels } = normalizeAlertChannels(
-    rule?.['channels'] ?? source['channels']
-  );
-
-  const lastScore =
-    toNumberLike(source['last_score']) ??
-    toNumberLike(source['lastScore']) ??
-    toNumberLike(ruleConditions?.['last_score']);
-
-  const lastFiredAt = extractDateString(source, [
-    'last_fired_at',
-    'last_fired_at_utc',
-    'lastFiredAt',
-    'lastFiredAtUtc',
-  ]);
-  const lastFiredLocalDate = extractDateString(source, [
-    'last_fired_local_date',
-    'lastFiredLocalDate',
-  ]);
-  const lastFiredRunIdRaw =
-    ruleConditions?.['last_fired_run_id'] ?? source['last_fired_run_id'] ?? source['lastFiredRunId'];
-  const lastFiredRunId =
-    lastFiredRunIdRaw == null || lastFiredRunIdRaw === ''
-      ? null
-      : typeof lastFiredRunIdRaw === 'string'
-      ? lastFiredRunIdRaw
-      : String(lastFiredRunIdRaw);
-
-  const mutedUntil = extractDateString(source, ['muted_until', 'mutedUntil']);
-
-  const details: string[] = [];
-  if (ruleValue) details.push(`Value: ${ruleValue}`);
-  if (lastScore !== null) details.push(`Score: ${lastScore}`);
-  if (lastFiredRunId) details.push(`Run: ${lastFiredRunId}`);
-
-  if (ruleConditions) {
-    Object.entries(ruleConditions).forEach(([key, value]) => {
-      if (['code', 'last_score', 'last_fired_run_id', 'last_fired_local_date'].includes(key)) return;
-      const formatted = formatDetail(humanizeKey(key), value);
-      if (formatted) {
-        details.push(formatted);
-      }
-    });
+function normalizeAlertEvent(input: RawAlertEvent): AlertEventListItem | null {
+  if (!input || typeof input !== 'object') return null;
+  const source = input as AlertEvent;
+  if (typeof source.id !== 'number' || typeof source.fired_at_utc !== 'string') {
+    return null;
   }
 
-  const description = details.length > 0 ? details.join(' | ') : null;
-
-  const id = toNumberLike(source['id'] ?? rule?.['id']);
-  const label = ruleValue || humanizeKey(ruleCode) || 'Alert';
+  const channelsSummary = normalizeChannelSummary(source.channels_summary_json);
+  const deliveries = normalizeDeliveries(source.deliveries);
+  const context = normalizeDictionary(source.context_json);
+  const details = normalizeDictionary(source.details_json);
 
   return {
-    id,
-    symbol,
-    ruleCode,
-    ruleValue,
-    label,
-    description,
+    id: source.id,
+    symbol: (source.symbol ?? '').toUpperCase(),
+    firedAtUtc: source.fired_at_utc,
+    tradingDate: source.trading_date ?? '',
+    intradayBucketLabel: source.intraday_bucket_label ?? null,
+    bucketOrd: source.bucket_ord ?? 0,
+    mode: source.mode,
+    title: source.title_rendered ?? '',
+    body: source.body_rendered ?? '',
+    severity: source.severity,
+    digestBucket: source.digest_bucket,
+    sendType: source.send_type,
+    digestId: source.digest_id ?? null,
+    scoreAtFire: source.score_at_fire ?? null,
+    nextActionCode: source.next_action_code ?? null,
+    triggeredBy: source.triggered_by,
+    profile: source.profile ?? null,
+    configVersion: source.config_version ?? null,
+    channelsSummary,
+    deliveries,
+    context,
     details,
-    channels,
-    channelFlags,
-    enabled,
-    lastScore,
-    lastFiredAt,
-    lastFiredLocalDate,
-    lastFiredRunId,
-    mutedUntil,
-    createdAt: null,
-    updatedAt: null,
-    raw: (input ?? {}) as RawAlert,
+    raw: source,
   };
 }
 
-function normalizeAlertChannels(input: unknown): {
-  channelFlags: AlertChannelFlags;
-  channels: string[];
-} {
-  const flags: AlertChannelFlags = {};
-
-  if (Array.isArray(input)) {
-    input.forEach((value) => {
-      const key = typeof value === 'string' ? value : String(value ?? '');
-      const normalized = key.trim().toLowerCase();
-      if (!normalized) return;
-      flags[normalized] = true;
-    });
-  } else if (input && typeof input === 'object') {
-    Object.entries(input as Record<string, unknown>).forEach(([key, value]) => {
-      const normalized = key.trim().toLowerCase();
-      if (!normalized) return;
-      flags[normalized] = Boolean(value);
-    });
-  } else if (typeof input === 'string') {
-    const normalized = input.trim().toLowerCase();
-    if (normalized) flags[normalized] = true;
+function normalizeChannelSummary(
+  input: AlertEvent['channels_summary_json']
+): Record<string, AlertChannelStatus> {
+  const out: Record<string, AlertChannelStatus> = {};
+  if (!input || typeof input !== 'object') {
+    return out;
   }
-
-  const channels = Object.entries(flags)
-    .filter(([, active]) => active)
-    .map(([key]) => humanizeKey(key))
-    .sort((a, b) => a.localeCompare(b));
-
-  return { channelFlags: flags, channels };
-}
-
-function formatDetail(label: string, value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-
-  if (typeof value === 'boolean') {
-    return value ? label : null;
-  }
-
-  if (Array.isArray(value)) {
-    const parts = value
-      .map((part) => String(part ?? '').trim())
-      .filter((part) => part.length > 0);
-    if (parts.length === 0) return null;
-    return `${label}: ${parts.join(', ')}`;
-  }
-
-  if (value instanceof Date) {
-    return `${label}: ${value.toISOString()}`;
-  }
-
-  if (typeof value === 'object') {
-    const json = JSON.stringify(value);
-    if (!json || json === '{}' || json === '[]') return null;
-    return `${label}: ${json}`;
-  }
-
-  const text = String(value).trim();
-  if (!text) return null;
-  return `${label}: ${text}`;
-}
-
-function extractDateString(source: Record<string, unknown>, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = source[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value;
+  Object.entries(input).forEach(([key, value]) => {
+    if (value && typeof value === 'object') {
+      out[key] = {
+        status: value.status,
+        attempts: value.attempts ?? null,
+        code: value.code ?? null,
+        reason: value.reason ?? null,
+      };
     }
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return new Date(value).toISOString();
-    }
-  }
-  return null;
+  });
+  return out;
 }
 
-function toNumberLike(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
+function normalizeDictionary(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return {};
   }
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
+  return { ...(input as Record<string, unknown>) };
 }
 
-function humanizeKey(input: unknown): string {
-  const str = typeof input === 'string' ? input : String(input ?? '');
-  const cleaned = str.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!cleaned) return '';
-  const lower = cleaned.toLowerCase();
-  return lower.replace(/\b\w/g, (char) => char.toUpperCase());
+function normalizeDeliveries(input: AlertEvent['deliveries']): AlertDeliveryAttempt[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .filter((item): item is AlertDeliveryAttempt => !!item && typeof item === 'object')
+    .map((item) => ({
+      channel: item.channel ?? '',
+      status: item.status,
+      attempt_no: item.attempt_no ?? 1,
+      sent_at_utc: item.sent_at_utc ?? null,
+      response_code: item.response_code ?? null,
+      response_meta: item.response_meta ?? undefined,
+    }));
 }
 
 /* --------------------------------------------

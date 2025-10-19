@@ -6,4 +6,11 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type PreviewAlertDigest200 = { [key: string]: unknown };
+export type ListAlertEventsMode = typeof ListAlertEventsMode[keyof typeof ListAlertEventsMode];
+
+
+// eslint-disable-next-line @typescript-eslint/no-redeclare
+export const ListAlertEventsMode = {
+  EOD: 'EOD',
+  INTRADAY: 'INTRADAY',
+} as const;

@@ -163,6 +163,18 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
+def _resolve_alerts_path(candidate: str | None) -> Optional[Path]:
+    if not candidate:
+        return None
+    path = Path(candidate)
+    if path.is_absolute():
+        return path
+    for base in (CONFIG_DIR, REPO_ROOT):
+        merged = (base / path).resolve()
+        if merged.exists():
+            return merged
+    return (CONFIG_DIR / path).resolve()
+
 def _deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(a)
     for k, v in b.items():
@@ -288,6 +300,22 @@ def load() -> Settings:
     # If a token is provided, auto-require it for ingest
     if os.getenv("NEWS_INGEST_TOKEN"):
         data = _deep_merge(data, {"news": {"ingest": {"require_token": True, "token_env": "NEWS_INGEST_TOKEN"}}})
+
+    # Alerts config (optional external file)
+    alerts_cfg_path = os.getenv("ALERTS_CONFIG_PATH") or data.get("alerts_config_path")
+    resolved_alerts_path = _resolve_alerts_path(alerts_cfg_path) if alerts_cfg_path else None
+    if resolved_alerts_path and resolved_alerts_path.exists():
+        try:
+            _LOADED_FILES.append(resolved_alerts_path)
+            alerts_payload = _read_yaml(resolved_alerts_path)
+        except Exception:
+            alerts_payload = {}
+        if isinstance(alerts_payload, dict):
+            payload = alerts_payload.get("alerts", alerts_payload)
+            if isinstance(payload, dict):
+                data["alerts"] = _deep_merge(data.get("alerts") or {}, payload)
+    if "alerts_config_path" in data:
+        data.pop("alerts_config_path", None)
 
     try:
         return Settings(**data)
