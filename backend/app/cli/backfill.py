@@ -7,8 +7,9 @@ import time
 import logging
 import shutil
 from dataclasses import dataclass
-from datetime import date, timedelta
-from typing import Iterable, Optional, Tuple, Dict, Any
+from datetime import date, timedelta, datetime, timezone  # <-- added datetime, timezone
+from typing import Iterable, Optional, Tuple, Dict, Any, Callable  # <-- added Callable
+import csv  # <-- added
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -18,6 +19,16 @@ from pathlib import Path as _Path
 from backend.util import run_fetch_details, run_fetch_screener_pages
 from app.notifs.email_digest import send_backfill_digest_if_enabled
 
+# === NEW (alerts orchestrator integration) ====================================
+try:
+    from app.core import config as _cfg_mod
+    from app.core.db import get_session as _get_session
+    from app.alerts.types import Mode as _AlertMode
+    from app.alerts import orchestrator as _alerts_orchestrator
+    _ALERTS_OK = True
+except Exception:
+    _ALERTS_OK = False
+# =============================================================================
 
 API = os.getenv("MD_API", "http://127.0.0.1:8000")
 
@@ -221,6 +232,7 @@ def _wait_for_daily_visible(as_of: date, max_wait_sec: int = 25, step_sec: float
     return _daily_partition_committed(as_of) or _daily_partition_has_parquet(as_of)
 # -----------------------------------------------------------------------------
 
+
 def _delete_intraday_partition(as_of: date) -> None:
     base = _parquet_root_abs() / "scores" / "intraday"
     candidates = [
@@ -261,6 +273,192 @@ def _trigger_util_exports(as_of: date) -> None:
     except Exception:
         log.exception('export_screener_failed', extra=extra)
 
+
+# === NEW: Alerts helpers (self-contained, non-invasive) =======================
+
+def _resolve_alerts_cfg_dict() -> Dict[str, Any] | None:
+    """
+    Return the 'alerts' config as a plain dict, or None if not configured.
+    """
+    if not _ALERTS_OK:
+        return None
+    try:
+        cfg = _cfg_mod.load()
+        alerts = getattr(cfg, "alerts", None)
+        if alerts is None:
+            return None
+        if hasattr(alerts, "model_dump"):
+            d = alerts.model_dump()
+        elif hasattr(alerts, "dict"):
+            d = alerts.dict()
+        elif isinstance(alerts, dict):
+            d = alerts
+        else:
+            d = dict(alerts.__dict__)
+        return d.get("alerts", d)
+    except Exception as e:
+        log.warning("alerts_cfg_load_failed(backfill)", extra={"error": str(e)})
+        return None
+
+
+def _read_symbols_and_metrics_from_details_csv(as_of: date) -> tuple[list[str], Dict[str, Dict[str, Any]]]:
+    """
+    Use the existing details export (CSV) as a light data source for alerts.
+    Returns (symbols, metrics_by_symbol). Missing columns are OK.
+    """
+    symbols: list[str] = []
+    metrics: Dict[str, Dict[str, Any]] = {}
+
+    try:
+        csv_path = run_fetch_details(as_of=as_of)  # idempotent
+        p = _Path(str(csv_path))
+        if not p.exists():
+            return symbols, metrics
+
+        with p.open("r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            # Find symbol column case-insensitively
+            fieldnames = [fn for fn in (reader.fieldnames or [])]
+            lower_map = {fn.lower(): fn for fn in fieldnames}
+            sym_col = lower_map.get("symbol") or lower_map.get("sym") or lower_map.get("ticker")
+            if not sym_col:
+                return symbols, metrics
+
+            for row in reader:
+                sym = (row.get(sym_col) or "").strip().upper()
+                if not sym:
+                    continue
+                if sym not in metrics:
+                    metrics[sym] = {}
+                    symbols.append(sym)
+
+                # Normalize keys to lowercase for metric_getter
+                for k, v in row.items():
+                    if k is None:
+                        continue
+                    key = k.strip().lower()
+                    # attempt numeric conversion where it looks like a number
+                    if isinstance(v, str):
+                        vv = v.strip()
+                        if vv == "":
+                            metrics[sym][key] = None
+                            continue
+                        try:
+                            # int or float
+                            if vv.isdigit() or (vv.startswith("-") and vv[1:].isdigit()):
+                                metrics[sym][key] = int(vv)
+                            else:
+                                metrics[sym][key] = float(vv)
+                        except ValueError:
+                            metrics[sym][key] = vv
+                    else:
+                        metrics[sym][key] = v
+    except Exception as e:
+        log.warning("details_csv_read_failed", extra={"date": as_of.isoformat(), "error": str(e)})
+
+    return symbols, metrics
+
+
+def _make_metric_getter_from_metrics(metrics: Dict[str, Dict[str, Any]]) -> Callable[[str, str], Any]:
+    """
+    Returns metric_getter(symbol, name) using lowercase key lookup and a few aliases.
+    """
+    # conservative aliases to improve hit rate without guessing your schema
+    aliases = {
+        "score": ["score", "setup_score", "quality_score"],
+        "relvol20": ["relvol20", "relvol_20", "rel_volume_20d"],
+        "day_change_pct": ["day_change_pct", "pct_change", "change_pct"],
+        "pivot_clear_pct": ["pivot_clear_pct", "bp_clear_pct", "breakout_clear_pct"],
+        "rsi14": ["rsi14", "rsi_14"],
+        "adx14": ["adx14", "adx_14"],
+        "atr10_pct": ["atr10_pct", "atr10p", "atr10_pct_of_price"],
+        "liquidity_rupees": ["liquidity_rupees", "turnover_rupees", "avg_turnover_20d"],
+        "next_action_code": ["next_action_code", "next_action", "action_code"],
+    }
+
+    def getter(symbol: str, name: str):
+        m = metrics.get(symbol.upper())
+        if not m:
+            return None
+        key = (name or "").strip().lower()
+        if key in m:
+            return m[key]
+        for alias in aliases.get(key, []):
+            if alias in m:
+                return m[alias]
+        return None
+
+    return getter
+
+
+def _run_eod_alerts(trading_day: date) -> None:
+    """
+    After a daily snapshot is visible, load symbols/metrics from details CSV and
+    invoke the alerts orchestrator in EOD mode. No-ops gracefully if anything
+    required is missing.
+    """
+    if not _ALERTS_OK:
+        log.info("alerts_skipped(backfill): package not available")
+        return
+
+    alerts_cfg = _resolve_alerts_cfg_dict()
+    if not alerts_cfg:
+        log.info("alerts_skipped(backfill): config not loaded")
+        return
+
+    symbols, metrics = _read_symbols_and_metrics_from_details_csv(trading_day)
+    if not symbols:
+        log.info("alerts_skipped(backfill): no symbols from details CSV", extra={"date": trading_day.isoformat()})
+        return
+
+    metric_getter = _make_metric_getter_from_metrics(metrics)
+
+    # DB session / connection
+    gen = _get_session()
+    session = next(gen)
+    try:
+        try:
+            conn = session.connection()
+        except Exception:
+            bind = session.get_bind()
+            conn = bind.connect() if bind is not None else None
+        if conn is None:
+            log.warning("alerts_skipped(backfill): db connection unavailable")
+            return
+
+        now_utc = datetime.now(timezone.utc)
+        created_ids = _alerts_orchestrator.run(
+            conn,
+            alerts_cfg=alerts_cfg,
+            symbols=symbols,
+            mode=_AlertMode.EOD,
+            trading_date=trading_day,
+            now_utc=now_utc,
+            metric_getter=metric_getter,
+            run_ctx={"triggered_by": "STARTUP_CATCHUP"},
+        )
+        # If using a Session with autocommit off, ensure changes are flushed
+        try:
+            session.commit()
+        except Exception:
+            pass
+
+        log.info(
+            "alerts_eod_created",
+            extra={"count": len(created_ids), "date": trading_day.isoformat()},
+        )
+    except Exception as e:
+        log.exception("alerts_eod_failed", extra={"date": trading_day.isoformat(), "error": str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            gen.close()
+        except Exception:
+            pass
+# =============================================================================
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -413,7 +611,6 @@ def main(argv: list[str] | None = None) -> int:
                         },
                     )
 
-
             if _should_export_utilities(status, resp) and d not in exported_dates:
                 # Always wait briefly for daily snapshot visibility (commit marker or parquet)
                 _wait_for_daily_visible(d)
@@ -422,6 +619,13 @@ def main(argv: list[str] | None = None) -> int:
                     exported_dates.add(d)
                 else:
                     log.info("export_skipped_uncommitted", extra={"date": d.isoformat()})
+
+            # === NEW: Fire EOD alerts after daily is visible (and details CSV is available) ===
+            try:
+                if _daily_partition_committed(d) or _daily_partition_has_parquet(d):
+                    _run_eod_alerts(d)
+            except Exception as e:
+                log.exception("alerts_hook_failed(backfill)", extra={"date": d.isoformat(), "error": str(e)})
 
             if d not in cleaned_intraday and _daily_partition_has_parquet(d):
                 _delete_intraday_partition(d)

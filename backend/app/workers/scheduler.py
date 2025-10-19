@@ -9,7 +9,7 @@ Simple in-process scheduler for periodic scans.
 """
 
 from datetime import datetime, timezone, timedelta, date, time as dtime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Iterable, Callable
 import uuid
 import logging
 import time
@@ -23,6 +23,14 @@ from app.services.screening_service import run_screening
 from app.workers.jobs import post_scan_jobs
 from app.repos.parquet import datasets  # <-- added (for root + target hint)
 from zoneinfo import ZoneInfo
+
+# === NEW: alerts orchestrator integration (non-invasive) ===
+try:
+    from app.alerts.types import Mode as _AlertMode
+    from app.alerts import orchestrator as _alerts_orchestrator
+    _ALERTS_AVAILABLE = True
+except Exception:
+    _ALERTS_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 _scheduler: Optional[BackgroundScheduler] = None
@@ -122,6 +130,127 @@ def _daily_partition_has_parquet(trading_day: date) -> bool:
         )
         return False
 
+
+# === NEW helpers for alerts wiring (safe, minimal) ============================
+
+def _resolve_alerts_cfg_dict() -> Dict[str, Any] | None:
+    """
+    Try to get alerts config (dict under key 'alerts') from app.core.config.load().
+    Robust to pydantic models / plain dicts. Returns None if not present.
+    """
+    try:
+        cfg = config.load()
+        alerts = getattr(cfg, "alerts", None)
+        if alerts is None:
+            return None
+        # pydantic v2
+        if hasattr(alerts, "model_dump"):
+            d = alerts.model_dump()
+        # pydantic v1
+        elif hasattr(alerts, "dict"):
+            d = alerts.dict()
+        elif isinstance(alerts, dict):
+            d = alerts
+        else:
+            # last resort: if cfg is dict-like
+            d = dict(alerts.__dict__)
+        # We expect top-level to BE the 'alerts' dict already (per your updated config.py)
+        # If someone nested it, try to unwrap.
+        return d.get("alerts", d)
+    except Exception as e:
+        log.warning("alerts_cfg_load_failed", extra={"error": str(e)})
+        return None
+
+
+def _guess_symbols_from_result(result) -> list[str]:
+    """
+    Best-effort ways to get the universe symbols from the screening result.
+    We DO NOT hard-depend on any specific attribute. If we can't find symbols,
+    we return [] and skip alerts gracefully.
+    """
+    # Common patterns in services: result.universe_symbols, result.symbols
+    for attr in ("universe_symbols", "symbols"):
+        syms = getattr(result, attr, None)
+        if syms:
+            try:
+                return list(syms)
+            except Exception:
+                pass
+    # As a last resort, try a snapshot-based hint (do not read parquet here).
+    # Keep empty to avoid breaking if nothing is available.
+    return []
+
+
+def _make_metric_getter_for_intraday(result) -> Callable[[str, str], Any]:
+    """
+    Provide a metric_getter(symbol, name) for orchestrator that is safe even if the
+    underlying source isn't available here. We only log and return None on misses.
+    The real metric plumbing can be wired in the backfill/worker where the data loaders live.
+    """
+    # If the screening service exposes one (ideal), use it.
+    mg = getattr(result, "metric_getter", None)
+    if callable(mg):
+        return mg
+
+    # Fallback: a null getter that returns None (filters will fail -> no alerts).
+    def _null_getter(symbol: str, name: str):
+        return None
+    return _null_getter
+
+
+def _run_intraday_alerts(session, *, trading_day: date, result) -> None:
+    """
+    Non-invasive alerts trigger: only runs if alerts orchestrator & cfg are present,
+    and we can obtain a non-empty symbol list. Otherwise, no-op.
+    """
+    if not _ALERTS_AVAILABLE:
+        log.info("alerts_orchestrator_missing_skip")
+        return
+
+    alerts_cfg = _resolve_alerts_cfg_dict()
+    if not alerts_cfg:
+        log.info("alerts_cfg_missing_skip")
+        return
+
+    symbols = _guess_symbols_from_result(result)
+    if not symbols:
+        log.info("alerts_symbols_missing_skip", extra={"reason": "no_symbols_from_result"})
+        return
+
+    metric_getter = _make_metric_getter_for_intraday(result)
+
+    now_utc = datetime.now(timezone.utc)
+    try:
+        conn = session.connection()
+    except Exception:
+        # If Session.connection() isn't available, fall back to bind.connect()
+        bind = session.get_bind()
+        conn = bind.connect() if bind is not None else None
+
+    if conn is None:
+        log.warning("alerts_conn_unavailable_skip")
+        return
+
+    try:
+        created_ids = _alerts_orchestrator.run(
+            conn,
+            alerts_cfg=alerts_cfg,
+            symbols=symbols,
+            mode=_AlertMode.INTRADAY,          # scheduler runs inside trading window
+            trading_date=trading_day,
+            now_utc=now_utc,
+            metric_getter=metric_getter,
+            run_ctx={"triggered_by": "SCHEDULE"},
+        )
+        log.info("alerts_intraday_created", extra={"count": len(created_ids), "trading_date": trading_day.isoformat()})
+    except Exception as e:
+        log.exception("alerts_intraday_failed", extra={"error": str(e)})
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+# =============================================================================
 
 
 def _run_once(universe: Optional[str]) -> None:
@@ -226,6 +355,12 @@ def _run_once(universe: Optional[str]) -> None:
             post_scan_jobs(result.run_id)
         except Exception as e:
             log.exception("post-scan jobs failed for run_id=%s: %s", result.run_id, e)
+
+        # ---- NEW: Intraday alerts after successful screening (non-invasive) ----
+        try:
+            _run_intraday_alerts(s, trading_day=trading_day, result=result)
+        except Exception as e:
+            log.exception("alerts hook failed", extra={"error": str(e)})
 
     except Exception as exc:
         log.exception("scheduled scan failed: %s", exc)

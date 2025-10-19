@@ -38,54 +38,7 @@ scheduler:
     end: '15:30'
 data:
   adapter: yahoo
-alerts:
-  enabled: true
-  timezone: Asia/Kolkata
-  channels:
-    telegram: true
-    desktop: true
-    ntfy: true
-  ntfy:
-    server: https://ntfy.sh
-    topic: momentum-alerts-nishi
-    token: null
-  min_score: 70
-  persistence_runs_intraday: 2
-  realert_score_jump: 10
-  cooloff_runs_after_alert: 2
-  cooloff_runs_after_failed_bo: 3
-  suppress_open_minutes: 15
-  suppress_close_minutes: 5
-  regime:
-    down:
-      min_score: 72
-      block_starter: true
-  breadth:
-    index: NIFTY500
-    pct_above_50dma_min: 35
-  india_safety:
-    block_asm_gsm: true
-    max_upper_circuit_hits_60d: 2
-    delivery_ratio_bonus_min: 0.45
-  throttle:
-    min_minutes_between: 60
-  dedupe:
-    window_minutes: 180
-  email:
-    enabled: true
-    on_backfill_digest: true
-    include_trades: true
-    smtp_host: smtp.gmail.com
-    smtp_port: 587
-    use_tls: true
-    from_name: Momentum Suite
-    username: nishikantworld@gmail.com
-    password: tzrtcknnvhfqrzly
-    from_addr: nishikantworld@gmail.com
-    to_list:
-    - nishikantworld@gmail.com
-    - nishikant.tiwari01@gmail.com
-    - shashikantame@gmail.com
+
 rules:
   breakeven_gain_pct: 5.0
   atr_chand_mult: 2.0
@@ -379,3 +332,4 @@ news:
       - 502
       - 503
       - 504
+alerts_config_path: ./alerts.yaml

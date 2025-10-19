@@ -17,7 +17,6 @@ from sqlalchemy import (
     MetaData,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from app.repos.sql.alerts_repo import AlertStateORM, AlertEventORM
 
 
 # ---------- Alembic/SQLite-safe naming convention ----------
