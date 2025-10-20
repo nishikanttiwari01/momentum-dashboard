@@ -7,6 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any, Iterable, Optional, List, Tuple
 from datetime import date, datetime
+
 from app.core.config import load as cfg_load
 from app.repos.parquet.scores_repo import ScoresRepo
 
@@ -34,23 +35,51 @@ def _coerce_emails(value: Any) -> list[str]:
         return [p.strip() for p in value.split(",") if p.strip()]
     return []
 
+
 def _email_cfg() -> dict:
-    """Read alerts.email from config; provide sane defaults."""
+    """
+    v2-first configuration loader (alerts.delivery.email),
+    with full back-compat for legacy (alerts.email) keys.
+    """
     alerts = cfg_load().alerts or {}
-    e = (alerts.get("email") or {})
-    return {
-        "enabled": bool(e.get("enabled", True)),
-        "on_backfill_digest": bool(e.get("on_backfill_digest", True)),
-        "include_trades": bool(e.get("include_trades", True)),
-        "smtp_host": e.get("smtp_host"),
-        "smtp_port": int(e.get("smtp_port") or 587),
-        "use_tls": bool(e.get("use_tls", True)),
-        "username": e.get("username"),
-        "password": e.get("password"),
-        "from_addr": e.get("from_addr") or e.get("username"),
-        "from_name": e.get("from_name") or "Momentum Suite",
-        "to_list": _coerce_emails(e.get("to_list")),
+
+    # v2
+    delivery_email = (alerts.get("delivery") or {}).get("email") or {}
+    smtp = delivery_email.get("smtp") or {}
+    v2_cfg = {
+        "enabled": bool(delivery_email.get("enabled", True)),
+        "on_backfill_digest": bool(delivery_email.get("on_backfill_digest", True)),
+        "include_trades": bool(delivery_email.get("include_trades", True)),
+        "smtp_host": smtp.get("host"),
+        "smtp_port": int(smtp.get("port") or 587),
+        "use_tls": bool(smtp.get("use_tls", True)),
+        "username": smtp.get("username"),
+        "password": smtp.get("password"),
+        "from_addr": smtp.get("from_addr") or smtp.get("username"),
+        "from_name": smtp.get("from_name") or "Momentum Suite",
+        "to_list": _coerce_emails((delivery_email.get("defaults") or {}).get("to")),
     }
+
+    # legacy (only used to fill blanks)
+    legacy = (alerts.get("email") or {})
+    for k, v in {
+        "enabled": legacy.get("enabled"),
+        "on_backfill_digest": legacy.get("on_backfill_digest"),
+        "include_trades": legacy.get("include_trades"),
+        "smtp_host": legacy.get("smtp_host"),
+        "smtp_port": legacy.get("smtp_port"),
+        "use_tls": legacy.get("use_tls"),
+        "username": legacy.get("username"),
+        "password": legacy.get("password"),
+        "from_addr": legacy.get("from_addr") or legacy.get("username"),
+        "from_name": legacy.get("from_name"),
+        "to_list": legacy.get("to_list"),
+    }.items():
+        if v2_cfg.get(k) in (None, "", [], False) and v not in (None, "", []):
+            v2_cfg[k] = v if k != "to_list" else _coerce_emails(v)
+
+    return v2_cfg
+
 
 def _pct(v: Any) -> str:
     try:
@@ -58,6 +87,7 @@ def _pct(v: Any) -> str:
         return f"{'+' if f > 0 else ''}{f:.2f}%"
     except Exception:
         return ""
+
 
 def _price(v: Any) -> str:
     try:
@@ -71,7 +101,6 @@ def _price(v: Any) -> str:
 # ----------------------------
 
 def _build_table_html(headers: Iterable[str], rows: Iterable[Iterable[Any]]) -> str:
-    """Safe (escaped) table builder with nicer default styles."""
     def esc(x: Any) -> str:
         s = "" if x is None else str(x)
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -95,11 +124,8 @@ def _build_table_html(headers: Iterable[str], rows: Iterable[Iterable[Any]]) -> 
         f"<thead><tr>{ths}</tr></thead><tbody>{body}</tbody></table>"
     )
 
+
 def _build_table_html_raw(headers: Iterable[str], rows_html: Iterable[Iterable[str]]) -> str:
-    """
-    Same as above but DOES NOT escape <td> contents (so we can inject colored spans).
-    Only use with trusted data we generate ourselves.
-    """
     def esc(x: Any) -> str:
         s = "" if x is None else str(x)
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -130,7 +156,6 @@ def _build_table_html_raw(headers: Iterable[str], rows_html: Iterable[Iterable[s
 
 def _top_lists_for_day(as_of_day: date, scores: ScoresRepo) -> Tuple[list[dict], list[dict], list[dict], Optional[str]]:
     cols = ["symbol", "name", "sector", "last", "change_pct", "pct_1d", "score"]
-    # 1D movers (prefer change_pct; fall back to pct_1d)
     gainers, _, rid_up, _ = scores.read(
         run_id=None, as_of_str=as_of_day.isoformat(),
         filters={}, sort="change_pct.desc,pct_1d.desc,score.desc",
@@ -149,21 +174,19 @@ def _top_lists_for_day(as_of_day: date, scores: ScoresRepo) -> Tuple[list[dict],
     rid = rid_up or rid_dn or rid_sc
     return (gainers or []), (losers or []), (scorers or []), rid
 
+
 def _active_trades_html() -> str:
-    """Build the Active Trades table — only Symbol / Qty / Entry as requested."""
     if not HAVE_DB:
         return ""
     try:
-        # Make this fail-safe when DB isn't initialized (e.g., CLI dry-run)
         try:
             sm = get_sessionmaker()
         except RuntimeError:
-            # DB not initialized in this process → skip quietly
             log.info("active_trades_skipped_db_not_initialized")
             return ""
         except Exception:
             log.exception("active_trades_sessionmaker_failed")
-            return ""        
+            return ""
         with sm() as s:
             repo = PositionsRepo(s)
             pos = repo.list_positions() or []
@@ -180,7 +203,6 @@ def _active_trades_html() -> str:
         table = _build_table_html(["Symbol", "Qty", "Entry"], rows)
         return f"<h3>Active Trades</h3>{table}"
     except Exception:
-        # Keep email clean even if trades section fails
         log.info("active_trades_section_failed", exc_info=True)
         return ""
 
@@ -203,7 +225,6 @@ def _render_html(
     GREEN = "#0B8A3C"
     RED = "#C62828"
 
-    # Gainers/Losers rows: no Name column; color Δ 1D
     def rows_gainers(lst: list[dict]) -> list[list[str]]:
         out: list[list[str]] = []
         for r in lst or []:
@@ -231,7 +252,6 @@ def _render_html(
         return out
 
     def rows_plain(lst: list[dict]) -> list[tuple[str, str, str, str]]:
-        """Plain (no color) rows for text and Top Scorers HTML (also no Name)."""
         out: list[tuple[str, str, str, str]] = []
         for r in lst or []:
             pct_val = r.get("change_pct")
@@ -259,7 +279,6 @@ def _render_html(
     </div>
     """
 
-    # Plain-text fallback
     def txt_block(title: str, rows: list[tuple[str, str, str, str]]) -> str:
         lines = [title]
         for r in rows:
@@ -293,7 +312,7 @@ def _send_email(cfg: dict, subject: str, html_body: str, text_body: Optional[str
     use_tls = bool(cfg.get("use_tls", True))
 
     if not host or not to_list:
-        log.warning("email_not_sent_missing_config", extra={"host": bool(host), "to": to_list})
+        log.warning("email_not_sent_missing_config", extra={"host": bool(host), "to_len": len(to_list)})
         return
 
     msg = MIMEMultipart("alternative")
@@ -309,6 +328,7 @@ def _send_email(cfg: dict, subject: str, html_body: str, text_body: Optional[str
         smtp.ehlo()
         if use_tls:
             smtp.starttls()
+            smtp.ehlo()
         if username and password:
             smtp.login(username, password)
         smtp.sendmail(from_addr, to_list, msg.as_string())
@@ -343,10 +363,6 @@ def send_backfill_digest_if_enabled(as_of_day: date) -> bool:
         log.exception("email_digest_send_failed", extra={"as_of": as_of_day.isoformat()})
         return False
 
-
-# ----------------------------
-# CLI (python -m app.notifs.email_digest ...)
-# ----------------------------
 
 if __name__ == "__main__":
     import argparse, sys
@@ -386,7 +402,6 @@ if __name__ == "__main__":
         print(f"[sent] {subject} → {', '.join(cfg.get('to_list', []))}")
         sys.exit(0)
     else:
-        # Dry-run preview
         print(f"[dry-run] Subject: {subject}")
         print(f"[dry-run] To: {', '.join(cfg.get('to_list', [])) or '(none)'}")
         print(f"[dry-run] First 200 chars of HTML:\n{(html or '')[:200]}…")

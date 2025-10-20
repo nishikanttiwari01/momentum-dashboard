@@ -606,10 +606,14 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
 
     # ✅ Normalize entry lock to None when not set (prevents false in-position in resolver)
     position["entry_price_locked"] = entry_locked_val  # <-- minimal, critical fix
+
     # ---------- EOD flag so SELL_TOMORROW can trigger on daily snapshots ----------
-    # If we resolved an intraday run_id (rid_used), it's NOT EOD. If we fell back to daily (no rid_used), it IS EOD.
-    indicators["is_eod"] = not bool(rid_used)
-    indicators["market_closed"] = indicators["is_eod"]
+    # Treat only a date-only 'as_of_used' (YYYY-MM-DD) as EOD. Intraday 'as_of' is an ISO timestamp with 'T'.
+    _asu = as_of_used if isinstance(as_of_used, str) else ""
+    _is_daily = bool(_asu) and ("T" not in _asu) and (len(_asu) == 10)
+    indicators["is_eod"] = _is_daily
+    indicators["market_closed"] = _is_daily
+
     # --- meters + next action (unchanged) ---
     meters, next_action = _compute_meters_and_next(price_now, indicators, position)
     meters = _normalize_meters_to_contract(meters, indicators)
@@ -876,7 +880,7 @@ def _normalize_meters_to_contract(meters: Dict[str, Any], ind: Dict[str, Any]) -
 def _read_row_new_layout(scores_repo: Any, symbol: str, *, run_id_hint: Optional[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str], Optional[str]]:
     """
     Read exactly one row for `symbol` from **new layout**:
-      - If run_id_hint provided → try intraday(date=today, run_id=hint). If not found, fall back to daily (≤ today).
+      - If run_id_hint provided → try intraday path first (symbol-filtered)
       - If run_id_hint not provided → use repo's latest resolution (intraday(today) → daily(≤ today)).
     Returns: (row, canonical_symbol, run_id_used, as_of_used)
     """

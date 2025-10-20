@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta, datetime, timezone  # <-- added datetime, timezone
 from typing import Iterable, Optional, Tuple, Dict, Any, Callable  # <-- added Callable
 import csv  # <-- added
+from uuid import uuid4
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -147,9 +148,19 @@ def _session(cfg: BackfillConfig) -> requests.Session:
 
 
 def _post_scan(session: requests.Session, d: Optional[date], cfg: BackfillConfig) -> Tuple[int, Dict[str, Any]]:
-    key = f"BF_{(d or date.today()).isoformat()}"
+    base_key = f"BF_{(d or date.today()).isoformat()}"
+    attempt_tag = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    key = f"{base_key}_{attempt_tag}_{uuid4().hex[:8]}"
     payload: Dict[str, Any] = {"as_of": d.isoformat()} if d else {}
-    log.info("scan_request", extra={"as_of": payload.get("as_of"), "idempotency_key": key, "api": API})
+    log.info(
+        "scan_request",
+        extra={
+            "as_of": payload.get("as_of"),
+            "idempotency_key": key,
+            "api": API,
+            "idempotency_base": base_key,
+        },
+    )
     r = session.post(
         f"{API}/api/v1/scan",
         json=payload,

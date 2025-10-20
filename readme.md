@@ -1,3 +1,22 @@
+
+# Overview
+This trading app is for indian stock analysis solely for personal use. The intend is to use for swing trading that is quick gain in few days to a few week time. 
+I have another full time job hence may or may not be running this app everyday. The application should be generate quality alerts for buying a stock. ANd once trade is on , it should give quality alert to hold or sell it to either book profit or stop losss. 
+### Features
+- **Daily Scan:** This runs whenever app is launch and backfill OHLV parquet writing since last trading date.(backfill.py)
+- **Intraday Scan:** This runsevery 15 min and writes OHLV parquet in intraday folder for current day.(scheduler.py)
+- **Dashboard:** Contains top gainer,losers and Screener table containing all the stocks with OHLV details 
+- **Momentum Score:** This is calculated internally based on several factors to determine potential stocks for buying. COuld rang from 0 to 100. Stock with score of 70 and more are most likely to be bought.
+- **Right Drawer:** A right window when clicked on any stock in screener table. Shows next action and many other OHLV related details.
+- **Next Action:** Next action is determined to  guide what should be done with the stock like whether to buy it or hold it or simply ignore it etc.
+- **Book Trade:** In right drawer a stocked caan be booked for trading. Although application actually book a trade it is just for reference and alerting purpose.
+- **Alerts:** Alerts can be intraday or end of day (EOD) called from scheduler or backfill code. It generate around 12 different types of alerts related to buy and sell of stocks. There is special alert sent via email called email digest which contains top losers, top gainers, application created top stocks by score and all active trades.
+- **Trades Page:** This page shows all booked trades.
+- **Alert Page:** This page shows all fired alerts.
+
+### Goal
+10 % percent gain per month with minial traade consisting of 3 to 5 stocks ideally.
+
 # Backend Run
 cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
 .venv\Scripts\activate

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-import os, yaml
+import os, re, yaml
 from pydantic import BaseModel, Field, ValidationError
 
 # Track which files were loaded (for logging/diagnostics)
@@ -157,7 +157,7 @@ class Settings(BaseModel):
         return str((REPO_ROOT / 'backend' / 'parquet').resolve())
 
 
-# ----------------- YAML helpers (unchanged) -----------------
+# ----------------- YAML helpers (unchanged + small additions) -----------------
 def _read_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
@@ -189,6 +189,29 @@ def _maybe_merge(data: Dict[str, Any], p: Path) -> Dict[str, Any]:
         return _deep_merge(data, _read_yaml(p))
     return data
 
+# --- NEW: env placeholder interpolation for alerts.* (supports ${VAR} and ${VAR:-default}) ---
+_ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)(?::-(.*?))?\}")
+
+def _env_interpolate_str(s: str) -> str:
+    def repl(m: re.Match[str]) -> str:
+        var = m.group(1)
+        default = m.group(2) if m.group(2) is not None else ""
+        val = os.getenv(var)
+        return val if (val is not None and val != "") else default
+    try:
+        return _ENV_PATTERN.sub(repl, s)
+    except Exception:
+        return s
+
+def _env_interpolate_obj(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _env_interpolate_obj(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_env_interpolate_obj(x) for x in obj]
+    if isinstance(obj, str):
+        return _env_interpolate_str(obj)
+    return obj
+
 
 # ----------------- Loader (with env overrides) -----------------
 @lru_cache
@@ -212,7 +235,6 @@ def load() -> Settings:
         data = _maybe_merge(data, Path(app_config).expanduser().resolve())
 
     # --- Back-compat shim: features.news.enabled -> news.enabled if not set ---
-    # (Lets older UIs control backend until all configs are migrated.)
     try:
         features_cfg = data.get("features") or {}
         if isinstance(features_cfg, dict):
@@ -224,7 +246,6 @@ def load() -> Settings:
                 if "enabled" not in news_cfg:
                     data = _deep_merge(data, {"news": {"enabled": bool(fnews.get("enabled"))}})
     except Exception:
-        # best effort; never block load()
         pass
 
     # Normalize storage paths to be absolute (respect repo root for relative inputs)
@@ -297,7 +318,6 @@ def load() -> Settings:
         data = _deep_merge(data, {"screener": {"default_universe": os.getenv("APP_DEFAULT_UNIVERSE")}})
     # Scheduler
     if os.getenv("APP_SCHED_ENABLED") is not None:
-        # Accept "1/0", "true/false" (case-insensitive)
         v = os.getenv("APP_SCHED_ENABLED", "").strip().lower()
         data = _deep_merge(data, {"scheduler": {"enabled": v in {"1", "true", "yes", "on"}}})
     if os.getenv("APP_SCHED_INTERVAL"):
@@ -312,13 +332,23 @@ def load() -> Settings:
     if os.getenv("APP_NEWS_ENABLED") is not None:
         v = os.getenv("APP_NEWS_ENABLED", "").strip().lower()
         data = _deep_merge(data, {"news": {"enabled": v in {"1", "true", "yes", "on"}}})
-    # If a token is provided, auto-require it for ingest
     if os.getenv("NEWS_INGEST_TOKEN"):
         data = _deep_merge(data, {"news": {"ingest": {"require_token": True, "token_env": "NEWS_INGEST_TOKEN"}}})
 
-    # Alerts config (optional external file)
+    # Alerts config (external file resolution)
     alerts_cfg_path = os.getenv("ALERTS_CONFIG_PATH") or data.get("alerts_config_path")
     resolved_alerts_path = _resolve_alerts_path(alerts_cfg_path) if alerts_cfg_path else None
+    # NEW: if not provided, try common defaults: backend/config/alerts.yaml then configs/alerts.yaml
+    if not resolved_alerts_path:
+        candidates = [
+            REPO_ROOT / "backend" / "config" / "alerts.yaml",
+            CONFIG_DIR / "alerts.yaml",
+        ]
+        for c in candidates:
+            if c.exists():
+                resolved_alerts_path = c.resolve()
+                break
+
     if resolved_alerts_path and resolved_alerts_path.exists():
         try:
             _LOADED_FILES.append(resolved_alerts_path)
@@ -328,9 +358,16 @@ def load() -> Settings:
         if isinstance(alerts_payload, dict):
             payload = alerts_payload.get("alerts", alerts_payload)
             if isinstance(payload, dict):
+                # merge into top-level alerts dict
                 data["alerts"] = _deep_merge(data.get("alerts") or {}, payload)
+
+    # remove key if present in YAML to avoid leaking into Settings
     if "alerts_config_path" in data:
         data.pop("alerts_config_path", None)
+
+    # --- NEW: interpolate ${ENV} and ${ENV:-default} inside alerts.* ---
+    if isinstance(data.get("alerts"), dict):
+        data["alerts"] = _env_interpolate_obj(data["alerts"])
 
     try:
         return Settings(**data)

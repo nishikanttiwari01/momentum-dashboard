@@ -8,7 +8,33 @@
 
 alerts:
   version: 2
-
+  delivery:
+    email:
+      enabled: true
+      # Daily digest sender can reuse these (your existing email_digest.py may already read similar keys)
+      on_backfill_digest: true
+      include_trades: true
+      smtp:
+        host: smtp.gmail.com
+        port: 587
+        use_tls: true
+        username: nishikantworld@gmail.com
+        password: tzrtcknnvhfqrzly
+        from_name: ${SMTP_FROM_NAME:-Momentum Suite}
+        from_addr: nishikantworld@gmail.com
+      defaults:
+        to:
+          - ${ALERT_EMAIL_TO_1:-nishikant.tiwari01@gmail.com }
+          # - ${ALERT_EMAIL_TO_2:-}
+    ntfy:
+      enabled: true
+      server: ${NTFY_SERVER:-https://ntfy.sh}
+      topic_default: momentum-alerts-nishi
+      token: ${NTFY_TOKEN:-}            # optional; leave blank if public server
+    webhook:
+      enabled: false
+      url: ${ALERT_WEBHOOK_URL:-}
+      auth_header: ${ALERT_WEBHOOK_AUTH:-}
   # ---------------------------
   # Metadata & market timings
   # ---------------------------
@@ -31,14 +57,14 @@ alerts:
       overrides:
         defaults:
           channels:
-            ntfy:  { enabled: true, topic: "md-alerts-dev" }
-            email: { enabled: true, to: ["dev@example.com"] }
+            ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
+            email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
     prod:
       overrides:
         defaults:
           channels:
-            ntfy:  { enabled: true, topic: "momentum-alerts" }
-            email: { enabled: true, to: ["you@example.com"] }
+            ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
+            email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
   # ---------------------------
   # Global alert behaviour (applies to every alert unless overridden below)
@@ -53,9 +79,9 @@ alerts:
       repeat_within_day: false          # de-dupe per (code,symbol,day)
       min_cooldown_minutes: 0           # intraday cooldown if repeat_within_day=true
     channels:                            # per-alert can override these
-      ntfy:   { enabled: true,  topic: "momentum-alerts" }
+      ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
       email:  { enabled: true,  to: ["you@example.com"] }
-      webhook:{ enabled: false, url: "" }
+      webhook: { enabled: false, url: "" }
     throttles:
       max_alerts_per_run: 200
       max_alerts_per_symbol_day: 5
@@ -144,9 +170,9 @@ alerts:
           price cleared the level by {{ pivot_clear_pct }}%. Volume looks higher than
           usual and the setup score is {{ score }}. Consider a full entry next session.
       channels:
-        ntfy:   { enabled: true,  topic: "buy-eod" }
+        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
         email:  { enabled: true,  to: ["you@example.com"] }
-        webhook:{ enabled: false }
+        webhook: { enabled: false }
 
     - code: BUY_PULLBACK
       digest_bucket: "BUY"
@@ -169,7 +195,7 @@ alerts:
           Healthy dip towards the short-term average after a strong run.
           If strength returns, consider a full entry. Current setup score is {{ score }}.
       channels:
-        ntfy:   { enabled: true,  topic: "buy-eod" }
+        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
         email:  { enabled: true,  to: ["you@example.com"] }
 
     - code: BUY_STARTER
@@ -206,7 +232,7 @@ alerts:
           Small initial entry idea (¼–⅓ size). Price stayed above the buy point and
           VWAP for 3 bars with improving trend strength. Reassess near the close.
       channels:
-        ntfy:   { enabled: true,  topic: "buy-starter" }
+        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
         email:  { enabled: false }
 
     # === HOLD / MGMT (ACTIVE ONLY) ===
@@ -225,7 +251,7 @@ alerts:
         body: >
           Uptrend looks healthy. Price is holding above your guide line. No action today.
       channels:
-        ntfy:  { enabled: false }
+        ntfy:  { enabled: true }
         email: { enabled: false }
 
     - code: HOLD_CAUTION
@@ -243,7 +269,7 @@ alerts:
         body: >
           Small dip but still fine. Keep an eye on tomorrow's close; no change for now.
       channels:
-        ntfy:  { enabled: false }
+        ntfy:  { enabled: true }
         email: { enabled: false }
 
     # === SELL SIDE (ACTIVE ONLY) ===
@@ -262,9 +288,9 @@ alerts:
           Protect capital. Your stop level ({{ position_ctx.stop | default('N/A') }})
           was breached. Exit the position immediately.
       channels:
-        ntfy:   { enabled: true,  topic: "sell-now" }
+        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
         email:  { enabled: true,  to: ["you@example.com"] }
-        webhook:{ enabled: true,  url: "https://hooks.example.com/alert" }
+        webhook: { enabled: true,  url: "https://hooks.example.com/alert" }
 
     - code: SELL_TREND_BREACH
       digest_bucket: "SELL"
@@ -281,7 +307,7 @@ alerts:
           Trend has weakened after two closes below your guide line.
           Plan to exit on the next session.
       channels:
-        ntfy:  { enabled: true, topic: "sell-eod" }
+        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
         email: { enabled: true, to: ["you@example.com"] }
 
     - code: SELL_FAILED_BREAKOUT
@@ -301,7 +327,7 @@ alerts:
           Breakout attempt fizzled: price closed back below the buy point with a weak
           candle. Consider exiting in the next session.
       channels:
-        ntfy:  { enabled: true, topic: "sell-eod" }
+        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
         email: { enabled: true, to: ["you@example.com"] }
 
     - code: TRIM_10PCT
@@ -319,7 +345,7 @@ alerts:
           Consider booking half the position after a ~10% rise. Keep the rest and
           trail with a closer guide.
       channels:
-        ntfy:  { enabled: true, topic: "trim" }
+        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
         email: { enabled: true, to: ["you@example.com"] }
 
     - code: TIME_STOP
@@ -340,7 +366,7 @@ alerts:
           Sideways too long with little progress. Free up capital and look for
           better opportunities.
       channels:
-        ntfy:  { enabled: true, topic: "time-stop" }
+        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
         email: { enabled: true, to: ["you@example.com"] }
 
     - code: EUPHORIA_EXIT
@@ -360,7 +386,7 @@ alerts:
           Quick, steep rise. Lock in some gains or tighten to a closer guide
           (e.g., the 8‑day) to protect profits.
       channels:
-        ntfy:  { enabled: true, topic: "trim" }
+        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
         email: { enabled: true, to: ["you@example.com"] }
 
     # === LEGACY / COMPAT ===
@@ -378,7 +404,7 @@ alerts:
           Overall setup score {{ score }} is above your quality bar. Review for
           potential entry or keep on the watchlist.
       channels:
-        ntfy:  { enabled: true, topic: "score" }
+        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
         email: { enabled: true, to: ["you@example.com"] }
 
   # ---------------------------

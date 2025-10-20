@@ -2,7 +2,9 @@ from __future__ import annotations
 from typing import Iterable, Dict, Any
 from datetime import datetime, date
 import logging
+
 from sqlalchemy.engine import Connection
+
 from .types import Mode
 from .base import EvalContext
 from . import buckets
@@ -14,17 +16,24 @@ from .channels.dispatcher import deliver_event
 
 log = logging.getLogger(__name__)
 
+
 def _resolve_defaults(alerts_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return alerts_cfg.get("defaults", {}) if alerts_cfg else {}
+
 
 def _resolve_thresholds(alerts_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return alerts_cfg.get("thresholds", {}) if alerts_cfg else {}
 
+
 def _resolve_templates(alerts_cfg: Dict[str, Any]) -> Dict[str, Any]:
-    return (alerts_cfg.get("templates") or {}).get("default", {"title":"{{ code }} • {{ symbol }}","body":"{{ description }}"})
+    return (alerts_cfg.get("templates") or {}).get(
+        "default", {"title": "{{ code }} • {{ symbol }}", "body": "{{ description }}"}
+    )
+
 
 def _resolve_metadata(alerts_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return alerts_cfg.get("metadata", {}) if alerts_cfg else {}
+
 
 def run(
     conn: Connection,
@@ -37,6 +46,12 @@ def run(
     metric_getter,
     run_ctx: Dict[str, Any] | None = None,
 ) -> list[int]:
+    """
+    Main alert evaluation loop.
+    - Reads per-alert filters from YAML (`items`).
+    - Uses global defaults (throttles, quiet hours, send_policy).
+    - Channels read transport details (SMTP/ntfy/webhook) from config.py via alerts.delivery.
+    """
     run_ctx = run_ctx or {}
     defaults = _resolve_defaults(alerts_cfg)
     thresholds = _resolve_thresholds(alerts_cfg)
@@ -46,15 +61,21 @@ def run(
 
     profile = (alerts_cfg.get("profiles") or {}).get("active")
     config_version = alerts_cfg.get("version")
+
     tz = metadata.get("timezone", "Asia/Kolkata")
     intraday_bar = int(metadata.get("intraday_bar_minutes", 15))
     market_open = metadata.get("market_open_hhmm", "09:15")
+
     bucket_ord, bucket_label = (0, None)
     if mode == Mode.INTRADAY:
-        bucket_ord, bucket_label = buckets.compute_intraday_bucket(now_utc, tz, market_open, intraday_bar)
+        bucket_ord, bucket_label = buckets.compute_intraday_bucket(
+            now_utc, tz, market_open, intraday_bar
+        )
 
     max_alerts_per_run = int((defaults.get("throttles") or {}).get("max_alerts_per_run", 999999))
-    max_per_symbol_day = int((defaults.get("throttles") or {}).get("max_alerts_per_symbol_day", 999999))
+    max_per_symbol_day = int(
+        (defaults.get("throttles") or {}).get("max_alerts_per_symbol_day", 999999)
+    )
 
     created_ids: list[int] = []
     per_symbol_count: dict[str, int] = {}
@@ -72,10 +93,10 @@ def run(
     for item in items:
         mode_cfg = item.get("mode") or {}
         if mode == Mode.INTRADAY and not mode_cfg.get("allow_intraday", False):
-            log.debug("Skipping item %s for mode=%s (intraday disabled)", item.get("code"), mode.value)
+            log.debug("Skipping %s (intraday disabled)", item.get("code"))
             continue
         if mode == Mode.EOD and not mode_cfg.get("allow_eod", True):
-            log.debug("Skipping item %s for mode=%s (EOD disabled)", item.get("code"), mode.value)
+            log.debug("Skipping %s (EOD disabled)", item.get("code"))
             continue
 
         rule_code = str(item["code"]).strip()
@@ -84,27 +105,20 @@ def run(
         item_filters = item.get("filters") or {}
         template_cfg = item.get("template") or None
         send_type = "IMMEDIATE"
+
+        # Merge channels: defaults -> per-item override
         channels_cfg_eff = (defaults.get("channels") or {}).copy()
         chan_override = item.get("channels") or {}
         channels_cfg_eff.update(chan_override)
 
         handler = load_rule_handler(rule_code)
-        log.debug("Loaded handler for rule=%s channels=%s", rule_code, list(channels_cfg_eff.keys()))
 
         for sym in symbols:
             if len(created_ids) >= max_alerts_per_run:
-                log.warning(
-                    "Alert run reached max_alerts_per_run=%s; stopping further processing",
-                    max_alerts_per_run,
-                )
+                log.warning("Reached max_alerts_per_run=%s; stopping", max_alerts_per_run)
                 break
             if per_symbol_count.get(sym, 0) >= max_per_symbol_day:
-                log.debug(
-                    "Skipping symbol=%s rule=%s due to per-symbol limit %s",
-                    sym,
-                    rule_code,
-                    max_per_symbol_day,
-                )
+                log.debug("Per-symbol limit for %s reached", sym)
                 continue
 
             ctx = EvalContext(
@@ -122,31 +136,17 @@ def run(
 
             ok, capture = F.passes_filters(ctx, sym, item_filters)
             if not ok:
-                log.debug("Filters failed for rule=%s symbol=%s capture=%s", rule_code, sym, capture)
                 continue
 
             if D.exists_event(conn, rule_code, sym, trading_date, mode.value, bucket_ord):
-                log.debug(
-                    "Existing event found rule=%s symbol=%s trading_date=%s bucket=%s; skipping",
-                    rule_code,
-                    sym,
-                    trading_date,
-                    bucket_ord,
-                )
                 continue
             if D.in_cooldown(conn, rule_code, sym, now_utc):
-                log.debug("Rule=%s symbol=%s still in cooldown", rule_code, sym)
                 continue
 
             res = handler.evaluate(ctx, sym)
             if res is None or res.triggered is not True:
                 from .base import EvalResult
                 res = EvalResult(triggered=True, severity=severity, context_json={}, details_json={})
-                log.debug("Handler %s returned None/False; using default EvalResult", rule_code)
-            else:
-                log.debug(
-                    "Handler %s triggered for symbol=%s severity=%s", rule_code, sym, res.severity
-                )
 
             context_json = {
                 "code": rule_code,
@@ -182,20 +182,13 @@ def run(
                 config_version=ctx.config_version,
                 context_json=context_json,
                 details_json=details_json,
-                channels_summary_json={},  # will be updated after dispatch
+                channels_summary_json={},  # updated by dispatcher
                 fired_at_utc=now_utc,
             )
             created_ids.append(event_id)
-            log.info(
-                "Alert event inserted id=%s rule=%s symbol=%s severity=%s",
-                event_id,
-                rule_code,
-                sym,
-                res.severity,
-            )
             per_symbol_count[sym] = per_symbol_count.get(sym, 0) + 1
 
-            # Channel delivery (ntfy/email/webhook)
+            # Dispatch via channels (each channel pulls transport from alerts.delivery)
             event_row = {
                 "id": event_id,
                 "rule_code": rule_code,
@@ -220,18 +213,18 @@ def run(
                 severity=str(res.severity),
             )
 
-            cooldown_min = int((item.get("repeat_policy") or {}).get("min_cooldown_minutes", (defaults.get("repeat_policy") or {}).get("min_cooldown_minutes", 0)))
+            # Cooldown (item override -> defaults)
+            cooldown_min = int(
+                (item.get("repeat_policy") or {}).get(
+                    "min_cooldown_minutes",
+                    (defaults.get("repeat_policy") or {}).get("min_cooldown_minutes", 0),
+                )
+            )
             cooldown_until = None
             if cooldown_min > 0:
                 from datetime import timedelta
                 cooldown_until = now_utc + timedelta(minutes=cooldown_min)
-            log.debug(
-                "Updating state rule=%s symbol=%s cooldown=%s minutes=%s",
-                rule_code,
-                sym,
-                cooldown_until,
-                cooldown_min,
-            )
+
             P.upsert_state(
                 conn,
                 rule_code=rule_code,

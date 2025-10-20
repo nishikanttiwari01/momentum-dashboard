@@ -24,7 +24,7 @@ screener:
   default_universe: ALL #NIFTY50 ALL
 scheduler:
   enabled: true
-  interval_minutes: 5
+  interval_minutes: 10
   universe: null
   trading_window:
     tz: Asia/Kolkata

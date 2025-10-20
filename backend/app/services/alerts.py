@@ -68,7 +68,7 @@ def _make_metric_getter(metrics_by_symbol: Dict[str, Dict[str, Any]]) -> Callabl
     return _getter
 
 
-def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional[Dict[str, Any]]) -> int:
+def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional[Dict[str, Any]], as_of_str: Optional[str] = None) -> int:
     """
     Lightweight bridge between the screening job output and the alerts orchestrator.
 
@@ -98,6 +98,28 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional
         logger.exception("alerts_scores_read_failed", extra={"run_id": run_id, "error": str(exc)})
         return 0
 
+    # Retry #1: if nothing came back for run_id, try explicit as_of (if provided)
+    if not rows and as_of_str:
+        try:
+            rows, _, _, resolved_as_of = scores_repo.read(
+                run_id=None, as_of_str=as_of_str,
+                filters={}, sort="", page=1, per_page=5000, columns=None,
+            )
+            if rows:
+                logger.info("alerts_scores_retry_asof_only", extra={"as_of": as_of_str})
+        except Exception:
+            pass
+    # Retry #2: fall back to latest committed DAILY snapshot
+    if not rows:
+        try:
+            rows, _, _, resolved_as_of = scores_repo.read(
+                run_id=None, as_of_str=None,
+                filters={}, sort="", page=1, per_page=5000, columns=None,
+            )
+            if rows:
+                logger.info("alerts_scores_retry_latest_daily", extra={"run_id": run_id})
+        except Exception:
+            pass
     metrics_by_symbol = {
         row["symbol"]: row for row in rows if isinstance(row.get("symbol"), str)
     }
@@ -107,8 +129,9 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional
         return 0
 
     trading_date = (
-        _coerce_date(ScoresRepo.run_id_to_date(run_id))
-        or _coerce_date(resolved_as_of)
+        _coerce_date(resolved_as_of)
+        or _coerce_date(as_of_str)
+        or _coerce_date(ScoresRepo.run_id_to_date(run_id))
         or datetime.now(timezone.utc).date()
     )
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any, List
 import logging
+from uuid import uuid4
 
 import pyarrow as pa
 import pandas as pd
@@ -564,25 +565,87 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         uni = payload["universe"].strip().upper()
         universe = uni if uni in _ALLOWED_PRESETS else None
 
-    job, created = jobs.create_or_get_by_key(name="manual_scan", key=key, with_created=True)
+    # Daily backfills must bypass idempotency shortcuts so the parquet snapshot is always (re)written.
+    if as_of_date:
+        key_for_job = f"{key or 'BF_MANUAL'}::{as_of_date}::{uuid4().hex}"
+    else:
+        key_for_job = key
+    job, created = jobs.create_or_get_by_key(name="manual_scan", key=key_for_job, with_created=True)
+
     if not created:
-        # idempotent replay: return prior run
-        return (
-            RunDetail(
-                run_id=job.run_id,
-                job_name=getattr(job, "name", None),
-                status=job.status,
-                started_at=_to_aware(job.started_at),
-                ended_at=_to_aware(job.ended_at),
-                counts=Counts(symbols_processed=None, rows_written=None),
-                duration_ms=None,
-                key=getattr(job, "key", None),
-                snapshot_path=None,
-                error=None,
-                error_json=getattr(job, "error", None) if isinstance(getattr(job, "error", None), dict) else None,
-            ),
-            False,
+        status = str(job.status or "").upper()
+        in_progress = status in {"RUNNING", "QUEUED", "IN_PROGRESS"}
+        failed_status = status in {"FAILED", "CANCELLED", "ERROR"}
+        snapshot_missing = (
+            bool(as_of_date)
+            and status == "SUCCEEDED"
+            and _find_committed_run_for_as_of(as_of_date) is None
         )
+
+        if failed_status or snapshot_missing:
+            job.status = "RUNNING"
+            job.started_at = datetime.utcnow()
+            job.ended_at = None
+            try:
+                session.flush()
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            created = True
+            reason = "missing_snapshot" if snapshot_missing else "previous_failure"
+            try:
+                log.warning(
+                    "screening_rerun_idempotent",
+                    extra={
+                        "run_id": job.run_id,
+                        "key": key,
+                        "reason": reason,
+                        "as_of": as_of_date,
+                        "status": status or "<none>",
+                    },
+                )
+            except Exception:
+                pass
+        elif in_progress:
+            return (
+                RunDetail(
+                    run_id=job.run_id,
+                    job_name=getattr(job, "name", None),
+                    status=job.status,
+                    started_at=_to_aware(job.started_at),
+                    ended_at=_to_aware(job.ended_at),
+                    counts=Counts(symbols_processed=None, rows_written=None),
+                    duration_ms=None,
+                    key=getattr(job, "key", None),
+                    snapshot_path=None,
+                    error=None,
+                    error_json=getattr(job, "error", None)
+                    if isinstance(getattr(job, "error", None), dict)
+                    else None,
+                ),
+                False,
+            )
+        else:
+            # idempotent replay with completed snapshot: return prior run
+            return (
+                RunDetail(
+                    run_id=job.run_id,
+                    job_name=getattr(job, "name", None),
+                    status=job.status,
+                    started_at=_to_aware(job.started_at),
+                    ended_at=_to_aware(job.ended_at),
+                    counts=Counts(symbols_processed=None, rows_written=None),
+                    duration_ms=None,
+                    key=getattr(job, "key", None),
+                    snapshot_path=None,
+                    error=None,
+                    error_json=getattr(job, "error", None)
+                    if isinstance(getattr(job, "error", None), dict)
+                    else None,
+                ),
+                False,
+            )
 
     symbols_processed = 0
     rows_written = 0
