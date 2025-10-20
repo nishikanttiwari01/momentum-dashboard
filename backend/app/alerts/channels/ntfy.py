@@ -14,6 +14,21 @@ except Exception:
 
 log = logging.getLogger(__name__)
 
+def _sanitize_header(value: str, header: str, event_id: Any) -> str:
+    try:
+        value.encode("latin-1")
+        return value
+    except UnicodeEncodeError:
+        safe = value.encode("latin-1", errors="replace").decode("latin-1")
+        log.warning(
+            "NTFY header sanitized event_id=%s header=%s original=%r sanitized=%r",
+            event_id,
+            header,
+            value,
+            safe,
+        )
+        return safe
+
 
 def _global_ntfy_transport() -> dict:
     t: dict[str, Any] = {}
@@ -67,7 +82,7 @@ def send(event: Dict[str, Any], content: Dict[str, str], chan_cfg: Dict[str, Any
 
     data = body.encode("utf-8")
     req = Request(url, data=data, method="POST")
-    req.add_header("Title", title)
+    req.add_header("Title", _sanitize_header(title, "Title", event.get("id")))
     if transport.get("token"):
         req.add_header("Authorization", f"Bearer {transport['token']}")
 
