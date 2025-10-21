@@ -1,83 +1,225 @@
-#(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\util>python parquet_to_json_intraday.py --root "D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\parquet\scores\intraday" --out "D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\parquet\scores\intraday\intraday_ndjson"
+# python parquet_to_json_intraday.py --root "D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\parquet\scores\daily\as_of=2025-10-20" --out "D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\parquet\scores\daily\daily_ndjson" --format ndjson
+# python parquet_to_json_intraday.py --root "D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\parquet\scores\daily\as_of=2025-10-20" --out "D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend\parquet\scores\daily\daily_ndjson" --format csv
 from __future__ import annotations
-import os, io, sys, json, gzip, argparse, traceback
-from pathlib import Path
-from typing import Iterable, Tuple, Optional
 
-def find_runs(root: Path):
-    for date_dir in sorted(root.glob("date=*")):
-        if not date_dir.is_dir(): 
-            continue
-        date_str = date_dir.name.split("=", 1)[-1]
-        for run_dir in sorted(date_dir.glob("run_id=*")):
+import argparse
+import gzip
+import io
+import json
+import os
+import sys
+import traceback
+from pathlib import Path
+from typing import Iterable, Optional, Tuple
+
+
+def _detect_layout(root: Path) -> Optional[str]:
+    """
+    Determine whether the directory tree represents intraday partitions
+    (date=.../run_id=...) or daily partitions (as_of=.../run_id=...). Returns
+    one of {"intraday", "daily"} or None when it cannot be inferred.
+    """
+    name = root.name
+    if name.startswith("date="):
+        return "intraday"
+    if name.startswith("as_of="):
+        return "daily"
+    if name.startswith("run_id="):
+        parent = root.parent
+        if parent.name.startswith("date="):
+            return "intraday"
+        if parent.name.startswith("as_of="):
+            return "daily"
+    has_date = any(child.is_dir() and child.name.startswith("date=") for child in root.iterdir())
+    has_asof = any(child.is_dir() and child.name.startswith("as_of=") for child in root.iterdir())
+    if has_date and not has_asof:
+        return "intraday"
+    if has_asof and not has_date:
+        return "daily"
+    if has_date and has_asof:
+        return "intraday"
+    return None
+
+
+def find_runs(root: Path, layout: str) -> list[Tuple[Path, str, str, str]]:
+    """
+    Enumerate parquet run folders.
+
+    Returns a list of tuples (run_dir, partition_key, partition_value, run_id)
+    where partition_key is either "date" (intraday) or "as_of" (daily).
+    """
+    if root.name.startswith("run_id="):
+        run_id = root.name.split("=", 1)[-1]
+        partition_dir = root.parent
+        detected = _detect_layout(partition_dir) or "intraday"
+        partition_key = "date" if detected == "intraday" else "as_of"
+        partition_value = partition_dir.name.split("=", 1)[-1] if "=" in partition_dir.name else partition_dir.name
+        return [(root, partition_key, partition_value, run_id)]
+
+    if root.name.startswith("date=") or root.name.startswith("as_of="):
+        partition_key = "date" if root.name.startswith("date=") else "as_of"
+        partition_value = root.name.split("=", 1)[-1]
+        runs: list[Tuple[Path, str, str, str]] = []
+        for run_dir in sorted(root.glob("run_id=*")):
             if not run_dir.is_dir():
                 continue
             run_id = run_dir.name.split("=", 1)[-1]
-            yield run_dir, date_str, run_id
+            runs.append((run_dir, partition_key, partition_value, run_id))
+        return runs
+
+    if layout == "auto":
+        detected = _detect_layout(root)
+        if not detected:
+            return []
+        layout = detected
+
+    if layout == "intraday":
+        partition_key = "date"
+        pattern = "date=*"
+    elif layout == "daily":
+        partition_key = "as_of"
+        pattern = "as_of=*"
+    else:
+        raise ValueError(f"Unsupported layout '{layout}'. Expected intraday, daily, or auto.")
+
+    runs: list[Tuple[Path, str, str, str]] = []
+    for part_dir in sorted(root.glob(pattern)):
+        if not part_dir.is_dir():
+            continue
+        part_value = part_dir.name.split("=", 1)[-1]
+        for run_dir in sorted(part_dir.glob("run_id=*")):
+            if not run_dir.is_dir():
+                continue
+            run_id = run_dir.name.split("=", 1)[-1]
+            runs.append((run_dir, partition_key, part_value, run_id))
+    return runs
+
 
 def atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
+    with tmp.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
     os.replace(tmp, path)
+
 
 def atomic_write_bytes(path: Path, data: bytes) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("wb") as f:
-        f.write(data)
+    with tmp.open("wb") as fh:
+        fh.write(data)
     os.replace(tmp, path)
 
-def iter_pyarrow(parquet_paths: list[Path], cols: Optional[list[str]]):
+
+def iter_pyarrow(parquet_paths: list[Path], columns: Optional[list[str]]):
     import pyarrow.dataset as ds
+
     dataset = ds.dataset([str(p) for p in parquet_paths], format="parquet")
-    for rec in dataset.to_table(columns=cols).to_pylist():
-        yield rec
+    table = dataset.to_table(columns=columns)
+    for record in table.to_pylist():
+        yield record
 
-def iter_fastparquet(parquet_paths: list[Path], cols: Optional[list[str]]):
+
+def iter_fastparquet(parquet_paths: list[Path], columns: Optional[list[str]]):
     from fastparquet import ParquetFile
-    import pandas as pd
-    for p in parquet_paths:
-        pf = ParquetFile(str(p))
-        it = pf.iter_row_groups(columns=cols) if cols else pf.iter_row_groups()
-        for df in it:
-            for rec in df.to_dict(orient="records"):
-                yield rec
 
-def write_ndjson(records, out_path: Path, compress: bool) -> int:
+    for path in parquet_paths:
+        pf = ParquetFile(str(path))
+        iterator = pf.iter_row_groups(columns=columns) if columns else pf.iter_row_groups()
+        for frame in iterator:
+            for record in frame.to_dict(orient="records"):
+                yield record
+
+
+def write_ndjson(records: Iterable[dict], out_path: Path, compress: bool) -> int:
     lines = 0
+    if compress:
+        buffer = io.BytesIO()
+        with gzip.GzipFile(fileobj=buffer, mode="wb", compresslevel=5) as gz:
+            for record in records:
+                gz.write(json.dumps(record, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+                gz.write(b"\n")
+                lines += 1
+        atomic_write_bytes(out_path, buffer.getvalue())
+    else:
+        buffer = io.StringIO()
+        for record in records:
+            buffer.write(json.dumps(record, separators=(",", ":"), ensure_ascii=False))
+            buffer.write("\n")
+            lines += 1
+        atomic_write_text(out_path, buffer.getvalue())
+    return lines
+
+
+def write_csv(records: Iterable[dict], out_path: Path, compress: bool) -> Tuple[int, list[str]]:
+    rows = list(records)
+    if not rows:
+        if compress:
+            atomic_write_bytes(out_path, b"")
+        else:
+            atomic_write_text(out_path, "")
+        return 0, []
+
+    header: list[str] = []
+    for row in rows:
+        for key in row.keys():
+            if key not in header:
+                header.append(key)
+
+    buffer = io.StringIO()
+    buffer.write(",".join(header) + "\n")
+    for row in rows:
+        fields = []
+        for key in header:
+            val = row.get(key)
+            if val is None:
+                fields.append("")
+            elif isinstance(val, (int, float)):
+                fields.append(str(val))
+            else:
+                text = str(val)
+                if any(ch in text for ch in [",", "\"", "\n", "\r"]):
+                    text = "\"" + text.replace("\"", "\"\"") + "\""
+                fields.append(text)
+        buffer.write(",".join(fields) + "\n")
+
+    data = buffer.getvalue().encode("utf-8")
     if compress:
         buf = io.BytesIO()
         with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=5) as gz:
-            for rec in records:
-                gz.write(json.dumps(rec, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
-                gz.write(b"\n")
-                lines += 1
+            gz.write(data)
         atomic_write_bytes(out_path, buf.getvalue())
     else:
-        buf = io.StringIO()
-        for rec in records:
-            buf.write(json.dumps(rec, separators=(",", ":"), ensure_ascii=False))
-            buf.write("\n")
-            lines += 1
-        atomic_write_text(out_path, buf.getvalue())
-    return lines
+        atomic_write_text(out_path, buffer.getvalue())
+    return len(rows), header
+
 
 def convert_run(
-    run_dir: Path, out_root: Path, date_str: str, run_id: str,
-    columns: Optional[list[str]], compress: bool, overwrite: bool, pattern: str
+    run_dir: Path,
+    out_root: Path,
+    partition_key: str,
+    partition_value: str,
+    run_id: str,
+    columns: Optional[list[str]],
+    compress: bool,
+    overwrite: bool,
+    pattern: str,
+    output_format: str,
 ) -> Tuple[bool, str]:
     parquet_files = sorted(run_dir.rglob(pattern))
-    dest = out_root / f"date={date_str}" / f"run_id={run_id}"
+    dest = out_root / f"{partition_key}={partition_value}" / f"run_id={run_id}"
     dest.mkdir(parents=True, exist_ok=True)
-    out_path = dest / ("all.ndjson.gz" if compress else "all.ndjson")
+
+    if output_format == "csv":
+        out_filename = "all.csv.gz" if compress else "all.csv"
+    else:
+        out_filename = "all.ndjson.gz" if compress else "all.ndjson"
+    out_path = dest / out_filename
     log_path = dest / "_convert.log"
     err_path = dest / "_error.txt"
 
-    # reset logs
-    for p in (log_path, err_path):
-        if p.exists(): p.unlink()
+    for path in (log_path, err_path):
+        if path.exists():
+            path.unlink()
 
-    # 1) scan
     atomic_write_text(log_path, f"[SCAN] run_dir={run_dir}\nfound_files={len(parquet_files)}\npattern={pattern}\n")
     if not parquet_files:
         atomic_write_text(err_path, "No parquet files found under run_dir.")
@@ -87,75 +229,112 @@ def convert_run(
         atomic_write_text(log_path, f"[SKIP] out exists and --no-overwrite set: {out_path}\n")
         return True, "skipped"
 
-    # 2) choose engine
     engine = None
     try:
-        import pyarrow  # noqa
+        import pyarrow  # noqa: F401
+
         engine = "pyarrow"
     except Exception:
         try:
-            import fastparquet  # noqa
+            import fastparquet  # noqa: F401
+
             engine = "fastparquet"
         except Exception:
             atomic_write_text(err_path, "Neither pyarrow nor fastparquet is installed.")
             return False, "no_engine"
 
-    # 3) stream rows -> ndjson
     try:
-        atomic_write_text(log_path, (log_path.read_text() + f"[ENGINE] {engine}\n[OUT] {out_path}\n"))
+        atomic_write_text(log_path, log_path.read_text() + f"[ENGINE] {engine}\n[OUT] {out_path}\n")
         if engine == "pyarrow":
-            records = iter_pyarrow(parquet_files, columns)
+            iterator = iter_pyarrow(parquet_files, columns)
         else:
-            records = iter_fastparquet(parquet_files, columns)
+            iterator = iter_fastparquet(parquet_files, columns)
 
-        lines = write_ndjson(records, out_path, compress)
+        records = list(iterator)
+        if output_format == "csv":
+            lines, header = write_csv(records, out_path, compress)
+        else:
+            lines = write_ndjson(records, out_path, compress)
+            header = []
+
         manifest = {
-            "date": date_str, "run_id": run_id, "engine": engine,
-            "files": len(parquet_files), "columns": columns or "ALL",
-            "output": str(out_path), "lines": lines,
+            partition_key: partition_value,
+            "run_id": run_id,
+            "engine": engine,
+            "files": len(parquet_files),
+            "columns": columns or "ALL",
+            "output": str(out_path),
+            "format": output_format,
+            "compressed": bool(compress),
+            "lines": lines,
         }
+        if header:
+            manifest["csv_columns"] = header
         atomic_write_text(dest / "manifest.json", json.dumps(manifest, indent=2))
-        atomic_write_text(log_path, (log_path.read_text() + f"[DONE] lines={lines}\n"))
+        atomic_write_text(log_path, log_path.read_text() + f"[DONE] lines={lines}\n")
         if lines == 0:
             atomic_write_text(err_path, "0 lines written (empty parquet or columns filtered away).")
             return False, "zero_lines"
         return True, "ok"
-    except Exception as e:
+    except Exception:
         tb = traceback.format_exc()
         atomic_write_text(err_path, f"Exception:\n{tb}")
         return False, "exception"
 
-def main():
-    import argparse
-    ap = argparse.ArgumentParser(description="Convert intraday parquet tree to NDJSON.")
-    ap.add_argument("--root", required=True, help="Root: intraday/")
-    ap.add_argument("--out", required=True, help="Output root for NDJSON")
-    ap.add_argument("--columns", nargs="*", default=None, help="Optional subset of columns")
-    ap.add_argument("--compress", action="store_true", help="Write .ndjson.gz")
-    ap.add_argument("--no-overwrite", action="store_true", help="Skip outputs if already exist")
-    ap.add_argument("--pattern", default="*.parquet", help="Glob pattern to pick parquet files (default: *.parquet)")
-    args = ap.parse_args()
 
-    root, out = Path(args.root), Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Convert parquet scores (intraday or daily) to NDJSON or CSV.")
+    parser.add_argument("--root", required=True, help="Root directory (scores/intraday or scores/daily)")
+    parser.add_argument("--out", required=True, help="Output root for converted files")
+    parser.add_argument("--columns", nargs="*", default=None, help="Optional subset of columns to include")
+    parser.add_argument("--compress", action="store_true", help="Gzip the output (adds .gz extension)")
+    parser.add_argument("--no-overwrite", action="store_true", help="Skip runs whose outputs already exist")
+    parser.add_argument("--pattern", default="*.parquet", help="Glob pattern for parquet files (default: *.parquet)")
+    parser.add_argument(
+        "--layout",
+        choices=["intraday", "daily", "auto"],
+        default="auto",
+        help="Parquet layout. Auto-detect inspects child folders (default: auto).",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["ndjson", "csv"],
+        default="ndjson",
+        help="Output format (default: ndjson).",
+    )
+    args = parser.parse_args()
 
-    runs = list(find_runs(root))
+    root = Path(args.root)
+    out_root = Path(args.out)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    runs = find_runs(root, args.layout)
     if not runs:
         print(f"[ERR] No runs under {root}")
         sys.exit(2)
 
     ok, fail = 0, 0
-    for run_dir, date_str, run_id in runs:
+    for run_dir, partition_key, partition_value, run_id in runs:
         success, reason = convert_run(
-            run_dir, out, date_str, run_id,
-            columns=args.columns, compress=args.compress,
-            overwrite=not args.no_overwrite, pattern=args.pattern
+            run_dir=run_dir,
+            out_root=out_root,
+            partition_key=partition_key,
+            partition_value=partition_value,
+            run_id=run_id,
+            columns=args.columns,
+            compress=args.compress,
+            overwrite=not args.no_overwrite,
+            pattern=args.pattern,
+            output_format=args.format,
         )
         tag = "OK" if success else "ERR"
-        print(f"[{tag}] {date_str} {run_id} — {reason}")
-        ok += int(success); fail += int(not success)
+        print(f"[{tag}] {partition_key}={partition_value} {run_id} - {reason}")
+        ok += int(success)
+        fail += int(not success)
+
     print(f"Done. ok={ok}, fail={fail}")
-    sys.exit(0 if fail==0 else 1)
+    sys.exit(0 if fail == 0 else 1)
+
 
 if __name__ == "__main__":
     main()

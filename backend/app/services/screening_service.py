@@ -1,6 +1,6 @@
 # backend/app/services/screening_service.py
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as dtime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 import logging
 from uuid import uuid4
@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.orm import Session
+from zoneinfo import ZoneInfo
 
 from app.repos.sql.jobs_repo import SqlJobsRepo
 from app.repos.sql.history_repo import SqlHistoryRepo
@@ -60,6 +61,97 @@ def _as_of_date_str(as_of_val: Optional[str]) -> Optional[str]:
         return pd.to_datetime(s).strftime("%Y-%m-%d")
     except Exception:
         return None
+
+
+def _parse_time_str(value: Optional[str], fallback: dtime) -> dtime:
+    """
+    Parse HH:MM (optionally with seconds) strings into time objects.
+    Returns fallback when parsing fails.
+    """
+    if not value:
+        return fallback
+    try:
+        parts = str(value).strip().split(":")
+        hour = int(parts[0])
+        minute = int(parts[1]) if len(parts) > 1 else 0
+        second = int(parts[2]) if len(parts) > 2 else 0
+        hour = max(0, min(23, hour))
+        minute = max(0, min(59, minute))
+        second = max(0, min(59, second))
+        return dtime(hour=hour, minute=minute, second=second)
+    except Exception:
+        return fallback
+
+
+def _resolve_trading_window(cfg: Any) -> Dict[str, str]:
+    """
+    Extract scheduler.trading_window fields with reasonable defaults.
+    """
+    defaults = {"tz": "Asia/Kolkata", "start": "09:15", "end": "15:30"}
+    scheduler_cfg = getattr(cfg, "scheduler", None)
+    tw = getattr(scheduler_cfg, "trading_window", None)
+    if hasattr(tw, "model_dump"):
+        tw = tw.model_dump()
+    elif hasattr(tw, "dict"):
+        tw = tw.dict()
+    if not isinstance(tw, dict):
+        return defaults
+    resolved = defaults.copy()
+    for key in ("tz", "start", "end"):
+        value = tw.get(key)
+        if isinstance(value, str) and value.strip():
+            resolved[key] = value.strip()
+    return resolved
+
+
+def _should_mark_eod_snapshot(
+    *,
+    now_utc: datetime,
+    as_of_date: Optional[str],
+    intraday_trading_date: Optional[str],
+    cfg: Any,
+) -> bool:
+    """
+    Decide whether the current screening run should be marked as EOD.
+    - Explicit as_of (manual/backfill) always yields EOD.
+    - Otherwise, when the run executes outside trading hours (after market close)
+      for the targeted trading date, treat it as EOD.
+    """
+    if as_of_date:
+        return True
+
+    try:
+        window = _resolve_trading_window(cfg or {})
+        tz = ZoneInfo(str(window.get("tz") or "Asia/Kolkata"))
+    except Exception:
+        return False
+
+    now_local = now_utc.astimezone(tz)
+    target_day_str = intraday_trading_date or now_local.date().isoformat()
+    try:
+        target_day = datetime.strptime(target_day_str, "%Y-%m-%d").date()
+    except Exception:
+        target_day = now_local.date()
+
+    start_time = _parse_time_str(window.get("start"), dtime(hour=9, minute=15))
+    end_time = _parse_time_str(window.get("end"), dtime(hour=15, minute=30))
+
+    start_dt = datetime.combine(target_day, start_time, tzinfo=tz)
+    end_dt = datetime.combine(target_day, end_time, tzinfo=tz)
+
+    if end_time <= start_time:
+        # Overnight window (rare but supported) -> treat end on next day.
+        end_dt = end_dt + timedelta(days=1)
+        if now_local < start_dt:
+            # Before overnight window start => already past previous close
+            return now_local.date() > target_day
+
+    if now_local >= end_dt:
+        return True
+    if now_local.date() > target_day:
+        return True
+
+    return False
 
 
 # --------------------------- IO helpers -----------------------------
@@ -187,6 +279,7 @@ def _make_scores_row(
     breadth_hint: Optional[float] = None,
     regime_hint: Optional[str] = None,
     asm_hint: Optional[bool] = None,
+    is_eod_snapshot: bool = False,
 ) -> Dict[str, Any]:
     # Build the final Screener row for this symbol (spec 2025-10-12A).
     last = float(df["close"].iloc[-1]) if not df.empty else None
@@ -378,6 +471,7 @@ def _make_scores_row(
         "buy": "No",
         "reason": score_bundle.band,
         "as_of": as_of_iso,
+        "is_eod": bool(is_eod_snapshot),
         "run_id": run_id,
         "score_band": score_bundle.band,
         "reason_codes": score_reason_codes,
@@ -540,6 +634,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
     jobs = SqlJobsRepo(session)
     history = SqlHistoryRepo(session)
 
+    now_utc = _utcnow_aware()
     # ---- make as_of ISO **timezone-aware** ----
     as_of_raw = payload.get("as_of")
     as_of_date = _as_of_date_str(as_of_raw)
@@ -551,9 +646,9 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         try:
             as_of_iso = pd.to_datetime(as_of_raw, utc=True).strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
-            as_of_iso = _utcnow_aware().isoformat().replace("+00:00", "Z")
+            as_of_iso = now_utc.isoformat().replace("+00:00", "Z")
     else:
-        as_of_iso = _utcnow_aware().isoformat().replace("+00:00", "Z")
+        as_of_iso = now_utc.isoformat().replace("+00:00", "Z")
 
     intraday_date_override: Optional[str] = None
     if not as_of_date:
@@ -653,6 +748,24 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
 
     try:
         cfg = app_config.load()
+        is_eod_snapshot = _should_mark_eod_snapshot(
+            now_utc=now_utc,
+            as_of_date=as_of_date,
+            intraday_trading_date=intraday_date_override,
+            cfg=cfg,
+        )
+        try:
+            log.info(
+                "screening_snapshot_mode",
+                extra={
+                    "run_id": job.run_id,
+                    "is_eod": is_eod_snapshot,
+                    "as_of_date": as_of_date,
+                    "intraday_trading_date": intraday_date_override,
+                },
+            )
+        except Exception:
+            pass
         resolved_universe = (
             (universe or "").strip().upper()
             or (getattr(cfg.scheduler, "universe", None) or "").strip().upper()
@@ -743,6 +856,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 breadth_hint=breadth_pct,
                 regime_hint=nifty_regime_value,
                 asm_hint=asm_flag,
+                is_eod_snapshot=is_eod_snapshot,
             )
             if breadth_pct is not None:
                 row["breadth_pct_50dma"] = breadth_pct

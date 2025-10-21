@@ -120,6 +120,28 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional
                 logger.info("alerts_scores_retry_latest_daily", extra={"run_id": run_id})
         except Exception:
             pass
+    is_eod_snapshot = any(bool((row or {}).get("is_eod")) for row in rows if isinstance(row, dict))
+    if not is_eod_snapshot:
+        candidate = resolved_as_of or as_of_str or ScoresRepo.run_id_to_date(run_id)
+        if isinstance(candidate, str):
+            candidate_clean = candidate.strip()
+            if candidate_clean and ("T" not in candidate_clean) and len(candidate_clean) == 10:
+                is_eod_snapshot = True
+
+    alert_mode = Mode.EOD if is_eod_snapshot else Mode.INTRADAY
+    try:
+        logger.info(
+            "alerts_snapshot_mode",
+            extra={
+                "run_id": run_id,
+                "resolved_as_of": resolved_as_of,
+                "as_of_requested": as_of_str,
+                "is_eod": is_eod_snapshot,
+            },
+        )
+    except Exception:
+        pass
+
     metrics_by_symbol = {
         row["symbol"]: row for row in rows if isinstance(row.get("symbol"), str)
     }
@@ -156,11 +178,11 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional
             conn,
             alerts_cfg=alerts_cfg,
             symbols=symbols,
-            mode=Mode.INTRADAY,
+            mode=alert_mode,
             trading_date=trading_date,
             now_utc=now_utc,
             metric_getter=metric_getter,
-            run_ctx={"triggered_by": "SCHEDULE"},
+            run_ctx={"triggered_by": "SCHEDULE", "snapshot_mode": alert_mode.value},
         )
         try:
             session.commit()

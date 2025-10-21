@@ -608,11 +608,14 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps) -> Di
     position["entry_price_locked"] = entry_locked_val  # <-- minimal, critical fix
 
     # ---------- EOD flag so SELL_TOMORROW can trigger on daily snapshots ----------
-    # Treat only a date-only 'as_of_used' (YYYY-MM-DD) as EOD. Intraday 'as_of' is an ISO timestamp with 'T'.
-    _asu = as_of_used if isinstance(as_of_used, str) else ""
-    _is_daily = bool(_asu) and ("T" not in _asu) and (len(_asu) == 10)
-    indicators["is_eod"] = _is_daily
-    indicators["market_closed"] = _is_daily
+    row_is_eod = bool((row or {}).get("is_eod"))
+    if not row_is_eod:
+        _asu = as_of_used if isinstance(as_of_used, str) else ""
+        if not _asu:
+            _asu = (row or {}).get("as_of") if isinstance((row or {}).get("as_of"), str) else ""
+        row_is_eod = bool(_asu) and ("T" not in _asu) and (len(_asu) == 10)
+    indicators["is_eod"] = row_is_eod
+    indicators["market_closed"] = row_is_eod
 
     # --- meters + next action (unchanged) ---
     meters, next_action = _compute_meters_and_next(price_now, indicators, position)
