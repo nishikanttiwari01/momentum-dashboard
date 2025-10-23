@@ -36,11 +36,11 @@ def _resolve_filter_value(ctx: EvalContext, value: Any, symbol: str, key: str) -
                 return target
         return value
     if isinstance(value, list):
-        return [_resolve_filter_value(ctx, v) for v in value]
+        return [_resolve_filter_value(ctx, v, symbol, key) for v in value]
     if isinstance(value, tuple):
-        return tuple(_resolve_filter_value(ctx, v) for v in value)
+        return tuple(_resolve_filter_value(ctx, v, symbol, key) for v in value)
     if isinstance(value, dict):
-        return {k: _resolve_filter_value(ctx, v) for k, v in value.items()}
+        return {k: _resolve_filter_value(ctx, v, symbol, f"{key}.{k}") for k, v in value.items()}
     return value
 
 def _coerce_float(symbol: str, key: str, value: Any) -> float | None:
@@ -382,6 +382,16 @@ def passes_filters(ctx: EvalContext, symbol: str, item_filters: Dict[str, Any]) 
             cap["next_action_code"] = na
             if na not in list(val):
                 log.debug("Filter next_action_in failed symbol=%s value=%s allowed=%s", symbol, na, val)
+                return False, cap
+
+        elif key == "buy_flag_in":
+            buy_val = ctx.metric(symbol, "buy")
+            cap["buy"] = buy_val
+            allowed_values = val if isinstance(val, (list, tuple, set)) else [val]
+            normalized = str(buy_val or "").strip().upper()
+            allowed_norm = {str(v or "").strip().upper() for v in allowed_values}
+            if normalized not in allowed_norm:
+                log.debug("Filter buy_flag_in failed symbol=%s value=%s allowed=%s", symbol, buy_val, val)
                 return False, cap
 
         # Intraday persistence block

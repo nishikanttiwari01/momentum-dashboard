@@ -14,6 +14,9 @@ I have another full time job hence may or may not be running this app everyday. 
 - **Trades Page:** This page shows all booked trades.
 - **Alert Page:** This page shows all fired alerts.
 
+### AI prompt
+Analyse attached project zip like an expert python and react developer with 15 years of expereince. No guessing, go through the code before you stop. 
+
 ### Goal
 10 % percent gain per month with minial traade consisting of 3 to 5 stocks ideally.
 

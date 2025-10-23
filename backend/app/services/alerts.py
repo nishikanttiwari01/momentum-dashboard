@@ -25,6 +25,15 @@ def _coerce_date(value: Optional[str]) -> Optional[date]:
     except Exception:
         return None
 
+def _flag_is_true(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
+
 
 def _resolve_alerts_cfg(settings_payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not settings_payload:
@@ -120,9 +129,9 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional
                 logger.info("alerts_scores_retry_latest_daily", extra={"run_id": run_id})
         except Exception:
             pass
-    is_eod_snapshot = any(bool((row or {}).get("is_eod")) for row in rows if isinstance(row, dict))
+    is_eod_snapshot = any(_flag_is_true((row or {}).get("is_eod")) for row in rows if isinstance(row, dict))
     if not is_eod_snapshot:
-        candidate = resolved_as_of or as_of_str or ScoresRepo.run_id_to_date(run_id)
+        candidate = resolved_as_of or as_of_str
         if isinstance(candidate, str):
             candidate_clean = candidate.strip()
             if candidate_clean and ("T" not in candidate_clean) and len(candidate_clean) == 10:
@@ -137,6 +146,7 @@ def evaluate_momentum_crossups(run_id: Optional[str], settings_payload: Optional
                 "resolved_as_of": resolved_as_of,
                 "as_of_requested": as_of_str,
                 "is_eod": is_eod_snapshot,
+                "mode": alert_mode.value,
             },
         )
     except Exception:

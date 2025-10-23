@@ -480,7 +480,73 @@ class MomentumHeatmapService:
             snapshots.append(snapshot)
 
         if not snapshots:
-            raise RuntimeError("No NSE sector snapshots available.")
+            # Degraded mode: try EOD history fallback
+            notes.append("Degraded mode: live NSE snapshots unavailable; using last EOD history.")
+            today_ist = datetime.now(_IST).date()
+            # Ensure we have recent history (uses archive endpoints, more reliable)
+            try:
+                self._history.ensure_range(today_ist - timedelta(days=HISTORY_LOOKBACK_DAYS), today_ist)
+            except Exception as exc:
+                log.debug("ensure_range in fallback failed", extra={"err": str(exc)[:200]})
+            synthetic: List[IndexSnapshot] = []
+            for spec in SECTOR_INDICES:
+                row = self._history.get_on_or_before(spec.index_name, today_ist)
+                if not row:
+                    continue
+                d, rec = row
+                last = rec.get("close")
+                if last in (None, 0):
+                    continue
+                prev_row = self._history.get_nth_prior(spec.index_name, d, 1)
+                prev_close = None
+                if prev_row:
+                    _pd, _prec = prev_row
+                    prev_close = _prec.get("close")
+                percent_change = None
+                if prev_close not in (None, 0):
+                    try:
+                        percent_change = ((float(last) / float(prev_close)) - 1.0) * 100.0
+                    except Exception:
+                        percent_change = None
+                # Timestamp at close on that trade date (3:30 PM IST), converted to UTC later in node
+                ts = datetime(d.year, d.month, d.day, 15, 30, tzinfo=_IST)
+                synthetic.append(
+                    IndexSnapshot(
+                        spec=spec,
+                        last=float(last),
+                        percent_change=percent_change,
+                        previous_close=float(prev_close) if prev_close not in (None, 0) else None,
+                        timestamp=ts,
+                        turnover_cr=rec.get("turnover_cr"),
+                        advance=None,
+                        constituents=[],
+                    )
+                )
+            snapshots = synthetic
+            if not snapshots:
+                message = "No NSE sector snapshots available (live and history unavailable)."
+                log.warning("momentum_heatmap_empty", extra={"reason": message})
+                notes.append(message)
+                as_of_dt = datetime.now(tz=_UTC)
+                trade_date = datetime.now(tz=_IST).date()
+                metadata = {
+                    "sectors_requested": len(SECTOR_INDICES),
+                    "sectors_returned": 0,
+                    "includes_constituents": include_constituents,
+                    "includes_industries": include_industries,
+                }
+                response = MomentumHeatmapResponse(
+                    as_of=as_of_dt,
+                    trade_date=trade_date,
+                    session=self._infer_session(as_of_dt),
+                    run_id=as_of_dt.strftime("%Y%m%d%H%M%S"),
+                    source="nseindia",
+                    latency_sec=0,
+                    sectors=[],
+                    notes=notes or None,
+                    metadata=metadata,
+                )
+                return response
 
         latest_trade_date = max(s.timestamp.astimezone(_IST).date() for s in snapshots)
         self._history.ensure_range(latest_trade_date - timedelta(days=HISTORY_LOOKBACK_DAYS), latest_trade_date)

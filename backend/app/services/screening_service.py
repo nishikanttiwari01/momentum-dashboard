@@ -1,6 +1,7 @@
 # backend/app/services/screening_service.py
 from __future__ import annotations
 from datetime import datetime, timezone, time as dtime, timedelta
+from functools import lru_cache
 from typing import Optional, Tuple, Dict, Any, List
 import logging
 from uuid import uuid4
@@ -267,6 +268,192 @@ def _maybe_float(v):
         return None
 
 
+@lru_cache(maxsize=1)
+def _alert_thresholds() -> Dict[str, Any]:
+    try:
+        settings = app_config.get_settings()
+        alerts_cfg = getattr(settings, "alerts", {}) or {}
+        if hasattr(alerts_cfg, "model_dump"):
+            alerts_cfg = alerts_cfg.model_dump()
+        thresholds = alerts_cfg.get("thresholds") or {}
+        if hasattr(thresholds, "model_dump"):
+            thresholds = thresholds.model_dump()
+        if isinstance(thresholds, dict):
+            return dict(thresholds)
+    except Exception:
+        pass
+    return {}
+
+
+def _threshold_float(name: str, default: float) -> float:
+    values = _alert_thresholds()
+    val = values.get(name)
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _threshold_range(name: str, default: Tuple[float, float]) -> Tuple[float, float]:
+    values = _alert_thresholds()
+    val = values.get(name)
+    if isinstance(val, (list, tuple)) and len(val) >= 2:
+        lo_raw, hi_raw = val[0], val[1]
+        lo = float(lo_raw) if lo_raw is not None else default[0]
+        hi = float(hi_raw) if hi_raw is not None else default[1]
+        return (lo, hi)
+    return default
+
+
+def _format_percent(value: Optional[float], decimals: int = 1, include_sign: bool = False) -> str:
+    if value is None:
+        return "NA"
+    if include_sign:
+        return f"{value:+.{decimals}f}%"
+    return f"{value:.{decimals}f}%"
+
+
+def _format_multiplier(value: Optional[float], decimals: int = 1) -> str:
+    if value is None:
+        return "NA"
+    return f"{value:.{decimals}f}x"
+
+
+def _format_int(value: Optional[float]) -> str:
+    if value is None:
+        return "NA"
+    return str(int(round(value)))
+
+
+def _format_liquidity(value: Optional[float]) -> str:
+    if value is None:
+        return "NA"
+    # Convert to crore units to keep numbers readable
+    return f"{value / 1e7:.1f}Cr"
+
+
+def _eod_buy_failures(row: Dict[str, Any]) -> List[str]:
+    failures: List[str] = []
+
+    score_cut = _threshold_float("breakout_score_min", 70.0)
+    score_val = _maybe_float(row.get("score"))
+    if score_val is None or score_val < score_cut:
+        failures.append(f"score:{_format_int(score_val)}")
+
+    prox_threshold = _threshold_float("proximity_52w_min_pct", -8.0)
+    prox_val = _maybe_float(row.get("pct_from_52w_high") or row.get("proximity_52w_high_pct"))
+    if prox_val is None or prox_val < prox_threshold:
+        failures.append(f"prox52:{_format_percent(prox_val)}")
+
+    pivot_lo, pivot_hi = _threshold_range("breakout_pivot_clear_pct_range", (1.0, 5.0))
+    pivot_val = _maybe_float(row.get("pivot_clear_pct"))
+    if pivot_val is None or pivot_val < pivot_lo or pivot_val > pivot_hi:
+        failures.append(f"pivot_clear:{_format_percent(pivot_val)}")
+
+    base_len = _maybe_float(row.get("base_len_bars"))
+    if base_len is None or base_len < 15:
+        failures.append(f"base_len:{_format_int(base_len)}")
+
+    relvol_min = _threshold_float("breakout_relvol20_min", 1.5)
+    relvol_val = _maybe_float(row.get("relvol20"))
+    if relvol_val is None or relvol_val < relvol_min:
+        failures.append(f"RelVol:{_format_multiplier(relvol_val)}")
+
+    adx_val = _maybe_float(row.get("adx") or row.get("adx14"))
+    if adx_val is None or adx_val < 22.0:
+        failures.append(f"ADX:{_format_int(adx_val)}")
+
+    atr_lo, atr_hi = _threshold_range("atr10_pct_range", (3.0, 7.0))
+    atr10_val = _maybe_float(row.get("atr10_pct") or row.get("atr_pct"))
+    if atr10_val is None or atr10_val < atr_lo or atr10_val > atr_hi:
+        failures.append(f"ATR10:{_format_percent(atr10_val)}")
+
+    day_change_cap = _threshold_float("day_change_cap_breakout_pct", 6.0)
+    day_change = _maybe_float(row.get("change_pct") or row.get("pct_today"))
+    if day_change is None or day_change > day_change_cap:
+        failures.append(f"day_change:{_format_percent(day_change, include_sign=True)}")
+
+    liquidity_floor = _threshold_float("liquidity_floor_rupees", 5e7)
+    liquidity_val = row.get("liquidity")
+    if liquidity_val is None:
+        liquidity_val = row.get("median_traded_value_20d")
+    liquidity_val = _maybe_float(liquidity_val)
+    if liquidity_val is None or liquidity_val < liquidity_floor:
+        failures.append(f"liquidity:{_format_liquidity(liquidity_val)}")
+
+    return failures
+
+
+def _intraday_buy_failures(row: Dict[str, Any]) -> List[str]:
+    failures: List[str] = []
+
+    score_cut = _threshold_float("starter_score_min_intraday", 65.0)
+    score_val = _maybe_float(row.get("intraday_score"))
+    if score_val is None:
+        score_val = _maybe_float(row.get("score"))
+    if score_val is None or score_val < score_cut:
+        failures.append(f"starter_score:{_format_int(score_val)}")
+
+    adx_val = _maybe_float(row.get("adx") or row.get("adx14"))
+    if adx_val is None or adx_val < 22.0:
+        failures.append(f"ADX:{_format_int(adx_val)}")
+
+    if row.get("adx_slope_pos") is not True:
+        failures.append("ADX_slope:flat")
+
+    rsi_val = _maybe_float(row.get("rsi") or row.get("rsi14"))
+    rsi_lo, rsi_hi = 58.0, 70.0
+    if rsi_val is None or rsi_val < rsi_lo or rsi_val > rsi_hi:
+        failures.append(f"RSI:{_format_int(rsi_val)}")
+
+    relvol_min = _threshold_float("intraday_relvol_min", 1.5)
+    relvol_val = _maybe_float(row.get("intraday_relvol"))
+    if relvol_val is None:
+        relvol_val = _maybe_float(row.get("relvol20"))
+    if relvol_val is None:
+        relvol_val = _maybe_float(row.get("vol_spike"))
+    if relvol_val is None or relvol_val < relvol_min:
+        failures.append(f"RelVol:{_format_multiplier(relvol_val)}")
+
+    prox_threshold = _threshold_float("proximity_52w_min_pct", -8.0)
+    prox_val = _maybe_float(row.get("pct_from_52w_high") or row.get("proximity_52w_high_pct"))
+    if prox_val is None or prox_val < prox_threshold:
+        failures.append(f"prox52:{_format_percent(prox_val)}")
+
+    atr_lo, atr_hi = _threshold_range("atr10_pct_range", (3.0, 7.0))
+    atr10_val = _maybe_float(row.get("atr10_pct") or row.get("atr_pct"))
+    if atr10_val is None or atr10_val < atr_lo or atr10_val > atr_hi:
+        failures.append(f"ATR10:{_format_percent(atr10_val)}")
+
+    day_change_cap = _threshold_float("day_change_cap_starter_pct", 4.0)
+    day_change = _maybe_float(row.get("change_pct") or row.get("pct_today"))
+    if day_change is None or day_change > day_change_cap:
+        failures.append(f"day_change:{_format_percent(day_change, include_sign=True)}")
+
+    liquidity_floor = _threshold_float("liquidity_floor_rupees", 5e7)
+    liquidity_val = row.get("liquidity")
+    if liquidity_val is None:
+        liquidity_val = row.get("median_traded_value_20d")
+    liquidity_val = _maybe_float(liquidity_val)
+    if liquidity_val is None or liquidity_val < liquidity_floor:
+        failures.append(f"liquidity:{_format_liquidity(liquidity_val)}")
+
+    persistence = row.get("persistence_ok")
+    if persistence is not True:
+        failures.append("persistence:fail")
+
+    return failures
+
+
+def _evaluate_buy_gate(row: Dict[str, Any]) -> Tuple[str, str]:
+    is_eod = bool(row.get("is_eod"))
+    row["buy_mode"] = "EOD" if is_eod else "INTRADAY"
+    failures = _eod_buy_failures(row) if is_eod else _intraday_buy_failures(row)
+    if failures:
+        return "No", " | ".join(failures)
+    return "Yes", ""
+
+
 def _make_scores_row(
     *,
     symbol: str,
@@ -510,7 +697,6 @@ def _make_scores_row(
     yes = bool(row.get("pre_gates_pass") and actionable and meets_score)
 
     row["recommendation"] = "Yes" if yes else "No"
-    row["buy"] = row["recommendation"]
     row["next_action"] = next_action_code
     row["next_action_code"] = next_action_code
     row["next_action_reason_codes"] = next_action_reasons
@@ -527,12 +713,21 @@ def _make_scores_row(
         row["reason_codes"] = score_reason_codes
         row["reason"] = score_bundle.band
 
+    reason_before_buy = row.get("reason") or ""
+
     if row.get("liquidity") is None:
         try:
             ser_liq = (df["close"] * df["volume"]).rolling(20, min_periods=5).mean()
             row["liquidity"] = float(ser_liq.iloc[-1]) if ser_liq.notna().any() else None
         except Exception:
             row["liquidity"] = None
+
+    buy_flag, buy_reason = _evaluate_buy_gate(row)
+    row["buy"] = buy_flag
+    if buy_flag == "No":
+        row["reason"] = buy_reason
+    else:
+        row["reason"] = reason_before_buy
 
     if row.get("vol_spike") is None:
         try:

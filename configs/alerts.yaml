@@ -80,7 +80,7 @@ alerts:
       min_cooldown_minutes: 0           # intraday cooldown if repeat_within_day=true
     channels:                            # per-alert can override these
       ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-      email:  { enabled: true,  to: ["you@example.com"] }
+      email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
       webhook: { enabled: false, url: "" }
     throttles:
       max_alerts_per_run: 200
@@ -154,6 +154,7 @@ alerts:
       mode: { allow_intraday: false, allow_eod: true }
       suppress_if_fired: ["BUY_STARTER"]
       filters:
+        buy_flag_in: ["Yes"]
         score_min: ${alerts.thresholds.breakout_score_min}
         atr10_pct_range: ${alerts.thresholds.atr10_pct_range}
         liquidity_floor_rupees: ${alerts.thresholds.liquidity_floor_rupees}
@@ -171,7 +172,7 @@ alerts:
           usual and the setup score is {{ score }}. Consider a full entry next session.
       channels:
         ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-        email:  { enabled: true,  to: ["you@example.com"] }
+        email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
         webhook: { enabled: false }
 
     - code: BUY_PULLBACK
@@ -181,6 +182,7 @@ alerts:
       severity: INFO
       mode: { allow_intraday: false, allow_eod: true }
       filters:
+        buy_flag_in: ["Yes"]
         score_min: ${alerts.thresholds.pullback_score_min}
         atr10_pct_range: ${alerts.thresholds.atr10_pct_range}
         liquidity_floor_rupees: ${alerts.thresholds.liquidity_floor_rupees}
@@ -196,7 +198,7 @@ alerts:
           If strength returns, consider a full entry. Current setup score is {{ score }}.
       channels:
         ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-        email:  { enabled: true,  to: ["you@example.com"] }
+        email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
 
     - code: BUY_STARTER
       digest_bucket: "BUY"
@@ -207,6 +209,7 @@ alerts:
       escalates_to: "BUY_BREAKOUT"
       repeat_policy: { repeat_within_day: false, min_cooldown_minutes: 120 }
       filters:
+        buy_flag_in: ["Yes"]
         intraday_score_min: ${alerts.thresholds.starter_score_min_intraday}
         adx14_min: 22
         adx14_rising: true
@@ -289,7 +292,7 @@ alerts:
           was breached. Exit the position immediately.
       channels:
         ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-        email:  { enabled: true,  to: ["you@example.com"] }
+        email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
         webhook: { enabled: true,  url: "https://hooks.example.com/alert" }
 
     - code: SELL_TREND_BREACH
@@ -308,7 +311,7 @@ alerts:
           Plan to exit on the next session.
       channels:
         ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["you@example.com"] }
+        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
     - code: SELL_FAILED_BREAKOUT
       digest_bucket: "SELL"
@@ -328,7 +331,7 @@ alerts:
           candle. Consider exiting in the next session.
       channels:
         ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["you@example.com"] }
+        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
     - code: TRIM_10PCT
       digest_bucket: "SELL"
@@ -346,7 +349,7 @@ alerts:
           trail with a closer guide.
       channels:
         ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["you@example.com"] }
+        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
     - code: TIME_STOP
       digest_bucket: "SELL"
@@ -367,7 +370,7 @@ alerts:
           better opportunities.
       channels:
         ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["you@example.com"] }
+        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
     - code: EUPHORIA_EXIT
       digest_bucket: "SELL"
@@ -387,7 +390,7 @@ alerts:
           (e.g., the 8‑day) to protect profits.
       channels:
         ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["you@example.com"] }
+        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
     # === LEGACY / COMPAT ===
     - code: QUALITY_SCORE_THRESHOLD
@@ -399,13 +402,13 @@ alerts:
       filters:
         score_min: ${alerts.thresholds.high_quality_score}
       template:
-        title: "Watch — {{ symbol }} — High quality setup"
+        title: "Watch — {{ symbol }} — QUALITY_SCORE_THRESHOLD"
         body: >
-          Overall setup score {{ score }} is above your quality bar. Review for
+          Momentum score {{ score }} is above your quality bar. Review for
           potential entry or keep on the watchlist.
       channels:
         ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["you@example.com"] }
+        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
   # ---------------------------
   # Templates for message rendering (fallback)
