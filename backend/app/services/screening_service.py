@@ -476,126 +476,295 @@ def _format_liquidity(value: Optional[float]) -> str:
     return f"{value / 1e7:.1f}Cr"
 
 
-def _eod_buy_failures(row: Dict[str, Any]) -> List[str]:
-    failures: List[str] = []
+def _summarize_score(value: Any, minimum: float, label: str = "Score") -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return label, "NA", "score unavailable", False
+    value_str = _format_int(val)
+    if val >= minimum:
+        return label, value_str, "quality met", True
+    return label, value_str, "strength low", False
 
-    score_cut = _threshold_float("breakout_score_min", 70.0)
-    score_val = _maybe_float(row.get("score"))
-    if score_val is None or score_val < score_cut:
-        failures.append(f"score:{_format_int(score_val)}")
 
-    prox_threshold = _threshold_float("proximity_52w_min_pct", -8.0)
-    prox_val = _maybe_float(row.get("pct_from_52w_high") or row.get("proximity_52w_high_pct"))
-    if prox_val is None or prox_val < prox_threshold:
-        failures.append(f"prox52:{_format_percent(prox_val)}")
+def _summarize_pivot(value: Any, lower: float, upper: float) -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return "pivot_clear", "NA", "pivot data missing", False
+    value_str = _format_percent(val, include_sign=True)
+    if val < 0:
+        desc = "below resistance"
+    elif val < lower:
+        desc = "testing breakout"
+    elif val <= upper:
+        desc = "clean breakout"
+    else:
+        desc = "overextended"
+    passed = lower <= val <= upper
+    return "pivot_clear", value_str, desc, passed
+
+
+def _summarize_base_len(value: Any, minimum: float) -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return "base_len", "NA", "base data unavailable", False
+    length = int(round(val))
+    if length < 10:
+        desc = "no clear base"
+    elif length < minimum:
+        desc = "early consolidation"
+    elif length <= 25:
+        desc = "ready to break"
+    elif length <= 35:
+        desc = "extended base"
+    else:
+        desc = "stale setup"
+    passed = length >= minimum
+    return "base_len", str(length), desc, passed
+
+
+def _summarize_relvol(value: Any, minimum: float, label: str = "RelVol") -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return label, "NA", "volume data missing", False
+    value_str = _format_multiplier(val)
+    if val < 1.0:
+        desc = "quiet volume"
+    elif val < minimum:
+        desc = "average volume"
+    elif val <= 2.0:
+        desc = "strong buying"
+    else:
+        desc = "high-volume breakout"
+    passed = val >= minimum
+    return label, value_str, desc, passed
+
+
+def _summarize_atr(value: Any, lower: float, upper: float) -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return "ATR10", "NA", "ATR unavailable", False
+    value_str = _format_percent(val)
+    if val < lower:
+        desc = "low volatility"
+    elif val <= upper:
+        desc = "healthy volatility"
+    else:
+        desc = "too volatile"
+    passed = lower <= val <= upper
+    return "ATR10", value_str, desc, passed
+
+
+def _summarize_adx(value: Any, minimum: float) -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return "ADX", "NA", "trend data missing", False
+    value_str = _format_int(val)
+    if val < 20:
+        desc = "weak trend"
+    elif val < minimum:
+        desc = "emerging trend"
+    elif val <= 35:
+        desc = "strong trend"
+    else:
+        desc = "euphoric trend"
+    passed = val >= minimum
+    return "ADX", value_str, desc, passed
+
+
+def _summarize_proximity(value: Any, minimum: float) -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return "prox52", "NA", "proximity unknown", False
+    value_str = _format_percent(val, include_sign=True)
+    if val < -15:
+        desc = "far from highs"
+    elif val < minimum:
+        desc = "building base"
+    elif val <= 0:
+        desc = "near breakout zone"
+    else:
+        desc = "at highs"
+    passed = val >= minimum
+    return "prox52", value_str, desc, passed
+
+
+def _summarize_day_change(value: Any, maximum: float, label: str = "day_change") -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return label, "NA", "day change unknown", False
+    value_str = _format_percent(val, include_sign=True)
+    if val > maximum:
+        return label, value_str, "too extended today", False
+    if val >= 0:
+        return label, value_str, "calm session", True
+    return label, value_str, "pullback day", True
+
+
+def _summarize_liquidity(value: Any, minimum: float) -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return "liquidity", "NA", "liquidity unknown", False
+    value_str = _format_liquidity(val)
+    if val >= minimum:
+        return "liquidity", value_str, "adequate liquidity", True
+    return "liquidity", value_str, "thin liquidity", False
+
+
+def _summarize_rsi(value: Any, lower: float, upper: float) -> Tuple[str, str, str, bool]:
+    val = _maybe_float(value)
+    if val is None:
+        return "RSI", "NA", "RSI unavailable", False
+    value_str = _format_int(val)
+    if val < lower:
+        desc = "momentum weak"
+    elif val <= upper:
+        desc = "bullish momentum"
+    else:
+        desc = "overbought"
+    passed = lower <= val <= upper
+    return "RSI", value_str, desc, passed
+
+
+def _summarize_adx_slope(value: Any) -> Tuple[str, str, str, bool]:
+    if value is True:
+        return "ADX_slope", "+", "trend strength rising", True
+    if value is False:
+        return "ADX_slope", "flat", "trend not improving", False
+    return "ADX_slope", "NA", "trend slope unknown", False
+
+
+def _summarize_persistence(value: Any) -> Tuple[str, str, str, bool]:
+    if value is True:
+        return "persistence", "Yes", "holding pivot/VWAP", True
+    if value is False:
+        return "persistence", "No", "lost pivot/VWAP", False
+    return "persistence", "NA", "persistence unknown", False
+
+
+def _compose_reason_string(items: List[Tuple[str, str, str]]) -> str:
+    return " | ".join(f"{label}: {value} ({desc})" for label, value, desc in items if label)
+
+
+def _build_eod_buy_metrics(row: Dict[str, Any]) -> Tuple[bool, List[Tuple[str, str, str]]]:
+    reason_items: List[Tuple[str, str, str]] = []
+    passed = True
+
+    def add(metric: Tuple[str, str, str, bool], enforced: bool = True) -> None:
+        nonlocal passed
+        label, value_str, desc, ok = metric
+        reason_items.append((label, value_str, desc))
+        if enforced:
+            passed = passed and bool(ok)
+
+    score_min = _threshold_float("breakout_score_min", 70.0)
+    add(_summarize_score(row.get("score"), score_min))
 
     pivot_lo, pivot_hi = _threshold_range("breakout_pivot_clear_pct_range", (1.0, 5.0))
-    pivot_val = _maybe_float(row.get("pivot_clear_pct"))
-    if pivot_val is None or pivot_val < pivot_lo or pivot_val > pivot_hi:
-        failures.append(f"pivot_clear:{_format_percent(pivot_val)}")
+    add(_summarize_pivot(row.get("pivot_clear_pct"), pivot_lo, pivot_hi))
 
-    base_len = _maybe_float(row.get("base_len_bars"))
-    if base_len is None or base_len < 15:
-        failures.append(f"base_len:{_format_int(base_len)}")
+    base_len_min = _threshold_float("base_len_min_bars", 15.0)
+    if base_len_min <= 0:
+        base_len_min = 15.0
+    add(_summarize_base_len(row.get("base_len_bars"), base_len_min))
 
     relvol_min = _threshold_float("breakout_relvol20_min", 1.5)
-    relvol_val = _maybe_float(row.get("relvol20"))
-    if relvol_val is None or relvol_val < relvol_min:
-        failures.append(f"RelVol:{_format_multiplier(relvol_val)}")
-
-    adx_val = _maybe_float(row.get("adx") or row.get("adx14"))
-    if adx_val is None or adx_val < 22.0:
-        failures.append(f"ADX:{_format_int(adx_val)}")
+    add(_summarize_relvol(row.get("relvol20"), relvol_min))
 
     atr_lo, atr_hi = _threshold_range("atr10_pct_range", (3.0, 7.0))
-    atr10_val = _maybe_float(row.get("atr10_pct") or row.get("atr_pct"))
-    if atr10_val is None or atr10_val < atr_lo or atr10_val > atr_hi:
-        failures.append(f"ATR10:{_format_percent(atr10_val)}")
+    atr_val = row.get("atr10_pct") if row.get("atr10_pct") is not None else row.get("atr_pct")
+    add(_summarize_atr(atr_val, atr_lo, atr_hi))
 
-    day_change_cap = _threshold_float("day_change_cap_breakout_pct", 6.0)
-    day_change = _maybe_float(row.get("change_pct") or row.get("pct_today"))
-    if day_change is None or day_change > day_change_cap:
-        failures.append(f"day_change:{_format_percent(day_change, include_sign=True)}")
+    adx_min = _threshold_float("adx14_min", 22.0)
+    add(_summarize_adx(row.get("adx") or row.get("adx14"), adx_min))
+
+    prox_min = _threshold_float("proximity_52w_min_pct", -8.0)
+    prox_val = row.get("pct_from_52w_high") if row.get("pct_from_52w_high") is not None else row.get("proximity_52w_high_pct")
+    add(_summarize_proximity(prox_val, prox_min))
+
+    day_cap = _threshold_float("day_change_cap_breakout_pct", 6.0)
+    day_val = row.get("change_pct") if row.get("change_pct") is not None else row.get("pct_today")
+    add(_summarize_day_change(day_val, day_cap))
 
     liquidity_floor = _threshold_float("liquidity_floor_rupees", 5e7)
     liquidity_val = row.get("liquidity")
     if liquidity_val is None:
         liquidity_val = row.get("median_traded_value_20d")
-    liquidity_val = _maybe_float(liquidity_val)
-    if liquidity_val is None or liquidity_val < liquidity_floor:
-        failures.append(f"liquidity:{_format_liquidity(liquidity_val)}")
+    add(_summarize_liquidity(liquidity_val, liquidity_floor))
 
-    return failures
+    return passed, reason_items
 
 
-def _intraday_buy_failures(row: Dict[str, Any]) -> List[str]:
-    failures: List[str] = []
+def _build_intraday_buy_metrics(row: Dict[str, Any]) -> Tuple[bool, List[Tuple[str, str, str]]]:
+    reason_items: List[Tuple[str, str, str]] = []
+    passed = True
 
-    score_cut = _threshold_float("starter_score_min_intraday", 65.0)
-    score_val = _maybe_float(row.get("intraday_score"))
-    if score_val is None:
-        score_val = _maybe_float(row.get("score"))
-    if score_val is None or score_val < score_cut:
-        failures.append(f"starter_score:{_format_int(score_val)}")
+    def add(metric: Tuple[str, str, str, bool], enforced: bool = True) -> None:
+        nonlocal passed
+        label, value_str, desc, ok = metric
+        reason_items.append((label, value_str, desc))
+        if enforced:
+            passed = passed and bool(ok)
 
-    adx_val = _maybe_float(row.get("adx") or row.get("adx14"))
-    if adx_val is None or adx_val < 22.0:
-        failures.append(f"ADX:{_format_int(adx_val)}")
+    # Provide baseline context that doesn't gate intraday BUY
+    score_min = _threshold_float("breakout_score_min", 70.0)
+    add(_summarize_score(row.get("score"), score_min), enforced=False)
 
-    if row.get("adx_slope_pos") is not True:
-        failures.append("ADX_slope:flat")
+    pivot_lo, pivot_hi = _threshold_range("breakout_pivot_clear_pct_range", (1.0, 5.0))
+    add(_summarize_pivot(row.get("pivot_clear_pct"), pivot_lo, pivot_hi), enforced=False)
 
-    rsi_val = _maybe_float(row.get("rsi") or row.get("rsi14"))
-    rsi_lo, rsi_hi = 58.0, 70.0
-    if rsi_val is None or rsi_val < rsi_lo or rsi_val > rsi_hi:
-        failures.append(f"RSI:{_format_int(rsi_val)}")
+    base_len_min = _threshold_float("base_len_min_bars", 15.0)
+    if base_len_min <= 0:
+        base_len_min = 15.0
+    add(_summarize_base_len(row.get("base_len_bars"), base_len_min), enforced=False)
 
+    starter_score_min = _threshold_float("starter_score_min_intraday", 65.0)
+    intraday_score = row.get("intraday_score")
+    if intraday_score is None:
+        intraday_score = row.get("score")
+    add(_summarize_score(intraday_score, starter_score_min, label="starter_score"))
+
+    relvol_source = row.get("intraday_relvol")
+    if relvol_source is None:
+        relvol_source = row.get("relvol20") if row.get("relvol20") is not None else row.get("vol_spike")
     relvol_min = _threshold_float("intraday_relvol_min", 1.5)
-    relvol_val = _maybe_float(row.get("intraday_relvol"))
-    if relvol_val is None:
-        relvol_val = _maybe_float(row.get("relvol20"))
-    if relvol_val is None:
-        relvol_val = _maybe_float(row.get("vol_spike"))
-    if relvol_val is None or relvol_val < relvol_min:
-        failures.append(f"RelVol:{_format_multiplier(relvol_val)}")
+    add(_summarize_relvol(relvol_source, relvol_min), enforced=True)
 
-    prox_threshold = _threshold_float("proximity_52w_min_pct", -8.0)
-    prox_val = _maybe_float(row.get("pct_from_52w_high") or row.get("proximity_52w_high_pct"))
-    if prox_val is None or prox_val < prox_threshold:
-        failures.append(f"prox52:{_format_percent(prox_val)}")
+    adx_min = _threshold_float("adx14_min", 22.0)
+    add(_summarize_adx(row.get("adx") or row.get("adx14"), adx_min), enforced=True)
+
+    add(_summarize_adx_slope(row.get("adx_slope_pos")), enforced=True)
+
+    add(_summarize_rsi(row.get("rsi") or row.get("rsi14"), 58.0, 70.0), enforced=True)
+
+    prox_min = _threshold_float("proximity_52w_min_pct", -8.0)
+    prox_val = row.get("pct_from_52w_high") if row.get("pct_from_52w_high") is not None else row.get("proximity_52w_high_pct")
+    add(_summarize_proximity(prox_val, prox_min), enforced=True)
 
     atr_lo, atr_hi = _threshold_range("atr10_pct_range", (3.0, 7.0))
-    atr10_val = _maybe_float(row.get("atr10_pct") or row.get("atr_pct"))
-    if atr10_val is None or atr10_val < atr_lo or atr10_val > atr_hi:
-        failures.append(f"ATR10:{_format_percent(atr10_val)}")
+    atr_val = row.get("atr10_pct") if row.get("atr10_pct") is not None else row.get("atr_pct")
+    add(_summarize_atr(atr_val, atr_lo, atr_hi), enforced=True)
 
-    day_change_cap = _threshold_float("day_change_cap_starter_pct", 4.0)
-    day_change = _maybe_float(row.get("change_pct") or row.get("pct_today"))
-    if day_change is None or day_change > day_change_cap:
-        failures.append(f"day_change:{_format_percent(day_change, include_sign=True)}")
+    day_cap = _threshold_float("day_change_cap_starter_pct", 4.0)
+    day_val = row.get("change_pct") if row.get("change_pct") is not None else row.get("pct_today")
+    add(_summarize_day_change(day_val, day_cap), enforced=True)
 
     liquidity_floor = _threshold_float("liquidity_floor_rupees", 5e7)
     liquidity_val = row.get("liquidity")
     if liquidity_val is None:
         liquidity_val = row.get("median_traded_value_20d")
-    liquidity_val = _maybe_float(liquidity_val)
-    if liquidity_val is None or liquidity_val < liquidity_floor:
-        failures.append(f"liquidity:{_format_liquidity(liquidity_val)}")
+    add(_summarize_liquidity(liquidity_val, liquidity_floor), enforced=True)
 
-    persistence = row.get("persistence_ok")
-    if persistence is not True:
-        failures.append("persistence:fail")
+    add(_summarize_persistence(row.get("persistence_ok")), enforced=True)
 
-    return failures
+    return passed, reason_items
 
 
 def _evaluate_buy_gate(row: Dict[str, Any]) -> Tuple[str, str]:
     is_eod = bool(row.get("is_eod"))
     row["buy_mode"] = "EOD" if is_eod else "INTRADAY"
-    failures = _eod_buy_failures(row) if is_eod else _intraday_buy_failures(row)
-    if failures:
-        return "No", " | ".join(failures)
-    return "Yes", ""
+    passed, items = _build_eod_buy_metrics(row) if is_eod else _build_intraday_buy_metrics(row)
+    reason = _compose_reason_string(items)
+    return ("Yes" if passed else "No"), reason
 
 
 def _make_scores_row(
@@ -880,7 +1049,7 @@ def _make_scores_row(
 
     buy_flag, buy_reason = _evaluate_buy_gate(row)
     row["buy"] = buy_flag
-    if buy_flag == "No":
+    if buy_reason:
         row["reason"] = buy_reason
     else:
         row["reason"] = reason_before_buy
