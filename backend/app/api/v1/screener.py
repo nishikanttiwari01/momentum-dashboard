@@ -154,6 +154,12 @@ def _format_eod_label(as_of: str) -> str:
     return f"{base} EOD"
 
 
+def _today_ist_str() -> str:
+    if _IST_TZ is None:
+        return datetime.now(timezone.utc).date().strftime("%Y-%m-%d")
+    return datetime.now(_IST_TZ).date().strftime("%Y-%m-%d")
+
+
 def _list_intraday_dates(limit: int) -> List[ScreenerRunDate]:
     try:
         root = datasets.get_parquet_root() / "scores" / "intraday"
@@ -270,6 +276,50 @@ def _build_eod_summary(as_of: str, run_id: Optional[str]) -> ScreenerRunSummary:
         completed_at=None,
         label=_format_eod_label(as_of),
     )
+
+
+def _get_latest_snapshot_summary() -> ScreenerRunSummary:
+    """
+    Decide the single most recent snapshot with EOD > Intraday precedence.
+    1) If today's EOD exists → return today's EOD (latest run if multiple).
+    2) Else if today's intraday runs exist → return latest intraday run today.
+    3) Else return latest available EOD (<= today).
+    """
+    today = _today_ist_str()
+
+    # 1) Today’s EOD?
+    eod_run_ids_today = _list_eod_run_ids(today)
+    if eod_run_ids_today:
+        rid = eod_run_ids_today[0]  # already sorted latest-first
+        return _build_eod_summary(today, rid)
+
+    # 2) Today’s intraday?
+    try:
+        intra_run_ids_today = datasets.list_intraday_runs(today)
+    except Exception:
+        intra_run_ids_today = []
+    intra_run_ids_today = sorted(intra_run_ids_today, reverse=True)
+    if intra_run_ids_today:
+        return _build_intraday_summary(today, intra_run_ids_today[0])
+
+    # 3) Fallback to latest EOD ≤ today
+    eod_dates = _list_eod_dates(1)
+    if eod_dates:
+        as_of = eod_dates[0].as_of or today
+        run_ids = _list_eod_run_ids(as_of)
+        rid = run_ids[0] if run_ids else None
+        return _build_eod_summary(as_of, rid)
+
+    raise HTTPException(status_code=404, detail="No snapshots available")
+
+
+@router.get("/screener/latest", response_model=ScreenerRunSummary)
+def get_latest_snapshot() -> ScreenerRunSummary:
+    """
+    Return the single latest snapshot across modes with EOD > Intraday precedence.
+    Use this in the UI to auto-select mode/date/run_id on initial load.
+    """
+    return _get_latest_snapshot_summary()
 
 
 @router.get("/screener/run-dates", response_model=ScreenerRunDateList)
@@ -533,7 +583,7 @@ def _normalize_screener_rows(raw_items: List[Dict[str, Any]]) -> Tuple[List[Scre
 
         badges = r.get("badges") or []
         norm_badges: List[dict] = []
-        allowed = {"BREAKOUT", "MOMENTUM", "WATCH", "IGNORE", "ACTION"}
+        allowed = {"BREAKOUT", "MOMENTUM", "WATCH", "IGNORE"}
         badge_remap = {
             "BAND": "MOMENTUM",
             "PRICE": "MOMENTUM",
@@ -972,6 +1022,3 @@ def export_screener(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
-
-
-

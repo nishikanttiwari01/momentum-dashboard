@@ -45,6 +45,9 @@ export default function Screener() {
   const [exportAnchorEl, setExportAnchorEl] = React.useState<HTMLElement | null>(null);
   const [isExporting, setIsExporting] = React.useState(false);
 
+  // Guard to avoid clearing date/run during programmatic initial seeding
+  const suppressModeResetRef = React.useRef(false);
+
   const handleTickerSubmit = React.useCallback((event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = tickerInput.trim();
@@ -63,11 +66,17 @@ export default function Screener() {
     setSymbolFilter(undefined);
   }, []);
 
+  // Reset date/run when user manually switches mode (unless suppressed by initial seeding)
   React.useEffect(() => {
+    if (suppressModeResetRef.current) {
+      suppressModeResetRef.current = false;
+      return;
+    }
     setPendingDate(undefined);
     setPendingRun(null);
   }, [pendingMode]);
 
+  // Fetch available dates per mode
   const runDatesQuery = useGetScreenerRunDates(
     { mode: pendingMode, limit: 60 },
     { query: { keepPreviousData: true } },
@@ -85,6 +94,7 @@ export default function Screener() {
       .filter((item): item is { value: string; label: string } => Boolean(item));
   }, [runDatesPayload, pendingMode]);
 
+  // If no date yet, pick a sensible default from run-dates for the chosen mode
   React.useEffect(() => {
     if (availableDates.length === 0) {
       return;
@@ -99,6 +109,7 @@ export default function Screener() {
     }
   }, [availableDates, pendingMode, pendingDate, runDatesPayload]);
 
+  // Fetch run list for the selected date/mode
   const runListParams = React.useMemo(() => {
     if (!pendingDate) return undefined;
     if (pendingMode === MODE_INTRADAY) {
@@ -115,6 +126,7 @@ export default function Screener() {
   });
   const runListPayload = runListQuery.data?.data;
 
+  // Normalize run list for the dropdown
   const availableRuns = React.useMemo(() => {
     if (!runListPayload) return [];
     const rawItems = Array.isArray(runListPayload.items) ? runListPayload.items : [];
@@ -144,6 +156,7 @@ export default function Screener() {
     });
   }, [runListPayload, pendingMode]);
 
+  // Keep pendingRun in sync with the latest list (but don't override programmatic initial seed)
   React.useEffect(() => {
     if (!runListPayload) {
       setPendingRun(null);
@@ -191,6 +204,7 @@ export default function Screener() {
     applySelection(pendingMode, pendingRun, pendingDate);
   }, [applySelection, pendingMode, pendingRun, pendingDate]);
 
+  // Auto-apply once when we have a pending run (first load or after seeding)
   React.useEffect(() => {
     if (!hasAppliedInitial && pendingRun) {
       applySelection(pendingMode, pendingRun, pendingDate);
@@ -201,12 +215,14 @@ export default function Screener() {
   const handleModeChange = React.useCallback((_: React.SyntheticEvent, value: Mode | null) => {
     if (!value) return;
     setPendingMode(value);
+    setHasAppliedInitial(false); // allow re-apply on explicit mode change
   }, []);
 
   const handleDateInputChange = React.useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value;
     setPendingDate(value || undefined);
     setPendingRun(null);
+    setHasAppliedInitial(false); // allow re-apply when date changes
   }, []);
 
   const handleRunChange = React.useCallback((event: SelectChangeEvent<string>) => {
@@ -217,6 +233,7 @@ export default function Screener() {
     }
     const match = availableRuns.find((item) => item.key === value);
     setPendingRun(match?.summary ?? null);
+    setHasAppliedInitial(false); // allow re-apply when run changes
   }, [availableRuns]);
 
   const handleOpenExportMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
@@ -297,6 +314,39 @@ export default function Screener() {
     ? !!appliedRunId
     : !!appliedAsOf;
   const exportMenuOpen = Boolean(exportAnchorEl);
+
+  // ---- NEW: Auto-seed mode/date/run from /api/v1/screener/latest (EOD > Intraday) ----
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/api/v1/screener/latest');
+        if (!resp.ok) return;
+        const latest: ScreenerRunSummary = await resp.json();
+        if (cancelled || !latest) return;
+
+        const nextMode: Mode = latest.mode === 'eod' ? MODE_EOD : MODE_INTRADAY;
+        const nextDate =
+          nextMode === MODE_INTRADAY
+            ? (latest.trade_date ?? undefined)
+            : (latest.as_of ?? undefined);
+
+        // Prevent the mode-change reset from wiping our seeded date/run
+        suppressModeResetRef.current = true;
+        setPendingMode(nextMode);
+        setPendingDate(nextDate);
+        setPendingRun(latest);
+
+        // Allow the "auto-apply" effect to run with the seeded selection
+        setHasAppliedInitial(false);
+      } catch (e) {
+        // Non-fatal; UI will fall back to existing run-dates logic
+        // eslint-disable-next-line no-console
+        console.error('latest snapshot fetch failed', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <Paper sx={{ p: 2, width: '100%', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -439,7 +489,7 @@ export default function Screener() {
           </Button>
           <Menu
             anchorEl={exportAnchorEl}
-            open={exportMenuOpen}
+            open={Boolean(exportAnchorEl)}
             onClose={handleCloseExportMenu}
             anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
           >

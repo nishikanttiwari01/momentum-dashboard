@@ -11,17 +11,17 @@ import {
   DialogActions,
   Button,
   TextField,
-  Tabs,           // ⬅️ added
-  Tab,            // ⬅️ added
-  List,           // ⬅️ added
-  ListItem,       // ⬅️ added
-  ListItemText,   // ⬅️ added
-  Link,           // ⬅️ added
-  CircularProgress, // ⬅️ added
+  Tabs,
+  Tab,
+  List,
+  ListItem,
+  ListItemText,
+  Link,
+  CircularProgress,
 } from '@mui/material';
 import type { DrawerDetail } from '@/lib/api/types';
-import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks'; // ⬅️ updated to use infinite news hook
-import type { NewsCard } from '@/lib/api/types'; // ⬅️ uses your generated type index re-export
+import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks';
+import type { NewsCard } from '@/lib/api/types';
 import { drawerPaperSx } from './styles';
 
 import DrawerHeader from './DrawerHeader';
@@ -34,7 +34,15 @@ import Meters from './Meters';
 import NextAction from './NextAction';
 import AlertsRow from './AlertsRow';
 
-type Props = { symbol: string | null; open: boolean; onClose: () => void };
+type Props = {
+  symbol: string | null;
+  open: boolean;
+  onClose: () => void;
+  /** Intraday snapshot (when present) */
+  runId?: string;
+  /** EOD snapshot date (YYYY-MM-DD). Used when runId is not provided. */
+  asOf?: string;
+};
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
@@ -63,15 +71,31 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function RightDrawer({ symbol, open, onClose }: Props) {
+export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Props) {
   const sym = symbol || '';
   const enabled = Boolean(open && sym);
 
+  // Build query params for the detail API: prefer intraday run_id, else EOD as_of
+  const detailParams = React.useMemo(() => {
+    return {
+      run_id: runId || undefined,
+      as_of: !runId && asOf ? asOf : undefined,
+    };
+  }, [runId, asOf]);
+
+  // Pass snapshot context to the hook (it supports params as 2nd arg in our app)
   const { data, isFetching, error, refetch: refetchDetail } = useInstrumentDetail(
     sym,
-    undefined,
+    detailParams as any,
     { enabled, staleTimeMs: 60_000 }
   );
+
+  // Refetch when snapshot context changes (while drawer stays open)
+  React.useEffect(() => {
+    if (!enabled) return;
+    refetchDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, sym, runId, asOf]);
 
   const { data: position, refetch: refetchPosition } = usePosition(sym, { enabled });
 
@@ -87,7 +111,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
 
   const pctToday =
     header?.pct_1d ?? d?.pct_today ?? d?.change_pct_1d ?? d?.change_pct;
-  const runId = d?.run_id ?? d?.resolved_run_id;
+  const runIdResolved = d?.run_id ?? d?.resolved_run_id;
 
   const normalizeBadgeLabel = (b: any): string =>
     String(b?.label ?? b?.text ?? b?.code ?? (typeof b === 'number' ? b : b ?? ''));
@@ -370,12 +394,11 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
           sector={header?.sector ?? d?.sector}
           price={header?.price ?? d?.price}
           pctToday={pctToday}
-          runId={runId}
+          runId={runIdResolved}
           badges={badges}
           onClose={onClose}
         />
 
-        {/* ⬇️ Tabs added */}
         <Tabs value={tab} onChange={handleTab} variant="fullWidth" sx={{ mt: 0.5 }}>
           <Tab label="Overview" />
           <Tab label="News" />
@@ -384,7 +407,7 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
 
       {/* BODY */}
       <Box sx={{ px: 3, py: 2, overflowY: 'auto' }}>
-        {/* OVERVIEW tab: your existing content remains untouched */}
+        {/* OVERVIEW tab */}
         {tab === 0 && (
           <React.Fragment>
             <Sparkline data={d?.sparkline as any} height={200} />
@@ -456,11 +479,9 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
               locked={locked}
               trade_on={tradeOn}
               qty={qtyServer ?? undefined}
-              // do NOT auto-lock on toggle
               onTradeChange={(on) => {
                 if (on) {
                   setTradeOn(true);
-                  // if turning on with empty entry, seed suggestion (2 dp)
                   if (!entryPrice) setEntryPrice(computeSuggestedPriceStr());
                 } else {
                   if (locked) setAskConfirm(true);
@@ -473,11 +494,9 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
                 setEntryPrice(cleaned);
               }}
               onQtyChange={(v) => setQtyLocal(v)}
-              // hide any internal “Lock Entry” button inside EntryModule
               showLockEntryButton={false}
             />
 
-            {/* Only show our explicit Lock button when trade is ON but not yet locked */}
             {tradeOn && !locked && (
               <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
                 <Button variant="contained" onClick={lockNow}>
@@ -486,7 +505,6 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
                 <Button
                   variant="outlined"
                   onClick={() => {
-                    // cancel staging (turn off without API)
                     setTradeOn(false);
                   }}
                 >
@@ -520,14 +538,14 @@ export default function RightDrawer({ symbol, open, onClose }: Props) {
               {d?.as_of || header?.as_of ? `As of ${new Date(d?.as_of ?? header?.as_of).toLocaleString()}` : ''}
               {isFetching ? ' · refreshing…' : ''}
               {d?.trading_day ? ` · ${d.trading_day}` : ''}
-              {runId ? ` · Run ${runId}` : ''}
+              {runIdResolved ? ` · Run ${runIdResolved}` : ''}
               {d?.symbol_canon ? ` · ${d.symbol_canon}` : ''}
               {error ? ` · ${(error as any)?.message || 'Failed to load details.'}` : ''}
             </Box>
           </React.Fragment>
         )}
 
-        {/* NEWS tab: minimal, clean rendering */}
+        {/* NEWS tab */}
         {tab === 1 && (
           <React.Fragment>
             {isInitialNewsLoading ? (

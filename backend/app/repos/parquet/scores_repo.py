@@ -14,13 +14,14 @@ from app.repos.parquet import datasets
 
 # ---------------------------------------------------------------------------
 # Phase-11 → Phase-12 reader bridge (minimal changes, better logging):
-#   - Prefer latest INTRADAY (today) when run_id is not provided.
-#   - Otherwise fall back to latest DAILY (≤ today).
+#   - Prefer latest DAILY (today) when run_id/as_of not provided.
+#   - Else prefer latest INTRADAY (today).
+#   - Else fall back to latest DAILY (≤ today).
 #   - Legacy fallback is NOW DISABLED by default to avoid confusion.
 #       * Set ALLOW_LEGACY_SCORES_READ=1 to re-enable legacy fallback.
 #   - If run_id is explicitly given, continue to read legacy 'scores/run_id=*'.
 #   - Enrich name/sector from 'universe/' if missing.
-#   - NEW (Oct 2025): If client sends `as_of`, honor that exact daily snapshot.
+#   - If client sends `as_of`, honor that exact daily snapshot.
 # ---------------------------------------------------------------------------
 
 log = logging.getLogger("app.repos.parquet.scores_repo")
@@ -67,21 +68,26 @@ def _resolve_snapshot(as_of_str: Optional[str]) -> Tuple[str, Dict[str, str], Op
                {"run_id": "..."} for legacy,
                {} for none.
     """
-    # 1) Prefer latest intraday for today
     today = _today_local_str()
+
+    # 1) Prefer DAILY for **today** if it exists (EOD supersedes intraday)
+    as_of_today_or_before = datasets.latest_daily_at_or_before(today)
+    if as_of_today_or_before == today:
+        log.info("scores_resolve_snapshot", extra={"kind": "daily", "as_of": today, "reason": "today_eod_exists"})
+        return "daily", {"as_of": today}, None, today
+
+    # 2) Else prefer latest INTRADAY for today (when no EOD today yet)
     rid_intra = datasets.latest_intraday(today)
     if rid_intra:
-        log.info("scores_resolve_snapshot", extra={"kind": "intraday", "date": today, "run_id": rid_intra})
+        log.info("scores_resolve_snapshot", extra={"kind": "intraday", "date": today, "run_id": rid_intra, "reason": "today_intraday"})
         return "intraday", {"date": today, "run_id": rid_intra}, rid_intra, None
 
-    # 2) Else choose latest daily at or before today
-    as_of = datasets.latest_daily_at_or_before(today)
-    if as_of:
-        log.info("scores_resolve_snapshot", extra={"kind": "daily", "as_of": as_of})
-        # We can return as_of; run_id is embedded in files but not required for scanning.
-        return "daily", {"as_of": as_of}, None, as_of
+    # 3) Else choose latest DAILY at or before today (likely yesterday EOD)
+    if as_of_today_or_before:
+        log.info("scores_resolve_snapshot", extra={"kind": "daily", "as_of": as_of_today_or_before, "reason": "fallback_daily_le_today"})
+        return "daily", {"as_of": as_of_today_or_before}, None, as_of_today_or_before
 
-    # 3) Else (optionally) fall back to legacy
+    # 4) Else (optionally) fall back to legacy
     rid_legacy, as_of_legacy = _resolve_run_legacy(as_of_str)
     if rid_legacy and _ALLOW_LEGACY_FALLBACK:
         log.info("scores_resolve_snapshot", extra={"kind": "legacy", "run_id": rid_legacy})
@@ -206,13 +212,16 @@ _P11_ALIASES = {
 
 class ScoresRepo:
     """
-    Screener reader with intraday-first, daily-fallback resolution:
+    Screener reader with EOD-first resolution:
+      - If `as_of` is provided → read that exact DAILY snapshot.
       - When run_id is given → read explicit snapshot (intraday/daily, legacy as fallback).
-      - When run_id is None → prefer latest intraday (today), else latest daily (≤ today).
-      - Legacy fallback is disabled by default to avoid confusion (set ALLOW_LEGACY_SCORES_READ=1 to re-enable).
+      - When neither is provided:
+          * DAILY(today) if present,
+          * else INTRADAY(today),
+          * else DAILY(≤ today).
+      - Legacy fallback is disabled by default (set ALLOW_LEGACY_SCORES_READ=1 to re-enable).
       - Enriches name/sector from universe if missing in snapshot.
       - Canonicalizes 'score' and badges.
-      - NEW: If `as_of` is provided, always read that exact daily snapshot.
     """
 
     @staticmethod
@@ -245,7 +254,7 @@ class ScoresRepo:
         rid_used: Optional[str] = None
         tab: pa.Table | None = None
 
-        # --- NEW: exact daily snapshot when as_of is explicitly provided (and no run_id)
+        # --- Exact DAILY snapshot when as_of is explicitly provided (and no run_id)
         if as_of_str and not run_id:
             try:
                 log.info("scores_read_resolve", extra={"kind": "daily(explicit-as_of)", "as_of": as_of_str})
@@ -341,15 +350,12 @@ class ScoresRepo:
                 if alias in row and canon not in row:
                     row[canon] = row.get(alias)
 
-            # If both are None, keep whatever 'score' exists (legacy), else None
             # Canonical score: full → basic_normalized → basic (legacy)
             if row.get("score_full") is not None:
                 row["score"] = row["score_full"]
             elif row.get("score_basic_normalized") is not None:
                 row["score"] = row["score_basic_normalized"]
             elif row.get("score_basic") is not None:
-                # Older snapshots may only have score_basic.
-                # Treat it as canonical if it looks like a 0..100 value.
                 try:
                     row["score"] = int(float(row["score_basic"]))
                 except Exception:
@@ -424,23 +430,32 @@ class ScoresRepo:
 
     def latest_run(self) -> Tuple[Optional[str], Optional[str]]:
         """
-        Return the latest available snapshot:
-          - intraday(today) if present,
+        Return the latest available snapshot with EOD > Intraday precedence:
+          - daily(today) if present,
+          - else intraday(today),
           - else daily(≤ today),
           - else (optionally) legacy latest if ALLOW_LEGACY_SCORES_READ=1.
         """
         today = _today_local_str()
+
+        # daily(today)?
+        as_of_today_or_before = datasets.latest_daily_at_or_before(today)
+        if as_of_today_or_before == today:
+            log.info("scores_latest_run", extra={"kind": "daily", "as_of": today, "reason": "today_eod_exists"})
+            return None, today
+
+        # intraday(today)?
         rid_intra = datasets.latest_intraday(today)
         if rid_intra:
             log.info("scores_latest_run", extra={"kind": "intraday", "date": today, "run_id": rid_intra})
             return rid_intra, None
 
-        as_of = datasets.latest_daily_at_or_before(today)
-        if as_of:
-            log.info("scores_latest_run", extra={"kind": "daily", "as_of": as_of})
-            # We don't need run_id to identify daily partitions; report as_of.
-            return None, as_of
+        # latest daily ≤ today (yesterday or earlier)
+        if as_of_today_or_before:
+            log.info("scores_latest_run", extra={"kind": "daily", "as_of": as_of_today_or_before})
+            return None, as_of_today_or_before
 
+        # legacy (optional)
         rid_legacy, as_of_legacy = _resolve_run_legacy(None)
         if rid_legacy and _ALLOW_LEGACY_FALLBACK:
             log.info("scores_latest_run", extra={"kind": "legacy", "run_id": rid_legacy})

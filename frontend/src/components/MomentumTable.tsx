@@ -465,7 +465,15 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
           if (sym) openDrawerFor(sym);
         }}
       />
-      <RightDrawer symbol={drawerSymbol} open={drawerOpen} onClose={closeDrawer} />
+      {/* ⬇️ pass snapshot context into the drawer and key it so it refreshes when snapshot changes */}
+      <RightDrawer
+        key={`${drawerSymbol ?? 'none'}-${runId ?? 'noRid'}-${asOf ?? 'noAsOf'}`}
+        symbol={drawerSymbol}
+        open={drawerOpen}
+        onClose={closeDrawer}
+        runId={runId}
+        asOf={asOf}
+      />
     </Box>
   );
 }

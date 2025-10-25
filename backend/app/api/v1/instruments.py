@@ -46,47 +46,59 @@ def _deps_runtime() -> DetailDeps:
 )
 def get_instrument_detail(
     symbol: str = Path(..., description="Canonical ticker (e.g., RELIANCE.NS)"),
-    run_id: Optional[str] = Query(None, description="Snapshot run_id; absent → pinned or latest"),
+    run_id: Optional[str] = Query(None, description="Snapshot run_id (intraday). If provided, takes precedence."),
+    as_of: Optional[str] = Query(None, description="EOD snapshot date YYYY-MM-DD. Used when run_id is not provided."),
     deps: DetailDeps = Depends(_deps_runtime),
 ) -> DrawerDetail:
     # Normalize symbol for robustness against case/format drift
     canonical_symbol = (symbol or "").strip().upper()
 
-    log.info("detail GET", extra={"symbol": canonical_symbol, "run_id_qp": run_id})
+    log.info("detail GET", extra={"symbol": canonical_symbol, "run_id_qp": run_id, "as_of_qp": as_of})
 
-    # 1) Primary resolution path (existing behavior)
-    resolved_run_id, _as_of = _resolve_run_id(canonical_symbol, run_id, deps)
-    log.info("detail resolved_run_id(primary)", extra={"run_id": resolved_run_id, "as_of": _as_of})
+    # --- Resolution order: run_id (intraday) → as_of (EOD) → pinned/latest fallback ---
+    resolved_run_id: Optional[str] = None
+    resolved_as_of: Optional[str] = None
 
-    # 2) Fallbacks when run_id is still not resolved
-    if resolved_run_id is None:
-        sr = deps.scores_repo
-        try:
-            # 2a) Repo-level latest (returns rid or as_of depending on snapshot kind)
-            rid_latest = asof_latest = None
-            if hasattr(sr, "latest_run"):
-                rid_latest, asof_latest = sr.latest_run()  # type: ignore[attr-defined]
-                log.info("detail resolved_latest", extra={"run_id": rid_latest, "as_of": asof_latest})
+    if (run_id or "").strip():
+        resolved_run_id = (run_id or "").strip()
+        resolved_as_of = None
+    elif (as_of or "").strip():
+        resolved_run_id = None
+        resolved_as_of = (as_of or "").strip()
+    else:
+        # Primary existing behavior (can return run_id or as_of depending on latest)
+        rid, asof_val = _resolve_run_id(canonical_symbol, run_id, deps)
+        resolved_run_id = rid
+        resolved_as_of = asof_val
+        log.info("detail resolved_run_id(primary)", extra={"run_id": resolved_run_id, "as_of": resolved_as_of})
 
-            # 2b) If still no run_id, try a symbol-scoped read (new layout resolver inside repo)
-            if resolved_run_id is None:
+        # Fallbacks when still unresolved
+        if resolved_run_id is None and resolved_as_of is None:
+            sr = deps.scores_repo
+            try:
+                # Try repo.latest_run() for a quick hint
+                rid_latest = asof_latest = None
+                if hasattr(sr, "latest_run"):
+                    rid_latest, asof_latest = sr.latest_run()  # type: ignore[attr-defined]
+                    log.info("detail resolved_latest", extra={"run_id": rid_latest, "as_of": asof_latest})
+
+                # Symbol-scoped read (repo resolver inside read)
                 try:
                     items, total, rid_used, asof_used = sr.read(
                         run_id=None,
                         as_of_str=None,
-                        # IMPORTANT: tuple-op filter matches repo API ({("field","op"): value})
-                        filters={( "symbol", "eq"): canonical_symbol},
+                        filters={("symbol", "eq"): canonical_symbol},  # tuple-op filter per repo API
                         sort=None,
                         page=1,
                         per_page=1,
                         columns=None,
                     )
                 except TypeError:
-                    # Legacy signature (page_size) or older filters — retain compat
+                    # Legacy signature (page_size) — retain compatibility
                     items, total, rid_used, asof_used = sr.read(
                         run_id=None,
                         as_of_str=None,
-                        filters={( "symbol", "eq"): canonical_symbol},
+                        filters={("symbol", "eq"): canonical_symbol},
                         sort=None,
                         page=1,
                         page_size=1,  # legacy arg name
@@ -98,27 +110,33 @@ def get_instrument_detail(
                     extra={"rows": total, "rid_used": rid_used, "as_of": asof_used}
                 )
 
-                # Prefer the repo-resolved run_id if available; otherwise, stick with None
+                # Prefer repo-returned rid; else accept as_of (EOD path)
                 if rid_used:
                     resolved_run_id = rid_used
-                elif items and isinstance(items[0], dict):
-                    # Daily partitions may omit run_id; keep resolved_run_id=None, builder will need to handle via repo
+                elif asof_used:
+                    resolved_as_of = asof_used
+                elif rid_latest or asof_latest:
+                    resolved_run_id = rid_latest or None
+                    resolved_as_of = asof_latest or None
+
+                # As a last resort, if items[0] has a run_id field, use it
+                if not resolved_run_id and not resolved_as_of and items and isinstance(items[0], dict):
                     candidate_rid = items[0].get("run_id")
                     if candidate_rid:
                         resolved_run_id = candidate_rid
-        except Exception:
-            log.exception("detail fallback run_id resolution failed")
+            except Exception:
+                log.exception("detail fallback run_id/as_of resolution failed")
 
-    # 3) If still nothing resolvable, return a clean 404
-    if resolved_run_id is None:
+    # 404 if nothing resolvable
+    if resolved_run_id is None and not resolved_as_of:
         log.warning("detail 404: no snapshot", extra={"symbol": canonical_symbol})
         raise HTTPException(
             status_code=404,
             detail={"title": "Not Found", "detail": "No snapshot available"},
         )
 
-    # 4) Build raw dict first (builder currently expects a run_id; daily-only paths should be handled inside builder)
-    raw = build_drawer_detail(canonical_symbol, resolved_run_id, deps)
+    # Build detail for the resolved snapshot (run_id for intraday, as_of for EOD)
+    raw = build_drawer_detail(canonical_symbol, resolved_run_id, deps, as_of=resolved_as_of)
     log.info("detail built", extra={"keys": list(raw.keys())})
 
     # Hard clamp score_basic fields to contract bounds (defensive against legacy parquet values)
@@ -170,13 +188,13 @@ def get_instrument_detail(
             extra={"symbol": canonical_symbol, "score_breakdown": str(raw.get("score_breakdown"))},
         )
 
-    # 5) Validate explicitly so we log exact mismatches
+    # Validate explicitly so we log exact mismatches
     try:
         model = DrawerDetail.model_validate(raw)
     except ValidationError as ve:
         log.exception(
             "detail response-model validation failed",
-            extra={"symbol": canonical_symbol, "run_id": resolved_run_id, "errors": ve.errors()},
+            extra={"symbol": canonical_symbol, "run_id": resolved_run_id, "as_of": resolved_as_of, "errors": ve.errors()},
         )
         raise HTTPException(
             status_code=500,
