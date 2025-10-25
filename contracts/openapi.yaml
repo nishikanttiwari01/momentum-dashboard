@@ -224,6 +224,218 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TopMovers'
+  /api/v1/screener/run-dates:
+    get:
+      tags:
+      - Screener
+      summary: List available screener snapshot dates
+      operationId: getScreenerRunDates
+      description: >
+        Returns recent calendar dates that have committed screener snapshots.
+        Use `mode=intraday` to retrieve trading days with intraday runs, or `mode=eod`
+        for end-of-day snapshots.
+      parameters:
+      - name: mode
+        in: query
+        schema:
+          $ref: '#/components/schemas/ScreenerRunMode'
+          default: intraday
+        required: false
+        description: Snapshot category to inspect. Defaults to `intraday`.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 120
+          default: 30
+        required: false
+        description: Maximum number of dates to return (most recent first).
+      responses:
+        '200':
+          description: Available snapshot dates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenerRunDateList'
+              examples:
+                intraday:
+                  value:
+                    mode: intraday
+                    latest:
+                      mode: intraday
+                      trade_date: '2025-10-25'
+                      run_count: 4
+                      label: 'Sat 25 Oct'
+                    dates:
+                    - mode: intraday
+                      trade_date: '2025-10-25'
+                      run_count: 4
+                      label: 'Sat 25 Oct'
+                    - mode: intraday
+                      trade_date: '2025-10-24'
+                      run_count: 6
+                      label: 'Fri 24 Oct'
+                eod:
+                  value:
+                    mode: eod
+                    latest:
+                      mode: eod
+                      as_of: '2025-10-24'
+                      run_count: 1
+                      label: 'Fri 24 Oct'
+                    dates:
+                    - mode: eod
+                      as_of: '2025-10-24'
+                      run_count: 1
+                      label: 'Fri 24 Oct'
+                    - mode: eod
+                      as_of: '2025-10-23'
+                      run_count: 1
+                      label: 'Thu 23 Oct'
+  /api/v1/screener/runs:
+    get:
+      tags:
+      - Screener
+      summary: List screener runs for a specific date
+      operationId: getScreenerRuns
+      description: >
+        Enumerates screener runs for the requested snapshot category and trading date.
+        When `mode=intraday`, `trade_date` is required and the endpoint returns multiple
+        run identifiers ordered newest first. When `mode=eod`, `as_of` is required and
+        exactly one run (per day) is returned.
+      parameters:
+      - name: mode
+        in: query
+        schema:
+          $ref: '#/components/schemas/ScreenerRunMode'
+          default: intraday
+        required: false
+        description: Snapshot category to inspect.
+      - name: trade_date
+        in: query
+        schema:
+          type: string
+          format: date
+        required: false
+        description: Trading date (YYYY-MM-DD). Required when `mode=intraday`.
+      - name: as_of
+        in: query
+        schema:
+          type: string
+          format: date
+        required: false
+        description: End-of-day snapshot date (YYYY-MM-DD). Required when `mode=eod`.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 200
+          default: 25
+        required: false
+        description: Maximum number of runs to return (intraday only).
+      responses:
+        '200':
+          description: Runs for the requested bucket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScreenerRunList'
+              examples:
+                intraday:
+                  value:
+                    mode: intraday
+                    trade_date: '2025-10-25'
+                    latest:
+                      mode: intraday
+                      run_id: '20251025121500'
+                      trade_date: '2025-10-25'
+                      started_at: '2025-10-25T12:15:08Z'
+                      completed_at: '2025-10-25T12:15:28Z'
+                      label: '12:15 PM IST'
+                    items:
+                    - mode: intraday
+                      run_id: '20251025121500'
+                      trade_date: '2025-10-25'
+                      started_at: '2025-10-25T12:15:08Z'
+                      completed_at: '2025-10-25T12:15:28Z'
+                      label: '12:15 PM IST'
+                    - mode: intraday
+                      run_id: '20251025120000'
+                      trade_date: '2025-10-25'
+                      started_at: '2025-10-25T12:00:05Z'
+                      completed_at: '2025-10-25T12:00:24Z'
+                      label: '12:00 PM IST'
+                eod:
+                  value:
+                    mode: eod
+                    as_of: '2025-10-24'
+                    latest:
+                      mode: eod
+                      run_id: '20251024045523'
+                      as_of: '2025-10-24'
+                      label: 'Fri 24 Oct EOD'
+                    items:
+                    - mode: eod
+                      run_id: '20251024045523'
+                      as_of: '2025-10-24'
+                      started_at: '2025-10-24T04:55:00Z'
+                      completed_at: '2025-10-24T04:55:22Z'
+                      label: 'Fri 24 Oct EOD'
+  /api/v1/screener/export:
+    get:
+      tags:
+      - Screener
+      summary: Export a screener snapshot
+      operationId: exportScreenerSnapshot
+      description: >
+        Streams the full screener snapshot for the requested run. Provide either
+        `run_id` (intraday runs) or `as_of` (end-of-day snapshots). When both are
+        supplied, `run_id` takes precedence.
+      parameters:
+      - name: run_id
+        in: query
+        schema:
+          $ref: '#/components/schemas/RunId'
+        required: false
+        description: Intraday run identifier (YYYYMMDDHHmmss).
+      - name: as_of
+        in: query
+        schema:
+          type: string
+          format: date
+        required: false
+        description: End-of-day snapshot date (YYYY-MM-DD).
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - csv
+          - json
+          default: csv
+        required: false
+        description: Output format. Defaults to CSV.
+      responses:
+        '200':
+          description: Snapshot export
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScreenerRow'
+        '400':
+          description: Missing run identifier (`run_id` or `as_of` required)
+        '404':
+          description: Snapshot not found for the requested selection
 
 
   /api/v1/scan:
@@ -1740,6 +1952,117 @@ components:
           type: string
           nullable: true
           description: Run identifier used for this list
+    ScreenerRunMode:
+      type: string
+      enum:
+      - intraday
+      - eod
+      description: Snapshot category. Intraday captures within-session runs; EOD maps to end-of-day snapshots.
+    ScreenerRunDate:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/ScreenerRunMode'
+        trade_date:
+          type: string
+          format: date
+          nullable: true
+          description: Trading date (YYYY-MM-DD) for intraday snapshots.
+        as_of:
+          type: string
+          format: date
+          nullable: true
+          description: End-of-day snapshot date (YYYY-MM-DD).
+        label:
+          type: string
+          nullable: true
+          description: Short label suitable for dropdowns/calendars.
+        run_count:
+          type: integer
+          minimum: 0
+          description: Number of runs committed for this date.
+      required:
+      - mode
+      - run_count
+    ScreenerRunDateList:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/ScreenerRunMode'
+        latest:
+          allOf:
+          - $ref: '#/components/schemas/ScreenerRunDate'
+          nullable: true
+          description: Most recent date with a committed snapshot.
+        dates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreenerRunDate'
+      required:
+      - mode
+      - dates
+    ScreenerRunSummary:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/ScreenerRunMode'
+        run_id:
+          $ref: '#/components/schemas/RunId'
+          nullable: true
+          description: Snapshot run identifier (intraday or EOD where available).
+        trade_date:
+          type: string
+          format: date
+          nullable: true
+          description: Trading date (intraday).
+        as_of:
+          type: string
+          format: date
+          nullable: true
+          description: End-of-day snapshot date.
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC timestamp when the run started (if tracked).
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC timestamp when the run finished writing the snapshot.
+        label:
+          type: string
+          nullable: true
+          description: Human-friendly label (e.g., "12:15 PM IST" or "Fri 24 Oct EOD").
+      required:
+      - mode
+    ScreenerRunList:
+      type: object
+      properties:
+        mode:
+          $ref: '#/components/schemas/ScreenerRunMode'
+        trade_date:
+          type: string
+          format: date
+          nullable: true
+          description: Trading date associated with the returned runs (intraday).
+        as_of:
+          type: string
+          format: date
+          nullable: true
+          description: End-of-day date associated with the returned runs.
+        latest:
+          allOf:
+          - $ref: '#/components/schemas/ScreenerRunSummary'
+          nullable: true
+          description: Most recent run for the given selection.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScreenerRunSummary'
+      required:
+      - mode
+      - items
     TopMovers:
       type: object
       required: [period, generated_at, gainers, losers]

@@ -20,6 +20,8 @@ interface MomentumTableProps {
   onSelectSymbol?: (symbol: string) => void;
   symbolFilter?: string;
   height?: number | string;
+  runId?: string;
+  asOf?: string;
 }
 const MAX_PAGE_SIZE = 100; // MUI X MIT cap
 
@@ -216,7 +218,7 @@ const num = (v: any): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbol, symbolFilter, height }: MomentumTableProps) {
+export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbol, symbolFilter, height, runId, asOf }: MomentumTableProps) {
   const [pagination, setPagination] = React.useState<GridPaginationModel>({ page: 0, pageSize: 25 });
   const [sortModel, setSortModel] = React.useState<GridSortModel>([]);
 
@@ -264,12 +266,17 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
     if (sym) {
       p.symbol = sym.toUpperCase();
     }
+    if (runId) {
+      (p as any).run_id = runId;
+    } else if (asOf) {
+      (p as any).as_of = asOf;
+    }
     return p;
-  }, [pagination.page, pagination.pageSize, sortModel, symbolFilter]);
+  }, [asOf, pagination.page, pagination.pageSize, runId, sortModel, symbolFilter]);
 
   React.useEffect(() => {
     setPagination((prev) => (prev.page === 0 ? prev : { ...prev, page: 0 }));
-  }, [symbolFilter]);
+  }, [symbolFilter, runId, asOf]);
 
   const query = useGetApiV1Screener(apiParams, {
     axios: { baseURL: '' },

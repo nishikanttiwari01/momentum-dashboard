@@ -20,6 +20,7 @@ from app.repos.parquet import datasets
 #       * Set ALLOW_LEGACY_SCORES_READ=1 to re-enable legacy fallback.
 #   - If run_id is explicitly given, continue to read legacy 'scores/run_id=*'.
 #   - Enrich name/sector from 'universe/' if missing.
+#   - NEW (Oct 2025): If client sends `as_of`, honor that exact daily snapshot.
 # ---------------------------------------------------------------------------
 
 log = logging.getLogger("app.repos.parquet.scores_repo")
@@ -37,7 +38,6 @@ def _run_id_to_date(run_id: str | None) -> Optional[str]:
         return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
     except Exception:
         return None
-
 
 
 _ALLOW_LEGACY_FALLBACK = os.getenv("ALLOW_LEGACY_SCORES_READ", "0").lower() in ("1", "true", "yes")
@@ -212,6 +212,7 @@ class ScoresRepo:
       - Legacy fallback is disabled by default to avoid confusion (set ALLOW_LEGACY_SCORES_READ=1 to re-enable).
       - Enriches name/sector from universe if missing in snapshot.
       - Canonicalizes 'score' and badges.
+      - NEW: If `as_of` is provided, always read that exact daily snapshot.
     """
 
     @staticmethod
@@ -241,8 +242,19 @@ class ScoresRepo:
 
         # 1) Resolve what to read
         resolved_as_of: Optional[str] = None
+        rid_used: Optional[str] = None
+        tab: pa.Table | None = None
 
-        if run_id:
+        # --- NEW: exact daily snapshot when as_of is explicitly provided (and no run_id)
+        if as_of_str and not run_id:
+            try:
+                log.info("scores_read_resolve", extra={"kind": "daily(explicit-as_of)", "as_of": as_of_str})
+            except Exception:
+                pass
+            tab = datasets.scan_scores_daily(as_of_str, columns=None)
+            resolved_as_of = as_of_str
+
+        elif run_id:
             rid_used = run_id
             date_hint = _run_id_to_date(run_id)
             tab = None

@@ -51,6 +51,10 @@ class StorageCfg(BaseModel):
     write_statistics: bool = True
     write_temp_dir: Optional[str] = None
 
+class BackfillRuntimeCfg(BaseModel):
+    # Housekeeping for parquet intraday partitions; keeps recent history only.
+    intraday_retention_days: int = Field(default=15, ge=1)
+
 
 # ----------------- NEW sections (Phase 10) -----------------
 # Minimal, focused config blocks to avoid "magic strings" in code and keep YAML-first design.
@@ -136,6 +140,7 @@ class Settings(BaseModel):
     logging: LoggingCfg = LoggingCfg()
     server: ServerCfg = ServerCfg()
     storage: StorageCfg = StorageCfg()
+    backfill_runtime: BackfillRuntimeCfg = BackfillRuntimeCfg()
     # NEW sections (Phase 10)
     screener: ScreenerCfg = ScreenerCfg()
     scheduler: SchedulerCfg = SchedulerCfg()

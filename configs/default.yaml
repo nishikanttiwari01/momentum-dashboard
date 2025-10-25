@@ -20,6 +20,10 @@ storage:
   compression: zstd
   use_dictionary: true
   write_statistics: true
+
+backfill_runtime:
+  intraday_retention_days: 15
+
 screener:
   default_universe: NIFTY50  #NIFTY50 ALL
 scheduler:

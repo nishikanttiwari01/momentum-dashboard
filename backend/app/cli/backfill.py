@@ -35,6 +35,8 @@ API = os.getenv("MD_API", "http://127.0.0.1:8000")
 
 log = logging.getLogger(__name__)
 
+DEFAULT_INTRADAY_RETENTION_DAYS = 15
+
 def _setup_logging() -> None:
     if getattr(_setup_logging, "_configured", False):
         return
@@ -243,6 +245,63 @@ def _wait_for_daily_visible(as_of: date, max_wait_sec: int = 25, step_sec: float
     return _daily_partition_committed(as_of) or _daily_partition_has_parquet(as_of)
 # -----------------------------------------------------------------------------
 
+def _prune_intraday_history(retention_days: int, *, reference_date: date | None = None) -> None:
+    """
+    Remove intraday partitions older than the retention window.
+    """
+    try:
+        days = int(retention_days)
+    except (TypeError, ValueError):
+        log.warning("intraday_retention_invalid", extra={"value": retention_days})
+        return
+    if days < 1:
+        log.warning("intraday_retention_out_of_range", extra={"value": days})
+        return
+
+    base = _parquet_root_abs() / "scores" / "intraday"
+    if not base.exists():
+        return
+
+    ref = reference_date or date.today()
+    cutoff = ref - timedelta(days=days)
+
+    for child in list(base.iterdir()):
+        if not child.is_dir():
+            continue
+        folder_name = child.name
+        date_str: Optional[str] = None
+        for prefix in ("date=", "as_of="):
+            if folder_name.startswith(prefix):
+                date_str = folder_name[len(prefix):]
+                break
+        if not date_str:
+            continue
+        try:
+            partition_date = date.fromisoformat(date_str)
+        except ValueError:
+            continue
+        if partition_date < cutoff:
+            try:
+                shutil.rmtree(child)
+                log.info(
+                    "intraday_history_pruned",
+                    extra={
+                        "path": str(child),
+                        "partition_date": partition_date.isoformat(),
+                        "cutoff": cutoff.isoformat(),
+                        "retention_days": days,
+                    },
+                )
+            except Exception:
+                log.exception(
+                    "intraday_history_prune_failed",
+                    extra={
+                        "path": str(child),
+                        "partition_date": partition_date.isoformat(),
+                        "retention_days": days,
+                    },
+                )
+
 
 def _delete_intraday_partition(as_of: date) -> None:
     base = _parquet_root_abs() / "scores" / "intraday"
@@ -283,6 +342,33 @@ def _trigger_util_exports(as_of: date) -> None:
         log.info('export_screener_success', extra={**extra, 'output': str(screener_path)})
     except Exception:
         log.exception('export_screener_failed', extra=extra)
+
+
+# --- Housekeeping config helpers --------------------------------------------
+def _intraday_retention_days() -> int:
+    value = DEFAULT_INTRADAY_RETENTION_DAYS
+    try:
+        settings = _cfg_mod.load()
+        runtime_cfg = getattr(settings, "backfill_runtime", None)
+        candidate: Any = None
+        if isinstance(runtime_cfg, dict):
+            candidate = runtime_cfg.get("intraday_retention_days")
+        elif runtime_cfg is not None:
+            candidate = getattr(runtime_cfg, "intraday_retention_days", None)
+        if candidate is None:
+            return value
+        try:
+            days = int(candidate)
+        except (TypeError, ValueError):
+            log.warning("intraday_retention_invalid", extra={"value": candidate})
+            return value
+        if days < 1:
+            log.warning("intraday_retention_out_of_range", extra={"value": days})
+            return value
+        return days
+    except Exception as e:
+        log.warning("intraday_retention_resolve_failed", extra={"error": str(e)})
+        return value
 
 
 # === NEW: Alerts helpers (self-contained, non-invasive) =======================
@@ -503,6 +589,8 @@ def main(argv: list[str] | None = None) -> int:
 
     today = date.today()
     yesterday = today - timedelta(days=1)
+    retention_days = _intraday_retention_days()
+    _prune_intraday_history(retention_days, reference_date=today)
 
     start = cfg.start or (today - timedelta(days=int(cfg.months_back * 365 / 12) + 30))
     end = cfg.end or yesterday
@@ -655,6 +743,7 @@ def main(argv: list[str] | None = None) -> int:
             if d not in cleaned_intraday and _daily_partition_has_parquet(d):
                 _delete_intraday_partition(d)
                 cleaned_intraday.add(d)
+                _prune_intraday_history(retention_days, reference_date=today)
             # after cleanup for that day...
             # ✉️ Send digest email for this day (best-effort, guarded by YAML flags)
             try:
@@ -667,6 +756,8 @@ def main(argv: list[str] | None = None) -> int:
             log.exception("day_failed", extra={"date": d.isoformat()})
             failures.append(f"{d}")
         time.sleep(cfg.sleep_between_sec)
+
+    _prune_intraday_history(retention_days, reference_date=today)
 
     log.info("backfill_done", extra={"days": total_days, "skipped": skipped_days, "failures": len(failures), "total_rows": total_rows})
 

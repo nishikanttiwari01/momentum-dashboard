@@ -28,6 +28,7 @@ import type {
   AddToWatchlistBody,
   AlertEvent,
   DrawerDetail,
+  ExportScreenerSnapshotParams,
   GetApiV1InstrumentsSymbolDetailParams,
   GetApiV1PositionsParams,
   GetApiV1ScreenerParams,
@@ -35,6 +36,8 @@ import type {
   GetInstrumentPricesParams,
   GetLearning200,
   GetMomentumHeatmapParams,
+  GetScreenerRunDatesParams,
+  GetScreenerRunsParams,
   GetTopMoversParams,
   GetWatchlist200,
   HealthState,
@@ -67,6 +70,9 @@ import type {
   RunId,
   ScanRequest,
   ScreenerList,
+  ScreenerRow,
+  ScreenerRunDateList,
+  ScreenerRunList,
   SectorFacet,
   Settings,
   SnapshotPinIn,
@@ -424,6 +430,195 @@ export const useGetTopMovers = <TData = Awaited<ReturnType<typeof getTopMovers>>
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
   const queryOptions = getGetTopMoversQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Returns recent calendar dates that have committed screener snapshots. Use `mode=intraday` to retrieve trading days with intraday runs, or `mode=eod` for end-of-day snapshots.
+
+ * @summary List available screener snapshot dates
+ */
+export const getScreenerRunDates = (
+    params?: GetScreenerRunDatesParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ScreenerRunDateList>> => {
+    
+    return axios.default.get(
+      `/api/v1/screener/run-dates`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getGetScreenerRunDatesQueryKey = (params?: GetScreenerRunDatesParams,) => {
+    return [`/api/v1/screener/run-dates`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getGetScreenerRunDatesQueryOptions = <TData = Awaited<ReturnType<typeof getScreenerRunDates>>, TError = AxiosError<unknown>>(params?: GetScreenerRunDatesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScreenerRunDates>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScreenerRunDatesQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScreenerRunDates>>> = ({ signal }) => getScreenerRunDates(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScreenerRunDates>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScreenerRunDatesQueryResult = NonNullable<Awaited<ReturnType<typeof getScreenerRunDates>>>
+export type GetScreenerRunDatesQueryError = AxiosError<unknown>
+
+/**
+ * @summary List available screener snapshot dates
+ */
+export const useGetScreenerRunDates = <TData = Awaited<ReturnType<typeof getScreenerRunDates>>, TError = AxiosError<unknown>>(
+ params?: GetScreenerRunDatesParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScreenerRunDates>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getGetScreenerRunDatesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Enumerates screener runs for the requested snapshot category and trading date. When `mode=intraday`, `trade_date` is required and the endpoint returns multiple run identifiers ordered newest first. When `mode=eod`, `as_of` is required and exactly one run (per day) is returned.
+
+ * @summary List screener runs for a specific date
+ */
+export const getScreenerRuns = (
+    params?: GetScreenerRunsParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<ScreenerRunList>> => {
+    
+    return axios.default.get(
+      `/api/v1/screener/runs`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getGetScreenerRunsQueryKey = (params?: GetScreenerRunsParams,) => {
+    return [`/api/v1/screener/runs`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getGetScreenerRunsQueryOptions = <TData = Awaited<ReturnType<typeof getScreenerRuns>>, TError = AxiosError<unknown>>(params?: GetScreenerRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScreenerRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScreenerRunsQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScreenerRuns>>> = ({ signal }) => getScreenerRuns(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScreenerRuns>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScreenerRunsQueryResult = NonNullable<Awaited<ReturnType<typeof getScreenerRuns>>>
+export type GetScreenerRunsQueryError = AxiosError<unknown>
+
+/**
+ * @summary List screener runs for a specific date
+ */
+export const useGetScreenerRuns = <TData = Awaited<ReturnType<typeof getScreenerRuns>>, TError = AxiosError<unknown>>(
+ params?: GetScreenerRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScreenerRuns>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getGetScreenerRunsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Streams the full screener snapshot for the requested run. Provide either `run_id` (intraday runs) or `as_of` (end-of-day snapshots). When both are supplied, `run_id` takes precedence.
+
+ * @summary Export a screener snapshot
+ */
+export const exportScreenerSnapshot = (
+    params?: ExportScreenerSnapshotParams, options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<Blob | ScreenerRow[]>> => {
+    
+    return axios.default.get(
+      `/api/v1/screener/export`,{
+    ...options,
+        params: {...params, ...options?.params},}
+    );
+  }
+
+
+export const getExportScreenerSnapshotQueryKey = (params?: ExportScreenerSnapshotParams,) => {
+    return [`/api/v1/screener/export`, ...(params ? [params]: [])] as const;
+    }
+
+    
+export const getExportScreenerSnapshotQueryOptions = <TData = Awaited<ReturnType<typeof exportScreenerSnapshot>>, TError = AxiosError<void>>(params?: ExportScreenerSnapshotParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportScreenerSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getExportScreenerSnapshotQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportScreenerSnapshot>>> = ({ signal }) => exportScreenerSnapshot(params, { signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportScreenerSnapshot>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ExportScreenerSnapshotQueryResult = NonNullable<Awaited<ReturnType<typeof exportScreenerSnapshot>>>
+export type ExportScreenerSnapshotQueryError = AxiosError<void>
+
+/**
+ * @summary Export a screener snapshot
+ */
+export const useExportScreenerSnapshot = <TData = Awaited<ReturnType<typeof exportScreenerSnapshot>>, TError = AxiosError<void>>(
+ params?: ExportScreenerSnapshotParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportScreenerSnapshot>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getExportScreenerSnapshotQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
