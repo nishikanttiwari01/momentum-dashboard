@@ -57,7 +57,7 @@ rules:
     min_relvol20: 0.8
     min_adx14: 22
     min_prox52w_pct: -10
-    require_base_len_bars: 5
+    require_base_len_bars: 15
     breakout_overrides_soft_gates: true
 features:
   momentum:
