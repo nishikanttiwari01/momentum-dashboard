@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional, Tuple, Union
+from typing import Iterable, Optional, Tuple, Union, List
 
 import pyarrow as pa
 import pyarrow.dataset as ds
@@ -531,6 +531,23 @@ def begin_atomic_write_scores_intraday(date_str: str, run_id: str, cfg: Optional
     except Exception:
         pass
     return AtomicWriter("scores", run_id, cfg or _writer_config_from_settings(), custom_final_dir=final_dir)
+
+def list_intraday_runs(date_str: str) -> List[str]:
+    """
+    Return all committed intraday run_ids for the given trading date, sorted ascending.
+    """
+    root = _table_root("scores") / "intraday" / f"date={date_str}"
+    if not root.exists():
+        return []
+    runs: List[str] = []
+    for child in root.glob("run_id=*"):
+        if not child.is_dir():
+            continue
+        rid = child.name.split("run_id=", 1)[-1]
+        if _is_valid_run_id(rid) and (child / "_SUCCESS").exists():
+            runs.append(rid)
+    runs.sort()
+    return runs
 
 def latest_intraday(date_str: str) -> Optional[str]:
     """

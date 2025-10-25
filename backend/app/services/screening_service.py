@@ -305,6 +305,150 @@ def _threshold_range(name: str, default: Tuple[float, float]) -> Tuple[float, fl
     return default
 
 
+BUY_ACTION_CODES = {"BUY_BREAKOUT", "BUY_PULLBACK", "BUY_STARTER"}
+
+
+def _resolve_persistence_config() -> Dict[str, Any]:
+    bars = 3
+    score_min = _threshold_float("starter_score_min_intraday", 65.0)
+    relvol_min = _threshold_float("intraday_relvol_min", 1.5)
+    prox_min = _threshold_float("proximity_52w_min_pct", -8.0)
+    return {
+        "bars": max(int(bars), 1),
+        "score_min": score_min,
+        "relvol_min": relvol_min,
+        "proximity_min": prox_min,
+        "require_buy_flag": False,
+        "require_action": True,
+        "require_pre_gates": True,
+        "require_above_pivot": True,
+    }
+
+
+def _normalize_persistence_snapshot(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    symbol = row.get("symbol")
+    if not symbol:
+        return None
+    relvol_val = row.get("intraday_relvol")
+    if relvol_val is None:
+        relvol_val = row.get("relvol20")
+    next_action = row.get("next_action") or row.get("next_action_code")
+    pre_raw = row.get("pre_gates_pass")
+    if isinstance(pre_raw, bool):
+        pre_bool = pre_raw
+    else:
+        pre_bool = str(pre_raw or "").strip().lower() in {"1", "true", "yes", "y"}
+    return {
+        "score": _maybe_float(row.get("score")),
+        "relvol": _maybe_float(relvol_val),
+        "proximity": _maybe_float(row.get("proximity_52w_high_pct") or row.get("pct_from_52w_high")),
+        "buy_flag": str(row.get("buy") or "").strip().upper(),
+        "next_action": str(next_action or "").strip().upper(),
+        "pre_gates_pass": pre_bool,
+        "pivot": _maybe_float(row.get("pivot_high_20")),
+        "last": _maybe_float(row.get("last")),
+    }
+
+
+def _compute_persistence_ok(
+    current_snapshot: Dict[str, Any],
+    history_snapshots: List[Dict[str, Any]],
+    cfg: Dict[str, Any],
+) -> bool:
+    bars_required = max(int(cfg.get("bars", 3)), 1)
+    if bars_required <= 1:
+        return True
+    window = list(history_snapshots[-(bars_required - 1) :])
+    window.append(current_snapshot)
+    if len(window) < bars_required:
+        return False
+
+    score_min = float(cfg.get("score_min", 0.0))
+    relvol_min = float(cfg.get("relvol_min", 0.0))
+    prox_min = float(cfg.get("proximity_min", -100.0))
+    require_buy_flag = bool(cfg.get("require_buy_flag", False))
+    require_action = bool(cfg.get("require_action", False))
+    require_pre_gates = bool(cfg.get("require_pre_gates", False))
+    require_above_pivot = bool(cfg.get("require_above_pivot", False))
+
+    for snap in window:
+        score = snap.get("score")
+        relvol = snap.get("relvol")
+        proximity = snap.get("proximity")
+        buy_flag = snap.get("buy_flag", "")
+        next_action = snap.get("next_action", "")
+        pre_gates = bool(snap.get("pre_gates_pass"))
+        pivot = snap.get("pivot")
+        last_price = snap.get("last")
+
+        if score is None or score < score_min:
+            return False
+        if relvol is None or relvol < relvol_min:
+            return False
+        if proximity is None or proximity < prox_min:
+            return False
+        if require_buy_flag and buy_flag != "YES":
+            return False
+        if require_action and next_action not in BUY_ACTION_CODES:
+            return False
+        if require_pre_gates and not pre_gates:
+            return False
+        if require_above_pivot and pivot is not None and last_price is not None and last_price < pivot:
+            return False
+    return True
+
+
+def _load_persistence_history(
+    date_str: Optional[str],
+    current_run_id: Optional[str],
+    bars_required: int,
+) -> Dict[str, List[Dict[str, Any]]]:
+    if not date_str or not current_run_id or bars_required <= 1:
+        return {}
+    try:
+        runs = datasets.list_intraday_runs(date_str)
+    except Exception:
+        runs = []
+    if not runs:
+        return {}
+    prior_runs = [rid for rid in runs if rid < str(current_run_id)]
+    if not prior_runs:
+        return {}
+    needed = prior_runs[-(bars_required - 1) :]
+    if not needed:
+        return {}
+    columns = [
+        "symbol",
+        "score",
+        "relvol20",
+        "intraday_relvol",
+        "proximity_52w_high_pct",
+        "pct_from_52w_high",
+        "buy",
+        "next_action",
+        "next_action_code",
+        "pre_gates_pass",
+        "pivot_high_20",
+        "last",
+    ]
+    history: Dict[str, List[Dict[str, Any]]] = {}
+    for rid in needed:
+        try:
+            table = datasets.scan_scores_intraday(date_str, rid, columns=columns)
+            records = table.to_pylist()
+        except Exception:
+            records = []
+        for rec in records:
+            sym = rec.get("symbol")
+            if not sym:
+                continue
+            snapshot = _normalize_persistence_snapshot(rec)
+            if snapshot is None:
+                continue
+            history.setdefault(str(sym), []).append(snapshot)
+    return history
+
+
 def _format_percent(value: Optional[float], decimals: int = 1, include_sign: bool = False) -> str:
     if value is None:
         return "NA"
@@ -467,6 +611,8 @@ def _make_scores_row(
     regime_hint: Optional[str] = None,
     asm_hint: Optional[bool] = None,
     is_eod_snapshot: bool = False,
+    persistence_history: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    persistence_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     # Build the final Screener row for this symbol (spec 2025-10-12A).
     last = float(df["close"].iloc[-1]) if not df.empty else None
@@ -722,6 +868,16 @@ def _make_scores_row(
         except Exception:
             row["liquidity"] = None
 
+    if not is_eod_snapshot:
+        history_snapshots = (persistence_history or {}).get(symbol, [])
+        current_snapshot = _normalize_persistence_snapshot({**row, "symbol": symbol})
+        if current_snapshot is not None and persistence_config:
+            row["persistence_ok"] = _compute_persistence_ok(current_snapshot, history_snapshots, persistence_config)
+        else:
+            row["persistence_ok"] = False
+    else:
+        row.setdefault("persistence_ok", None)
+
     buy_flag, buy_reason = _evaluate_buy_gate(row)
     row["buy"] = buy_flag
     if buy_flag == "No":
@@ -846,9 +1002,11 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         as_of_iso = now_utc.isoformat().replace("+00:00", "Z")
 
     intraday_date_override: Optional[str] = None
+    intraday_date_str: Optional[str] = None
     if not as_of_date:
         override_raw = payload.get("intraday_trading_date")
         intraday_date_override = _as_of_date_str(override_raw)
+        intraday_date_str = intraday_date_override or now_utc.date().strftime("%Y-%m-%d")
 
     universe = None
     if isinstance(payload.get("universe"), str):
@@ -936,6 +1094,20 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 ),
                 False,
             )
+
+    persistence_cfg: Optional[Dict[str, Any]] = None
+    persistence_history: Dict[str, List[Dict[str, Any]]] = {}
+    if not as_of_date:
+        persistence_cfg = _resolve_persistence_config()
+        bars_required = persistence_cfg.get("bars", 3) if persistence_cfg else 3
+        try:
+            persistence_history = _load_persistence_history(
+                intraday_date_str,
+                job.run_id,
+                int(bars_required),
+            )
+        except Exception:
+            persistence_history = {}
 
     symbols_processed = 0
     rows_written = 0
@@ -1052,6 +1224,8 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 regime_hint=nifty_regime_value,
                 asm_hint=asm_flag,
                 is_eod_snapshot=is_eod_snapshot,
+                persistence_history=None if is_eod_snapshot else persistence_history,
+                persistence_config=persistence_cfg,
             )
             if breadth_pct is not None:
                 row["breadth_pct_50dma"] = breadth_pct

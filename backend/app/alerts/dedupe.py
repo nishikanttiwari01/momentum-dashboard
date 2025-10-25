@@ -1,6 +1,6 @@
 from __future__ import annotations
-from sqlalchemy import text
-from datetime import datetime, timedelta
+from sqlalchemy import DateTime, text
+from datetime import datetime, timedelta, timezone
 import logging
 from .types import Mode
 
@@ -32,18 +32,32 @@ def in_cooldown(conn, rule_code: str, symbol: str, now_utc: datetime) -> bool:
     q = text("""
         SELECT cooldown_until_utc FROM alert_state
          WHERE rule_code=:rule_code AND symbol=:symbol
-    """)
+    """).columns(cooldown_until_utc=DateTime(timezone=True))
     row = conn.execute(q, {"rule_code": rule_code, "symbol": symbol}).first()
     if not row or row[0] is None:
         log.debug("in_cooldown rule=%s symbol=%s => False (no row)", rule_code, symbol)
         return False
-    in_cd = now_utc < row[0]
+    cooldown_until = row[0]
+    if isinstance(cooldown_until, str):
+        try:
+            cooldown_until = datetime.fromisoformat(cooldown_until.replace("Z", "+00:00"))
+        except ValueError:
+            log.warning(
+                "Failed to parse cooldown datetime for rule=%s symbol=%s value=%s",
+                rule_code,
+                symbol,
+                cooldown_until,
+            )
+            return False
+    if isinstance(cooldown_until, datetime) and cooldown_until.tzinfo is None:
+        cooldown_until = cooldown_until.replace(tzinfo=timezone.utc)
+    in_cd = isinstance(cooldown_until, datetime) and now_utc < cooldown_until
     log.debug(
         "in_cooldown rule=%s symbol=%s now=%s until=%s => %s",
         rule_code,
         symbol,
         now_utc,
-        row[0],
+        cooldown_until,
         in_cd,
     )
     return in_cd

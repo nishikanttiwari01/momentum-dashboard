@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Iterable, Dict, Any
 from datetime import datetime, date
 import logging
+import re
 
 from sqlalchemy.engine import Connection
 
@@ -34,6 +35,30 @@ def _resolve_templates(alerts_cfg: Dict[str, Any]) -> Dict[str, Any]:
 def _resolve_metadata(alerts_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return alerts_cfg.get("metadata", {}) if alerts_cfg else {}
 
+
+def _coerce_int(value, *, fallback: int, context: str) -> int:
+    if value is None:
+        return fallback
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return fallback
+        digits = re.findall(r"[-+]?\d+", cleaned)
+        if not digits:
+            log.warning("Invalid numeric config for %s=%r; using fallback=%s", context, value, fallback)
+            return fallback
+        joined = "".join(digits)
+        try:
+            return int(joined)
+        except ValueError:
+            log.warning("Failed to parse numeric config for %s=%r; using fallback=%s", context, value, fallback)
+            return fallback
+    log.warning("Unsupported numeric type for %s=%r (%s); using fallback=%s", context, value, type(value).__name__, fallback)
+    return fallback
 
 def run(
     conn: Connection,
@@ -72,9 +97,23 @@ def run(
             now_utc, tz, market_open, intraday_bar
         )
 
-    max_alerts_per_run = int((defaults.get("throttles") or {}).get("max_alerts_per_run", 999999))
-    max_per_symbol_day = int(
-        (defaults.get("throttles") or {}).get("max_alerts_per_symbol_day", 999999)
+    throttles_cfg = defaults.get("throttles") or {}
+    default_repeat_policy = defaults.get("repeat_policy") or {}
+    default_cooldown_minutes = _coerce_int(
+        default_repeat_policy.get("min_cooldown_minutes"),
+        fallback=0,
+        context="defaults.repeat_policy.min_cooldown_minutes",
+    )
+
+    max_alerts_per_run = _coerce_int(
+        throttles_cfg.get("max_alerts_per_run"),
+        fallback=999999,
+        context="throttles.max_alerts_per_run",
+    )
+    max_per_symbol_day = _coerce_int(
+        throttles_cfg.get("max_alerts_per_symbol_day"),
+        fallback=999999,
+        context="throttles.max_alerts_per_symbol_day",
     )
 
     created_ids: list[int] = []
@@ -214,11 +253,10 @@ def run(
             )
 
             # Cooldown (item override -> defaults)
-            cooldown_min = int(
-                (item.get("repeat_policy") or {}).get(
-                    "min_cooldown_minutes",
-                    (defaults.get("repeat_policy") or {}).get("min_cooldown_minutes", 0),
-                )
+            cooldown_min = _coerce_int(
+                (item.get("repeat_policy") or {}).get("min_cooldown_minutes"),
+                fallback=default_cooldown_minutes,
+                context=f"{rule_code}.repeat_policy.min_cooldown_minutes",
             )
             cooldown_until = None
             if cooldown_min > 0:

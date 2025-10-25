@@ -76,8 +76,8 @@ alerts:
       allow_intraday: false   # default = EOD only
       allow_eod: true
     repeat_policy:
-      repeat_within_day: false          # de-dupe per (code,symbol,day)
-      min_cooldown_minutes: 0           # intraday cooldown if repeat_within_day=true
+      repeat_within_day: false          # not in use - de-dupe per (code,symbol,day)
+      min_cooldown_minutes: 240            # intraday cooldown if repeat_within_day=true
     channels:                            # per-alert can override these
       ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
       email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
@@ -124,7 +124,7 @@ alerts:
   # Centralized thresholds so names don’t hard-code numbers
   # ---------------------------
   thresholds:
-    high_quality_score: 75     # used by QUALITY_SCORE_THRESHOLD
+    high_quality_score: 80     # used by QUALITY_SCORE_THRESHOLD
     breakout_score_min: 70
     pullback_score_min: 60
     starter_score_min_intraday: 65
@@ -402,13 +402,13 @@ alerts:
       filters:
         score_min: ${alerts.thresholds.high_quality_score}
       template:
-        title: "Watch — {{ symbol }} — QUALITY_SCORE_THRESHOLD"
+        title: "{{ symbol }} — QUALITY_SCORE_THRESHOLD"
         body: >
           Momentum score {{ score }} is above your quality bar. Review for
           potential entry or keep on the watchlist.
       channels:
         ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
+       # email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
 
   # ---------------------------
   # Templates for message rendering (fallback)

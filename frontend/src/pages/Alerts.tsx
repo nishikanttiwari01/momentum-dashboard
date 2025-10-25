@@ -64,7 +64,7 @@ export default function Alerts() {
   const today = React.useMemo(() => dayjs().format('YYYY-MM-DD'), []);
   const tz = React.useMemo(() => (typeof dayjs.tz === 'function' ? dayjs.tz.guess() : 'UTC'), []);
 
-  const [selectedDate, setSelectedDate] = React.useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = React.useState<string | null>(today);
   const [selectedEvent, setSelectedEvent] = React.useState<AlertEventListItem | null>(null);
 
   const queryParams = React.useMemo<ListAlertEventsParams | undefined>(() => {
@@ -200,13 +200,8 @@ function Header({
       <Stack spacing={0.25}>
         <Typography variant='h6'>Alerts</Typography>
         <Typography variant='caption' color='text.secondary'>
-          {subtitle} · Local timezone: {tz}
+          {`${subtitle} | Local timezone: ${tz}${lastUpdatedLabel ? ` | Last refreshed: ${lastUpdatedLabel}` : ''}`}
         </Typography>
-        {lastUpdatedLabel ? (
-          <Typography variant='caption' color='text.secondary'>
-            Last refreshed: {lastUpdatedLabel}
-          </Typography>
-        ) : null}
       </Stack>
       <Stack direction='row' spacing={1} alignItems='center'>
         <Typography variant='caption' color='text.secondary'>
@@ -263,14 +258,19 @@ function FilterBar({ selectedDate, onShift, onDateChange, onToday, onClear, toda
           Clear
         </Button>
       </Stack>
-      <TextField
-        type='date'
-        size='small'
-        value={selectedDate ?? ''}
-        onChange={onDateChange}
-        InputLabelProps={{ shrink: true }}
-        sx={{ width: 200 }}
-      />
+      <Stack direction='row' spacing={0.75} alignItems='center'>
+        <Typography variant='caption' color='text.secondary'>
+          Trading date
+        </Typography>
+        <TextField
+          type='date'
+          size='small'
+          value={selectedDate ?? ''}
+          onChange={onDateChange}
+          InputLabelProps={{ shrink: true }}
+          sx={{ width: 200 }}
+        />
+      </Stack>
     </Stack>
   );
 }
@@ -288,24 +288,25 @@ function AlertsTable({ alerts, tz, onSelect, selectedId }: AlertsTableProps) {
       <Table size='small'>
         <TableHead>
           <TableRow>
-            <TableCell sx={{ minWidth: 160 }}>Time (Local)</TableCell>
+            <TableCell sx={{ minWidth: 150 }}>Fired / Trading</TableCell>
             <TableCell sx={{ minWidth: 80 }}>Symbol</TableCell>
-            <TableCell sx={{ minWidth: 220 }}>Alert</TableCell>
-            <TableCell sx={{ minWidth: 110 }}>Severity</TableCell>
-            <TableCell sx={{ minWidth: 110 }}>Category</TableCell>
-            <TableCell sx={{ minWidth: 140 }}>Mode</TableCell>
-            <TableCell align='right' sx={{ minWidth: 90 }}>
+            <TableCell sx={{ minWidth: 170 }}>Alert</TableCell>
+            <TableCell sx={{ minWidth: 96 }}>Severity</TableCell>
+            <TableCell sx={{ minWidth: 96 }}>Category</TableCell>
+            <TableCell sx={{ minWidth: 110 }}>Mode</TableCell>
+            <TableCell align='right' sx={{ minWidth: 80 }}>
               Score
             </TableCell>
-            <TableCell align='right' sx={{ minWidth: 130 }}>
+            <TableCell align='right' sx={{ minWidth: 100 }}>
               Next Action
             </TableCell>
-            <TableCell sx={{ minWidth: 160 }}>Channels</TableCell>
+            <TableCell sx={{ minWidth: 110 }}>Channels</TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
           {alerts.map((item) => {
             const isSelected = selectedId === item.id;
+            const intradayLabel = formatIntradayBucketLabel(item.intradayBucketLabel);
             return (
               <TableRow
                 key={item.id}
@@ -314,15 +315,33 @@ function AlertsTable({ alerts, tz, onSelect, selectedId }: AlertsTableProps) {
                 onClick={() => onSelect(item)}
                 sx={{ cursor: 'pointer' }}
               >
-                <TableCell>
-                  <Stack spacing={0.5}>
-                    <Typography variant='body2'>{formatLocalTime(item.firedAtUtc, tz)}</Typography>
-                    <Typography variant='caption' color='text.secondary'>
+                <TableCell sx={{ minWidth: 150 }}>
+                  <Stack spacing={0.25}>
+                    <Typography variant='body2'>
+                      <Typography
+                        component='span'
+                        variant='caption'
+                        color='text.secondary'
+                        sx={{ mr: 0.75 }}
+                      >
+                        Fired:
+                      </Typography>
+                      {formatLocalTime(item.firedAtUtc, tz)}
+                    </Typography>
+                    <Typography variant='body2'>
+                      <Typography
+                        component='span'
+                        variant='caption'
+                        color='text.secondary'
+                        sx={{ mr: 0.75 }}
+                      >
+                        Trading:
+                      </Typography>
                       {formatTimeSubtitle(item)}
                     </Typography>
                   </Stack>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ minWidth: 80 }}>
                   <Typography variant='body2' fontWeight={600}>
                     {item.symbol}
                   </Typography>
@@ -330,18 +349,20 @@ function AlertsTable({ alerts, tz, onSelect, selectedId }: AlertsTableProps) {
                     {item.sendType}
                   </Typography>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ minWidth: 170 }}>
                   <Stack spacing={0.25}>
-                    <Typography variant='body2'>{item.title}</Typography>
-                    <Typography variant='caption' color='text.secondary' noWrap>
+                    <Typography variant='body2' sx={{ wordBreak: 'break-word' }}>
+                      {item.title}
+                    </Typography>
+                    <Typography variant='caption' color='text.secondary' sx={{ wordBreak: 'break-word' }}>
                       {item.raw.rule_code} · {truncate(item.body, 120)}
                     </Typography>
                   </Stack>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ minWidth: 96 }}>
                   <SeverityChip value={item.severity} />
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ minWidth: 96 }}>
                   <Chip
                     size='small'
                     label={item.digestBucket}
@@ -349,20 +370,20 @@ function AlertsTable({ alerts, tz, onSelect, selectedId }: AlertsTableProps) {
                     variant='outlined'
                   />
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ minWidth: 110 }}>
                   <Stack spacing={0.25}>
                     <Typography variant='body2'>{MODE_LABELS[item.mode] ?? item.mode}</Typography>
-                    {item.mode === 'INTRADAY' ? (
+                    {item.mode === 'INTRADAY' && (intradayLabel || item.bucketOrd != null) ? (
                       <Typography variant='caption' color='text.secondary'>
-                        #{item.bucketOrd}{item.intradayBucketLabel ? ` · ${item.intradayBucketLabel}` : ''}
+                        {intradayLabel ?? `Bucket ${item.bucketOrd}`}
                       </Typography>
                     ) : null}
                   </Stack>
                 </TableCell>
-                <TableCell align='right'>
+                <TableCell align='right' sx={{ minWidth: 80 }}>
                   {item.scoreAtFire !== null ? item.scoreAtFire.toFixed(1) : '--'}
                 </TableCell>
-                <TableCell align='right'>
+                <TableCell align='right' sx={{ minWidth: 100 }}>
                   {item.nextActionCode ? (
                     <Chip
                       size='small'
@@ -376,7 +397,7 @@ function AlertsTable({ alerts, tz, onSelect, selectedId }: AlertsTableProps) {
                     </Typography>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ minWidth: 110 }}>
                   <ChannelsSummary summary={item.channelsSummary} />
                 </TableCell>
               </TableRow>
@@ -460,15 +481,25 @@ function formatLocalTime(iso: string, tz: string): string {
   return parsed.tz(tz).format('YYYY-MM-DD HH:mm');
 }
 
+function formatIntradayBucketLabel(label?: string | null): string | null {
+  if (!label) return null;
+  const trimmed = `${label}`.trim();
+  if (/^\d{3,4}$/.test(trimmed)) {
+    const padded = trimmed.padStart(4, '0');
+    return `${padded.slice(0, 2)}:${padded.slice(2)}`;
+  }
+  return trimmed;
+}
+
 function formatTimeSubtitle(item: AlertEventListItem): string {
   const parts = [item.tradingDate];
   if (item.mode === 'INTRADAY') {
-    if (item.intradayBucketLabel) {
-      parts.push(item.intradayBucketLabel);
+    const intradayLabel = formatIntradayBucketLabel(item.intradayBucketLabel);
+    if (intradayLabel) {
+      parts.push(intradayLabel);
     }
-    parts.push(`#${item.bucketOrd}`);
   }
-  return parts.filter(Boolean).join(' · ');
+  return parts.filter(Boolean).join(' | ');
 }
 
 function truncate(text: string, limit: number): string {
@@ -515,7 +546,17 @@ type AlertDetailsDrawerProps = {
 
 function AlertDetailsDrawer({ alert, onClose, tz }: AlertDetailsDrawerProps) {
   return (
-    <Drawer anchor='right' open={Boolean(alert)} onClose={onClose}>
+    <Drawer
+      anchor='right'
+      open={Boolean(alert)}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          mt: { xs: '56px', sm: '64px' },
+          height: { xs: 'calc(100% - 56px)', sm: 'calc(100% - 64px)' },
+        },
+      }}
+    >
       <Box
         sx={{
           width: { xs: 320, sm: 380, md: 420 },

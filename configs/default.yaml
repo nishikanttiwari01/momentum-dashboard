@@ -21,7 +21,7 @@ storage:
   use_dictionary: true
   write_statistics: true
 screener:
-  default_universe: ALL #NIFTY50 ALL
+  default_universe: NIFTY50  #NIFTY50 ALL
 scheduler:
   enabled: true
   interval_minutes: 15
@@ -34,6 +34,8 @@ scheduler:
     - 2
     - 3
     - 4
+    - 5
+    - 6
     start: 09:15
     end: '15:30'
 data:
