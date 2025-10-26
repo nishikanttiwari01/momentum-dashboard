@@ -740,10 +740,13 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as e:
                 log.exception("alerts_hook_failed(backfill)", extra={"date": d.isoformat(), "error": str(e)})
 
-            if d not in cleaned_intraday and _daily_partition_has_parquet(d):
-                _delete_intraday_partition(d)
-                cleaned_intraday.add(d)
-                _prune_intraday_history(retention_days, reference_date=today)
+            if _daily_partition_has_parquet(d):
+                if retention_days <= 0:
+                    if d not in cleaned_intraday:
+                        _delete_intraday_partition(d)
+                        cleaned_intraday.add(d)
+                else:
+                    _prune_intraday_history(retention_days, reference_date=today)
             # after cleanup for that day...
             # ✉️ Send digest email for this day (best-effort, guarded by YAML flags)
             try:

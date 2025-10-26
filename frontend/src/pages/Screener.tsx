@@ -28,6 +28,16 @@ const MODE_INTRADAY = 'intraday' as const;
 const MODE_EOD = 'eod' as const;
 type Mode = typeof MODE_INTRADAY | typeof MODE_EOD;
 
+type RunOption = {
+  key: string;
+  label: string;
+  secondary?: string;
+  runId?: string;
+  asOf?: string;
+  tradeDate?: string;
+  summary: ScreenerRunSummary;
+};
+
 export default function Screener() {
   const { refetchIntervalMs } = useOutletContext<OutletCtx>();
   const [tickerInput, setTickerInput] = React.useState('');
@@ -35,7 +45,7 @@ export default function Screener() {
 
   const [pendingMode, setPendingMode] = React.useState<Mode>(MODE_INTRADAY);
   const [pendingDate, setPendingDate] = React.useState<string | undefined>(undefined);
-  const [pendingRun, setPendingRun] = React.useState<ScreenerRunSummary | null>(null);
+  const [pendingRun, setPendingRun] = React.useState<RunOption | null>(null);
 
   const [appliedMode, setAppliedMode] = React.useState<Mode>(MODE_INTRADAY);
   const [appliedRunId, setAppliedRunId] = React.useState<string | undefined>(undefined);
@@ -47,6 +57,58 @@ export default function Screener() {
 
   // Guard to avoid clearing date/run during programmatic initial seeding
   const suppressModeResetRef = React.useRef(false);
+
+  const formatRunIdLocal = React.useCallback((runId?: string): string | undefined => {
+    if (!runId || runId.length !== 14 || !/^\d{14}$/.test(runId)) return undefined;
+    const year = Number(runId.slice(0, 4));
+    const month = Number(runId.slice(4, 6)) - 1; // zero-based
+    const day = Number(runId.slice(6, 8));
+    const hour = Number(runId.slice(8, 10));
+    const minute = Number(runId.slice(10, 12));
+    const second = Number(runId.slice(12, 14));
+    const utcDate = new Date(Date.UTC(year, month, day, hour, minute, second));
+    if (Number.isNaN(utcDate.getTime())) return undefined;
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(utcDate);
+    } catch (err) {
+      return utcDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+  }, []);
+
+  const makeRunOption = React.useCallback(
+    (summary: ScreenerRunSummary, mode: Mode, index = 0): RunOption => {
+      const key = summary.run_id ?? summary.as_of ?? summary.trade_date ?? `run-${index}`;
+      const digits14 = /^\d{14}$/;
+      const runIdCandidate =
+        summary.run_id ?? (key && digits14.test(key) ? key : undefined);
+      let label =
+        summary.label ??
+        (mode === MODE_INTRADAY
+          ? summary.run_id ?? summary.trade_date ?? `Run ${index + 1}`
+          : summary.as_of ?? `Run ${index + 1}`);
+      if (mode === MODE_INTRADAY) {
+        const localLabel = formatRunIdLocal(runIdCandidate);
+        if (localLabel) {
+          label = localLabel;
+        }
+      }
+      const secondary =
+        mode === MODE_INTRADAY ? summary.trade_date ?? undefined : summary.as_of ?? undefined;
+      return {
+        key,
+        label,
+        secondary,
+        runId: runIdCandidate,
+        asOf: summary.as_of ?? undefined,
+        tradeDate: summary.trade_date ?? undefined,
+        summary,
+      };
+    },
+    [formatRunIdLocal],
+  );
 
   const handleTickerSubmit = React.useCallback((event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -127,77 +189,73 @@ export default function Screener() {
   const runListPayload = runListQuery.data?.data;
 
   // Normalize run list for the dropdown
-  const availableRuns = React.useMemo(() => {
+  const availableRuns: RunOption[] = React.useMemo(() => {
     if (!runListPayload) return [];
-    const rawItems = Array.isArray(runListPayload.items) ? runListPayload.items : [];
-    const candidates = [...rawItems];
-    if (runListPayload.latest) {
-      const latestKey =
-        runListPayload.latest.run_id ??
-        runListPayload.latest.as_of ??
-        runListPayload.latest.trade_date;
-      const already = candidates.some((item) => {
-        const key = item.run_id ?? item.as_of ?? item.trade_date;
-        return key && latestKey && key === latestKey;
-      });
-      if (!already) {
-        candidates.unshift(runListPayload.latest);
+    const items = Array.isArray(runListPayload.items) ? runListPayload.items : [];
+    const collected: ScreenerRunSummary[] = [];
+    const pushIfNew = (summary: ScreenerRunSummary | null | undefined) => {
+      if (!summary) return;
+      const key = summary.run_id ?? summary.as_of ?? summary.trade_date;
+      if (!key) {
+        collected.push(summary);
+        return;
       }
-    }
-    return candidates.map((item, index) => {
-      const key = item.run_id ?? item.as_of ?? item.trade_date ?? `run-${index}`;
-      const label =
-        item.label ??
-        (pendingMode === MODE_INTRADAY
-          ? item.run_id ?? item.trade_date ?? `Run ${index + 1}`
-          : item.as_of ?? `Run ${index + 1}`);
-      const secondary = pendingMode === MODE_INTRADAY ? item.trade_date : item.as_of;
-      return { key, label, secondary, summary: item };
-    });
-  }, [runListPayload, pendingMode]);
+      const exists = collected.some((existing) => {
+        const existingKey = existing.run_id ?? existing.as_of ?? existing.trade_date;
+        return existingKey === key;
+      });
+      if (!exists) {
+        collected.push(summary);
+      }
+    };
 
-  // Keep pendingRun in sync with the latest list (but don't override programmatic initial seed)
+    pushIfNew(runListPayload.latest ?? null);
+    items.forEach((summary) => pushIfNew(summary));
+
+    return collected.map((summary, index) => {
+      const modeFromSummary: Mode = summary.mode === 'eod' ? MODE_EOD : MODE_INTRADAY;
+      return makeRunOption(summary, modeFromSummary, index);
+    });
+  }, [makeRunOption, runListPayload]);
+
   React.useEffect(() => {
-    if (!runListPayload) {
-      setPendingRun(null);
+    if (availableRuns.length === 0) {
+      if (pendingRun !== null) {
+        setPendingRun(null);
+        setHasAppliedInitial(false);
+      }
       return;
     }
-    const items = runListPayload.items ?? [];
-    if (items.length === 0) {
-      setPendingRun(null);
-      return;
-    }
-    const fallback = runListPayload.latest ?? items[0];
     if (!pendingRun) {
-      setPendingRun(fallback);
+      setPendingRun(availableRuns[0]);
+      setHasAppliedInitial(false);
       return;
     }
-    const pendingKey = pendingRun.run_id ?? pendingRun.as_of ?? pendingRun.trade_date;
-    const stillExists = items.some((item) => {
-      const key = item.run_id ?? item.as_of ?? item.trade_date;
-      return key === pendingKey;
-    });
+    const stillExists = availableRuns.some((option) => option.key === pendingRun.key);
     if (!stillExists) {
-      setPendingRun(fallback);
+      setPendingRun(availableRuns[0]);
+      setHasAppliedInitial(false);
     }
-  }, [runListPayload, pendingRun]);
+  }, [availableRuns, pendingRun]);
 
-  const pendingRunKey = pendingRun
-    ? pendingRun.run_id ?? pendingRun.as_of ?? pendingRun.trade_date ?? ''
-    : '';
+  const pendingRunKey = pendingRun?.key ?? '';
 
   // APPLY: Intraday uses run_id; EOD uses as_of ONLY (never run_id)
-  const applySelection = React.useCallback((mode: Mode, run: ScreenerRunSummary, date: string | undefined) => {
-    setAppliedMode(mode);
-    if (mode === MODE_INTRADAY) {
-      setAppliedRunId(run.run_id ?? undefined);
-      setAppliedAsOf(undefined);
-    } else {
-      // EOD: never send run_id; only as_of
-      setAppliedRunId(undefined);
-      setAppliedAsOf(run.as_of ?? date ?? undefined);
-    }
-  }, []);
+  const applySelection = React.useCallback(
+    (mode: Mode, option: RunOption | null, date: string | undefined) => {
+      setAppliedMode(mode);
+      if (mode === MODE_INTRADAY) {
+        const runIdCandidate = option?.runId ?? option?.summary.run_id ?? undefined;
+        setAppliedRunId(runIdCandidate);
+        setAppliedAsOf(undefined);
+      } else {
+        setAppliedRunId(undefined);
+        const asOfCandidate = option?.asOf ?? option?.summary.as_of ?? date ?? undefined;
+        setAppliedAsOf(asOfCandidate);
+      }
+    },
+    [],
+  );
 
   const handleApply = React.useCallback(() => {
     if (!pendingRun) return;
@@ -232,7 +290,7 @@ export default function Screener() {
       return;
     }
     const match = availableRuns.find((item) => item.key === value);
-    setPendingRun(match?.summary ?? null);
+    setPendingRun(match ?? null);
     setHasAppliedInitial(false); // allow re-apply when run changes
   }, [availableRuns]);
 
@@ -313,6 +371,11 @@ export default function Screener() {
   const hasAppliedSelection = appliedMode === MODE_INTRADAY
     ? !!appliedRunId
     : !!appliedAsOf;
+  const canSubmit = pendingRun
+    ? pendingMode === MODE_INTRADAY
+      ? !!(pendingRun.runId ?? pendingRun.summary.run_id)
+      : true
+    : false;
   const exportMenuOpen = Boolean(exportAnchorEl);
 
   // ---- NEW: Auto-seed mode/date/run from /api/v1/screener/latest (EOD > Intraday) ----
@@ -330,12 +393,13 @@ export default function Screener() {
           nextMode === MODE_INTRADAY
             ? (latest.trade_date ?? undefined)
             : (latest.as_of ?? undefined);
+        const nextOption = makeRunOption(latest, nextMode);
 
         // Prevent the mode-change reset from wiping our seeded date/run
         suppressModeResetRef.current = true;
         setPendingMode(nextMode);
         setPendingDate(nextDate);
-        setPendingRun(latest);
+        setPendingRun(nextOption);
 
         // Allow the "auto-apply" effect to run with the seeded selection
         setHasAppliedInitial(false);
@@ -346,7 +410,7 @@ export default function Screener() {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [makeRunOption]);
 
   return (
     <Paper sx={{ p: 2, width: '100%', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -474,7 +538,7 @@ export default function Screener() {
             variant="contained"
             size="small"
             onClick={handleApply}
-            disabled={!pendingRun}
+            disabled={!canSubmit}
           >
             Submit
           </Button>
@@ -515,3 +579,4 @@ export default function Screener() {
     </Paper>
   );
 }
+

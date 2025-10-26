@@ -62,7 +62,7 @@ def _resolve_snapshot(as_of_str: Optional[str]) -> Tuple[str, Dict[str, str], Op
 
     Returns:
       (kind, locator, resolved_run_id, resolved_as_of)
-      kind ∈ {"intraday", "daily", "legacy", "none"}
+      kind in {"intraday", "daily", "legacy", "none"}
       locator: {"date": "...", "run_id": "..."} for intraday,
                {"as_of": "..."} for daily,
                {"run_id": "..."} for legacy,
@@ -70,24 +70,52 @@ def _resolve_snapshot(as_of_str: Optional[str]) -> Tuple[str, Dict[str, str], Op
     """
     today = _today_local_str()
 
+    latest_daily = datasets.latest_daily_at_or_before(today)
+    latest_intraday_info = datasets.latest_intraday_at_or_before(today)
+
     # 1) Prefer DAILY for **today** if it exists (EOD supersedes intraday)
-    as_of_today_or_before = datasets.latest_daily_at_or_before(today)
-    if as_of_today_or_before == today:
+    if latest_daily == today:
         log.info("scores_resolve_snapshot", extra={"kind": "daily", "as_of": today, "reason": "today_eod_exists"})
         return "daily", {"as_of": today}, None, today
 
-    # 2) Else prefer latest INTRADAY for today (when no EOD today yet)
-    rid_intra = datasets.latest_intraday(today)
-    if rid_intra:
-        log.info("scores_resolve_snapshot", extra={"kind": "intraday", "date": today, "run_id": rid_intra, "reason": "today_intraday"})
-        return "intraday", {"date": today, "run_id": rid_intra}, rid_intra, None
+    # 2) Prefer the freshest INTRADAY if it is newer than the freshest DAILY
+    if latest_intraday_info:
+        intra_date, rid_intra = latest_intraday_info
+        if latest_daily is None or intra_date > latest_daily:
+            log.info(
+                "scores_resolve_snapshot",
+                extra={
+                    "kind": "intraday",
+                    "date": intra_date,
+                    "run_id": rid_intra,
+                    "reason": "intraday_newer_than_daily" if latest_daily else "intraday_only_available",
+                },
+            )
+            return "intraday", {"date": intra_date, "run_id": rid_intra}, rid_intra, None
 
     # 3) Else choose latest DAILY at or before today (likely yesterday EOD)
-    if as_of_today_or_before:
-        log.info("scores_resolve_snapshot", extra={"kind": "daily", "as_of": as_of_today_or_before, "reason": "fallback_daily_le_today"})
-        return "daily", {"as_of": as_of_today_or_before}, None, as_of_today_or_before
+    if latest_daily:
+        log.info(
+            "scores_resolve_snapshot",
+            extra={"kind": "daily", "as_of": latest_daily, "reason": "fallback_daily_le_today"},
+        )
+        return "daily", {"as_of": latest_daily}, None, latest_daily
 
-    # 4) Else (optionally) fall back to legacy
+    # 4) If no daily available but intraday exists (even if older), still use intraday.
+    if latest_intraday_info:
+        intra_date, rid_intra = latest_intraday_info
+        log.info(
+            "scores_resolve_snapshot",
+            extra={
+                "kind": "intraday",
+                "date": intra_date,
+                "run_id": rid_intra,
+                "reason": "intraday_latest_available",
+            },
+        )
+        return "intraday", {"date": intra_date, "run_id": rid_intra}, rid_intra, None
+
+    # 5) Else (optionally) fall back to legacy
     rid_legacy, as_of_legacy = _resolve_run_legacy(as_of_str)
     if rid_legacy and _ALLOW_LEGACY_FALLBACK:
         log.info("scores_resolve_snapshot", extra={"kind": "legacy", "run_id": rid_legacy})
@@ -286,6 +314,19 @@ class ScoresRepo:
                     except Exception:
                         tab = None
             if tab is None:
+                match_date = datasets.find_intraday_run(run_id)
+                if match_date:
+                    try:
+                        tab_candidate = datasets.scan_scores_intraday(match_date, run_id, columns=None)
+                        if tab_candidate.num_rows > 0:
+                            tab = tab_candidate
+                            log.info(
+                                "scores_read_resolve",
+                                extra={"kind": "intraday(explicit-search)", "date": match_date, "run_id": run_id},
+                            )
+                    except Exception:
+                        tab = None
+            if tab is None:
                 log.info("scores_read_resolve", extra={"kind": "legacy(explicit)", "run_id": run_id})
                 tab = datasets.scan("scores", run_id=run_id, columns=None)
         else:
@@ -432,30 +473,50 @@ class ScoresRepo:
         """
         Return the latest available snapshot with EOD > Intraday precedence:
           - daily(today) if present,
-          - else intraday(today),
-          - else daily(≤ today),
+          - else newest intraday when fresher than the latest daily,
+          - else latest daily (<= today),
           - else (optionally) legacy latest if ALLOW_LEGACY_SCORES_READ=1.
         """
         today = _today_local_str()
 
-        # daily(today)?
-        as_of_today_or_before = datasets.latest_daily_at_or_before(today)
-        if as_of_today_or_before == today:
+        latest_daily = datasets.latest_daily_at_or_before(today)
+        latest_intraday_info = datasets.latest_intraday_at_or_before(today)
+
+        if latest_daily == today:
             log.info("scores_latest_run", extra={"kind": "daily", "as_of": today, "reason": "today_eod_exists"})
             return None, today
 
-        # intraday(today)?
-        rid_intra = datasets.latest_intraday(today)
-        if rid_intra:
-            log.info("scores_latest_run", extra={"kind": "intraday", "date": today, "run_id": rid_intra})
+        if latest_intraday_info:
+            intra_date, rid_intra = latest_intraday_info
+            if latest_daily is None or intra_date > latest_daily:
+                log.info(
+                    "scores_latest_run",
+                    extra={
+                        "kind": "intraday",
+                        "date": intra_date,
+                        "run_id": rid_intra,
+                        "reason": "intraday_newer_than_daily" if latest_daily else "intraday_only_available",
+                    },
+                )
+                return rid_intra, None
+
+        if latest_daily:
+            log.info("scores_latest_run", extra={"kind": "daily", "as_of": latest_daily})
+            return None, latest_daily
+
+        if latest_intraday_info:
+            intra_date, rid_intra = latest_intraday_info
+            log.info(
+                "scores_latest_run",
+                extra={
+                    "kind": "intraday",
+                    "date": intra_date,
+                    "run_id": rid_intra,
+                    "reason": "intraday_latest_available",
+                },
+            )
             return rid_intra, None
 
-        # latest daily ≤ today (yesterday or earlier)
-        if as_of_today_or_before:
-            log.info("scores_latest_run", extra={"kind": "daily", "as_of": as_of_today_or_before})
-            return None, as_of_today_or_before
-
-        # legacy (optional)
         rid_legacy, as_of_legacy = _resolve_run_legacy(None)
         if rid_legacy and _ALLOW_LEGACY_FALLBACK:
             log.info("scores_latest_run", extra={"kind": "legacy", "run_id": rid_legacy})

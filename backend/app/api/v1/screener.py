@@ -280,38 +280,37 @@ def _build_eod_summary(as_of: str, run_id: Optional[str]) -> ScreenerRunSummary:
 
 def _get_latest_snapshot_summary() -> ScreenerRunSummary:
     """
-    Decide the single most recent snapshot with EOD > Intraday precedence.
-    1) If today's EOD exists → return today's EOD (latest run if multiple).
-    2) Else if today's intraday runs exist → return latest intraday run today.
-    3) Else return latest available EOD (<= today).
+    Decide the single most recent snapshot with EOD > intraday precedence.
+    1) Prefer today's EOD if present.
+    2) Else prefer the freshest intraday when newer than the freshest EOD.
+    3) Else fall back to the latest available EOD (<= today).
+    4) Else fall back to the latest intraday snapshot.
     """
     today = _today_ist_str()
 
-    # 1) Today’s EOD?
-    eod_run_ids_today = _list_eod_run_ids(today)
-    if eod_run_ids_today:
-        rid = eod_run_ids_today[0]  # already sorted latest-first
+    latest_daily = datasets.latest_daily_at_or_before(today)
+    latest_intraday_info = datasets.latest_intraday_at_or_before(today)
+
+    if latest_daily == today:
+        run_ids = _list_eod_run_ids(today)
+        rid = run_ids[0] if run_ids else None
         return _build_eod_summary(today, rid)
 
-    # 2) Today’s intraday?
-    try:
-        intra_run_ids_today = datasets.list_intraday_runs(today)
-    except Exception:
-        intra_run_ids_today = []
-    intra_run_ids_today = sorted(intra_run_ids_today, reverse=True)
-    if intra_run_ids_today:
-        return _build_intraday_summary(today, intra_run_ids_today[0])
+    if latest_intraday_info:
+        intra_date, run_id = latest_intraday_info
+        if latest_daily is None or intra_date > latest_daily:
+            return _build_intraday_summary(intra_date, run_id)
 
-    # 3) Fallback to latest EOD ≤ today
-    eod_dates = _list_eod_dates(1)
-    if eod_dates:
-        as_of = eod_dates[0].as_of or today
-        run_ids = _list_eod_run_ids(as_of)
+    if latest_daily:
+        run_ids = _list_eod_run_ids(latest_daily)
         rid = run_ids[0] if run_ids else None
-        return _build_eod_summary(as_of, rid)
+        return _build_eod_summary(latest_daily, rid)
+
+    if latest_intraday_info:
+        intra_date, run_id = latest_intraday_info
+        return _build_intraday_summary(intra_date, run_id)
 
     raise HTTPException(status_code=404, detail="No snapshots available")
-
 
 @router.get("/screener/latest", response_model=ScreenerRunSummary)
 def get_latest_snapshot() -> ScreenerRunSummary:

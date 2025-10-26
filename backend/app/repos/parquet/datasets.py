@@ -565,9 +565,74 @@ def latest_intraday(date_str: str) -> Optional[str]:
             cands.append(rid)
     return sorted(cands)[-1] if cands else None
 
+
+def latest_intraday_at_or_before(date_str: str) -> Optional[Tuple[str, str]]:
+    """
+    Return (trade_date, run_id) for the most recent intraday snapshot whose trade_date <= date_str.
+    """
+    root = _table_root("scores") / "intraday"
+    if not root.exists():
+        return None
+
+    best_date: Optional[str] = None
+    best_run: Optional[str] = None
+    for date_dir in root.glob("date=*"):
+        if not date_dir.is_dir():
+            continue
+        trade_date = date_dir.name.split("date=", 1)[-1]
+        if not _is_valid_date(trade_date):
+            continue
+        if trade_date > date_str:
+            continue
+
+        latest_run_for_date: Optional[str] = None
+        for run_dir in date_dir.glob("run_id=*"):
+            if not run_dir.is_dir():
+                continue
+            rid = run_dir.name.split("run_id=", 1)[-1]
+            if _is_valid_run_id(rid) and (run_dir / "_SUCCESS").exists():
+                if latest_run_for_date is None or rid > latest_run_for_date:
+                    latest_run_for_date = rid
+        if latest_run_for_date is None:
+            continue
+
+        if (
+            best_date is None
+            or trade_date > best_date
+            or (trade_date == best_date and latest_run_for_date > (best_run or ""))
+        ):
+            best_date = trade_date
+            best_run = latest_run_for_date
+
+    if best_date is None or best_run is None:
+        return None
+    return best_date, best_run
+
+
+def find_intraday_run(run_id: str) -> Optional[str]:
+    """
+    Return the trade_date for a committed intraday run_id, if present.
+    """
+    if not _is_valid_run_id(run_id):
+        return None
+    root = _table_root("scores") / "intraday"
+    if not root.exists():
+        return None
+    for run_dir in root.glob(f"date=*/run_id={run_id}"):
+        if not run_dir.is_dir():
+            continue
+        if not (run_dir / "_SUCCESS").exists():
+            continue
+        parent = run_dir.parent
+        trade_date = parent.name.split("date=", 1)[-1]
+        if _is_valid_date(trade_date):
+            return trade_date
+    return None
+
+
 def latest_daily_at_or_before(date_str: str) -> Optional[str]:
     """
-    Return the latest as_of (YYYY-MM-DD) â‰¤ date_str with a committed run present.
+    Return the latest as_of (YYYY-MM-DD) <= date_str with a committed run present.
     """
     root = _table_root("scores") / "daily"
     if not root.exists():
