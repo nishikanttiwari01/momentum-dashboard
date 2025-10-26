@@ -366,8 +366,8 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
 
       { field: 'ret_1m', headerName: '% 1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
       { field: 'ret_3m', headerName: '% 3M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
-      { field: 'ret_6m', headerName: '% 6M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
-      { field: 'ret_12_1m', headerName: '% 12–1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      //{ field: 'ret_6m', headerName: '% 6M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      //{ field: 'ret_12_1m', headerName: '% 12–1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
       { field: 'pct_from_52w_high', headerName: '% 52W H', width: 90, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
       
 
@@ -411,7 +411,7 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
       //{ field: 'adx', headerName: 'ADX', width: 80, type: 'number', renderCell: renderNum },
 
       //{ field: 'atr_pct', headerName: 'ATR %', width: 80, type: 'number', renderCell: renderPctCell },
-      { field: 'liquidity', headerName: 'Liquidity (M)', width: 110, type: 'number', renderCell: renderMillions },
+      //{ field: 'liquidity', headerName: 'Liquidity (M)', width: 110, type: 'number', renderCell: renderMillions },
       //{ field: 'vol_spike', headerName: 'xRel Vol', width: 80, type: 'number', renderCell: renderNum },
     ],
     [],
