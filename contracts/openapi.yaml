@@ -2939,6 +2939,76 @@ components:
         blocked_reason:
           type: string
           nullable: true
+        buy_checklist:
+          $ref: '#/components/schemas/DrawerDiagnosticsBuyChecklist'
+    DrawerDiagnosticsBuyChecklist:
+      type: object
+      required: [label, mode, passed, passed_items, total_items, summary, items]
+      properties:
+        label:
+          type: string
+          description: Display label for this checklist section.
+          example: "BUY (EOD gates)"
+        mode:
+          type: string
+          description: Evaluation mode used for the gate checks.
+          enum: [EOD, INTRADAY]
+        passed:
+          type: boolean
+          description: True when the enforced gates passed.
+        passed_items:
+          type: integer
+          description: Count of gates that passed.
+          example: 7
+        total_items:
+          type: integer
+          description: Total gates evaluated.
+          example: 9
+        summary:
+          type: string
+          description: Human-readable verdict aligned with the buy flag.
+          example: "No — 7 / 9 passed"
+        fail_summary:
+          type: string
+          nullable: true
+          description: Short summary of failing gates when the checklist fails.
+          example: "ATR10% too low; Base length too short"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DrawerDiagnosticsBuyChecklistItem'
+    DrawerDiagnosticsBuyChecklistItem:
+      type: object
+      required: [code, factor, value_display, value_vs_rule, description, passed]
+      properties:
+        code:
+          type: string
+          description: Stable identifier for the gate factor.
+          example: "score"
+        factor:
+          type: string
+          description: Human-readable gate name.
+          example: "Score"
+        value_display:
+          type: string
+          description: Formatted observed value.
+          example: "81"
+        rule_display:
+          type: string
+          nullable: true
+          description: Formatted rule or threshold.
+          example: "≥ 70"
+        value_vs_rule:
+          type: string
+          description: Combined display of the value against the rule.
+          example: "81 ≥ 70"
+        description:
+          type: string
+          description: Short explanation of what the outcome means.
+          example: "strong overall quality"
+        passed:
+          type: boolean
+          description: True when the gate passed.
     ScanRequest:
       type: object
       additionalProperties: false

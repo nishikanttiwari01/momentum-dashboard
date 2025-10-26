@@ -19,9 +19,10 @@ import {
   Link,
   CircularProgress,
 } from '@mui/material';
-import type { DrawerDetail } from '@/lib/api/types';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import CancelRoundedIcon from '@mui/icons-material/CancelRounded';
+import type { DrawerDetail, DrawerDiagnosticsBuyChecklist, NewsCard } from '@/lib/api/types';
 import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks';
-import type { NewsCard } from '@/lib/api/types';
 import { drawerPaperSx } from './styles';
 
 import DrawerHeader from './DrawerHeader';
@@ -33,6 +34,13 @@ import ActionBlock from './StopLossAction';
 import Meters from './Meters';
 import NextAction from './NextAction';
 import AlertsRow from './AlertsRow';
+
+const checklistHeaderCellSx = {
+  fontWeight: 700,
+  letterSpacing: '.08em',
+  textTransform: 'uppercase',
+  color: 'text.secondary',
+} as const;
 
 type Props = {
   symbol: string | null;
@@ -71,6 +79,93 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
+function BuyChecklistSection({ data }: { data?: DrawerDiagnosticsBuyChecklist | null }) {
+  if (!data || !Array.isArray(data.items) || data.items.length === 0) return null;
+
+  return (
+    <Box sx={{ mt: 2.5, mb: 2 }}>
+      <SectionHeader>Buy Checklist</SectionHeader>
+      <Box>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+          {`${data.label}: ${data.summary}`}
+        </Typography>
+        {data.fail_summary ? (
+          <Typography variant="caption" color="error.main" sx={{ mt: 0.25 }}>
+            {`Fails: ${data.fail_summary}`}
+          </Typography>
+        ) : null}
+      </Box>
+      <Box
+        sx={{
+          mt: 1.5,
+          border: 1,
+          borderColor: 'divider',
+          borderRadius: 1.5,
+          overflow: 'hidden',
+        }}
+      >
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(140px, 0.9fr) minmax(220px, 1.4fr) auto',
+            gap: 1,
+            px: 2,
+            py: 1,
+            bgcolor: 'action.hover',
+          }}
+        >
+          <Typography variant="caption" sx={checklistHeaderCellSx}>
+            Factor
+          </Typography>
+          <Typography variant="caption" sx={checklistHeaderCellSx}>
+            Reason (value vs rule)
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{ ...checklistHeaderCellSx, textAlign: 'center' }}
+          >
+            Pass?
+          </Typography>
+        </Box>
+        {data.items.map((item, idx) => (
+          <Box
+            key={item.code || `${idx}`}
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(140px, 0.9fr) minmax(220px, 1.4fr) auto',
+              gap: 1,
+              px: 2,
+              py: 1.2,
+              borderTop: '1px solid',
+              borderColor: 'divider',
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {item.factor}
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+              <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {item.value_vs_rule}
+              </Typography>
+              {item.description ? (
+                <Typography variant="caption" color="text.secondary">
+                  {item.description}
+                </Typography>
+              ) : null}
+            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              {item.passed ? (
+                <CheckCircleRoundedIcon fontSize="small" color="success" />
+              ) : (
+                <CancelRoundedIcon fontSize="small" color="error" />
+              )}
+            </Box>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
 export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Props) {
   const sym = symbol || '';
   const enabled = Boolean(open && sym);
@@ -108,6 +203,8 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
   const ab = d?.action_block || {};
   const na = d?.next_action || {};
   const refs = na?.refs || {};
+  const diagnostics = d?.diagnostics || {};
+  const buyChecklist = diagnostics?.buy_checklist as DrawerDiagnosticsBuyChecklist | undefined;
 
   const pctToday =
     header?.pct_1d ?? d?.pct_today ?? d?.change_pct_1d ?? d?.change_pct;
@@ -424,6 +521,8 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
             />
 
             <IndicatorsGrid ind={ind} />
+
+            <BuyChecklistSection data={buyChecklist} />
 
             {tradeOn && activePosition ? (
               <React.Fragment>

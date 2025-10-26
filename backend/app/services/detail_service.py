@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover
     load_settings = None  # type: ignore
 
 from app.domain.rules.next_action import euphoria_thresholds
+from app.services.buy_logic import evaluate_buy_gate
 
 log = logging.getLogger("app.services.detail")
 
@@ -775,6 +776,18 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
         "rules_version": (row or {}).get("rules_version") or "scores_v2",
         "blocked_reason": None,
     }
+
+    buy_checklist = (row or {}).get("buy_checklist")
+    if not buy_checklist:
+        try:
+            evaluation_payload = {**(row or {})}
+            evaluation_payload["is_eod"] = row_is_eod
+            _, _, computed_checklist = evaluate_buy_gate(evaluation_payload)
+            buy_checklist = computed_checklist
+        except Exception:
+            buy_checklist = None
+    if buy_checklist:
+        diagnostics["buy_checklist"] = buy_checklist
 
     # Align diagnostics tone with BUY actions
     if isinstance(next_action, dict):

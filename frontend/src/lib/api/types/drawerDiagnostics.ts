@@ -5,10 +5,12 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
+import type { DrawerDiagnosticsBuyChecklist } from './drawerDiagnosticsBuyChecklist';
 
 export interface DrawerDiagnostics {
   /** @nullable */
   blocked_reason?: string | null;
+  buy_checklist?: DrawerDiagnosticsBuyChecklist;
   reason: string;
   /**
    * Optional natural-language explanation; may be same as reason.

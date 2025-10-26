@@ -693,12 +693,13 @@ def _make_scores_row(
     else:
         row.setdefault("persistence_ok", None)
 
-    buy_flag, buy_reason = evaluate_buy_gate(row)
+    buy_flag, buy_reason, buy_checklist = evaluate_buy_gate(row)
     row["buy"] = buy_flag
     if buy_reason:
         row["reason"] = buy_reason
     else:
         row["reason"] = reason_before_buy
+    row["buy_checklist"] = buy_checklist
 
     if row.get("vol_spike") is None:
         try:
