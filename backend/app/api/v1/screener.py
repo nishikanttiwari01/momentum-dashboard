@@ -437,11 +437,21 @@ def _get_detail_deps() -> DetailDeps:
             indicators_repo = MarketDataRepo()
         except Exception:
             indicators_repo = None
+        try:
+            from app.core import db as core_db
+            try:
+                sessionmaker = core_db.get_sessionmaker()
+            except Exception:
+                core_db.init_sqlite()
+                sessionmaker = core_db.get_sessionmaker()
+        except Exception:
+            sessionmaker = None
         _detail_deps_cache = DetailDeps(
             scores_repo=repo,
             indicators_repo=indicators_repo,
             positions_repo=positions_repo,
             snapshot_pins_repo=snapshot_repo,
+            sessionmaker=sessionmaker,
         )
     return _detail_deps_cache
 

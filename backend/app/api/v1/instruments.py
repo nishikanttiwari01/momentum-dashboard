@@ -25,12 +25,22 @@ def _deps() -> DetailDeps:
         from app.repos.sql.snapshot_pins_repo import SnapshotPinsRepo
     except Exception:  # pragma: no cover
         SnapshotPinsRepo = None  # type: ignore
+    try:
+        from app.core import db as core_db
+        try:
+            sessionmaker = core_db.get_sessionmaker()
+        except Exception:
+            core_db.init_sqlite()
+            sessionmaker = core_db.get_sessionmaker()
+    except Exception:  # pragma: no cover
+        sessionmaker = None
 
     return DetailDeps(
         scores_repo=ScoresRepo(),
-        indicators_repo=MarketDataRepo(),  # ← use Yahoo for sparkline
+        indicators_repo=MarketDataRepo(),  # use Yahoo for sparkline
         positions_repo=PositionsRepo() if PositionsRepo else None,
         snapshot_pins_repo=SnapshotPinsRepo() if SnapshotPinsRepo else None,
+        sessionmaker=sessionmaker,
     )
 
 

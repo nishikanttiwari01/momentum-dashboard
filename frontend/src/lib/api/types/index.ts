@@ -34,6 +34,8 @@ export * from './drawerActionBlock';
 export * from './drawerActionBlockBreakevenState';
 export * from './drawerActionBlockEuphoriaState';
 export * from './drawerActionBlockStopMethod';
+export * from './drawerAlertEvent';
+export * from './drawerAlertEventChannelsSummary';
 export * from './drawerAlerts';
 export * from './drawerDetail';
 export * from './drawerDetailChannels';

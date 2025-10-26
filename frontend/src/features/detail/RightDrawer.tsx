@@ -21,7 +21,7 @@ import {
 } from '@mui/material';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import CancelRoundedIcon from '@mui/icons-material/CancelRounded';
-import type { DrawerDetail, DrawerDiagnosticsBuyChecklist, NewsCard } from '@/lib/api/types';
+import type { DrawerDetail, DrawerDiagnosticsBuyChecklist, NewsCard, AlertTemplate } from '@/lib/api/types';
 import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks';
 import { drawerPaperSx } from './styles';
 
@@ -205,6 +205,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
   const refs = na?.refs || {};
   const diagnostics = d?.diagnostics || {};
   const buyChecklist = diagnostics?.buy_checklist as DrawerDiagnosticsBuyChecklist | undefined;
+  const alertEvents = d?.alerts?.recent_events;
 
   const pctToday =
     header?.pct_1d ?? d?.pct_today ?? d?.change_pct_1d ?? d?.change_pct;
@@ -395,11 +396,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
     return value.toFixed(2);
   }, []);
 
-  const alertTemplates = Array.isArray(d?.alert_templates)
-    ? d.alert_templates.map((t: any) => ({
-        label: t?.label ?? t?.code ?? t?.example ?? 'Alert',
-      }))
-    : [];
+  const alertTemplates = Array.isArray(d?.alert_templates) ? (d.alert_templates as AlertTemplate[]) : undefined;
 
   async function lockNow() {
     const px =
@@ -631,7 +628,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
             <Meters risk={meters?.risk} euphoria={meters?.euphoria} />
 
             <SectionHeader>Alerts</SectionHeader>
-            <AlertsRow templates={alertTemplates} />
+            <AlertsRow templates={alertTemplates} events={alertEvents} />
 
             <Box sx={{ color: 'text.secondary', fontSize: 12, mt: 2, pb: 1 }}>
               {d?.as_of || header?.as_of ? `As of ${new Date(d?.as_of ?? header?.as_of).toLocaleString()}` : ''}

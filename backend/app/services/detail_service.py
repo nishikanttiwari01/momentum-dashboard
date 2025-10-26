@@ -1,16 +1,19 @@
 # backend/app/services/detail_service.py
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, List
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 try:
     from app.core.config import load as load_settings
 except Exception:  # pragma: no cover
     load_settings = None  # type: ignore
+
+from sqlalchemy import text
 
 from app.domain.rules.next_action import euphoria_thresholds
 from app.services.buy_logic import evaluate_buy_gate
@@ -176,6 +179,7 @@ class DetailDeps:
     indicators_repo: Any | None
     positions_repo: Any | None
     snapshot_pins_repo: Any | None
+    sessionmaker: Any | None = None
 
 
 def _resolve_run_id(symbol: str, run_id: Optional[str], deps: DetailDeps) -> Tuple[Optional[str], Optional[str]]:
@@ -802,6 +806,10 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
                 diagnostics["reason"] = "Setup — early strength; small starter size"
             diagnostics["reason_text"] = diagnostics["reason"]
 
+    alerts_recent = (row or {}).get("alerts_recent")
+    if not isinstance(alerts_recent, list):
+        alerts_recent = _load_recent_alert_events(sym_in, getattr(deps, "sessionmaker", None))
+
     payload = {
         "drawer_contract_version": "1.0.0",
         "scoring_rules_version": (row or {}).get("rules_version") or "scores_v2",
@@ -818,7 +826,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
         "action_block": action_block,
         "meters": meters,
         "next_action": next_action,
-        "alerts": {"suggestions": []},
+        "alerts": {"suggestions": [], "recent_events": alerts_recent or []},
         "diagnostics": diagnostics,
         "news_recent_hours": _right_drawer_news_hours(),
 
@@ -1175,3 +1183,88 @@ def _is_number(x) -> bool:
         return False
 def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
+def _load_recent_alert_events(symbol: str, sessionmaker: Any | None, *, days: int = 7, limit: int = 15) -> List[Dict[str, Any]]:
+    if not symbol or sessionmaker is None:
+        return []
+    symbol_norm = symbol.upper()
+    try:
+        since = datetime.now(timezone.utc) - timedelta(days=max(days, 1))
+    except Exception:
+        since = None
+    params: Dict[str, Any] = {"symbol": symbol_norm, "limit": int(limit)}
+    where_clause = ["symbol = :symbol"]
+    if since is not None:
+        params["since_utc"] = since.isoformat()
+        where_clause.append("fired_at_utc >= :since_utc")
+    stmt = text(
+        f"""
+        SELECT
+            id,
+            symbol,
+            trading_date,
+            fired_at_utc,
+            rule_code,
+            severity,
+            digest_bucket,
+            mode,
+            title_rendered,
+            body_rendered,
+            score_at_fire,
+            next_action_code,
+            channels_summary_json
+        FROM alert_events
+        WHERE {' AND '.join(where_clause)}
+        ORDER BY fired_at_utc DESC, id DESC
+        LIMIT :limit
+        """
+    )
+    try:
+        with sessionmaker() as session:
+            rows = session.execute(stmt, params).mappings().all()
+    except Exception:
+        log.exception("detail.alerts_recent_failed", extra={"symbol": symbol_norm})
+        return []
+
+    events: List[Dict[str, Any]] = []
+    for row in rows:
+        fired = row.get("fired_at_utc")
+        if isinstance(fired, datetime):
+            if fired.tzinfo is None:
+                fired = fired.replace(tzinfo=timezone.utc)
+            fired_iso = fired.astimezone(timezone.utc).isoformat()
+        elif isinstance(fired, str):
+            fired_iso = fired
+        else:
+            fired_iso = None
+
+        channels_raw = row.get("channels_summary_json")
+        channels: Optional[Dict[str, Any]]
+        if isinstance(channels_raw, dict):
+            channels = channels_raw
+        elif isinstance(channels_raw, str) and channels_raw.strip():
+            try:
+                parsed = json.loads(channels_raw)
+                channels = parsed if isinstance(parsed, dict) else None
+            except json.JSONDecodeError:
+                channels = None
+        else:
+            channels = None
+
+        events.append(
+            {
+                "id": int(row.get("id")),
+                "symbol": row.get("symbol") or symbol_norm,
+                "trading_day": str(row.get("trading_date") or "")[:10],
+                "fired_at_utc": fired_iso,
+                "rule_code": row.get("rule_code"),
+                "severity": row.get("severity"),
+                "digest_bucket": row.get("digest_bucket"),
+                "mode": row.get("mode"),
+                "title": row.get("title_rendered"),
+                "body": row.get("body_rendered"),
+                "score_at_fire": row.get("score_at_fire"),
+                "next_action_code": row.get("next_action_code"),
+                "channels_summary": channels,
+            }
+        )
+    return events

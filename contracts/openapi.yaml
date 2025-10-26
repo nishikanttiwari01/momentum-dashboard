@@ -2921,6 +2921,83 @@ components:
         suggestions:
           type: array
           items: { type: string }
+        recent_events:
+          type: array
+          description: Alerts fired for this symbol during the recent lookback window.
+          items:
+            $ref: '#/components/schemas/DrawerAlertEvent'
+
+    DrawerAlertEvent:
+      type: object
+      required:
+        - id
+        - symbol
+        - trading_day
+        - fired_at_utc
+        - rule_code
+        - severity
+        - digest_bucket
+        - title
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12345
+        symbol:
+          type: string
+          example: RELIANCE.NS
+        trading_day:
+          type: string
+          format: date
+          description: Trading date associated with the alert.
+          example: '2025-10-24'
+        fired_at_utc:
+          type: string
+          format: date-time
+          description: Timestamp when the alert fired (UTC).
+          example: '2025-10-24T10:12:00Z'
+        rule_code:
+          type: string
+          description: Rule identifier that triggered the alert.
+          example: MOMENTUM_BREAKOUT
+        severity:
+          type: string
+          description: Normalized severity label.
+          example: WARN
+        digest_bucket:
+          type: string
+          description: Digest bucket classification.
+          example: BUY
+        mode:
+          type: string
+          nullable: true
+          description: Snapshot mode when alert fired.
+          example: INTRADAY
+        title:
+          type: string
+          description: Rendered alert title.
+          example: "Breakout strength improving"
+        body:
+          type: string
+          nullable: true
+          description: Rendered alert body/summary text.
+          example: "Score crossed 80 with ADX rising and RelVol 1.8x"
+        score_at_fire:
+          type: number
+          format: float
+          nullable: true
+          description: Momentum score at the time of firing.
+          example: 82.5
+        next_action_code:
+          type: string
+          nullable: true
+          description: Next action code at the time of firing.
+          example: BUY_BREAKOUT
+        channels_summary:
+          type: object
+          nullable: true
+          additionalProperties: { type: object }
+          description: Delivery status keyed by channel.
 
     DrawerDiagnostics:
       type: object

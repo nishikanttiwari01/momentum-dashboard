@@ -5,10 +5,9 @@
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
  * OpenAPI spec version: 0.7.0
  */
-import type { DrawerAlertEvent } from './drawerAlertEvent';
 
-export interface DrawerAlerts {
-  /** Alerts fired for this symbol during the recent lookback window. */
-  recent_events?: DrawerAlertEvent[];
-  suggestions?: string[];
-}
+/**
+ * Delivery status keyed by channel.
+ * @nullable
+ */
+export type DrawerAlertEventChannelsSummary = {[key: string]: { [key: string]: unknown }} | null;
