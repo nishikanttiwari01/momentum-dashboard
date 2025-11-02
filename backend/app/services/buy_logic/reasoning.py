@@ -1,70 +1,164 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, time, timezone
 from functools import lru_cache
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+
+from zoneinfo import ZoneInfo
 
 from app.core import config as app_config
 
-__all__ = [
-    "evaluate_buy_gate",
-    "compose_human_reason",
-    "get_threshold_float",
-    "get_threshold_range",
+if TYPE_CHECKING:  # pragma: no cover - type checking only
+    from app.core.config import (
+        StrategyBuyPersistenceConfig,
+        StrategyBuyProfileConfig,
+        StrategyConfig,
+    )
+
+__all__ = ["evaluate_buy_gate"]
+
+
+LUNCH_WINDOW_DEFAULT: Tuple[time, time] = (time(12, 0), time(13, 15))
+
+
+@dataclass
+class CheckResult:
+    code: str
+    label: str
+    rule: str
+    actual: str
+    passed: bool
+    value: float | None = None
+
+    def to_dict(self, *, include_value: bool = False) -> Dict[str, Any]:
+        data = {
+            "code": self.code,
+            "label": self.label,
+            "rule": self.rule,
+            "actual": self.actual,
+            "pass": self.passed,
+        }
+        if include_value:
+            data["value"] = self.value
+        return data
+
+
+CHECK_LABELS: Dict[str, str] = {
+    "min_score": "Score",
+    "pivot_clear_pct": "Pivot Clear %",
+    "base_len_min_bars": "Base Length",
+    "prox52w_min_pct": "52W Proximity %",
+    "relvol20_min": "RelVol20",
+    "intraday_relvol_min": "Intraday RelVol",
+    "adx14_min": "ADX14",
+    "atr_pct": "ATR% (10d)",
+    "day_change_max_pct": "Day % Change",
+    "liquidity_min_traded_value_20d": "Liquidity (Median 20D)",
+    "starter_score_min_intraday": "Starter Score",
+    "persistence": "Persistence",
+}
+
+EOD_CHECK_ORDER: List[str] = [
+    "min_score",
+    "pivot_clear_pct",
+    "base_len_min_bars",
+    "prox52w_min_pct",
+    "relvol20_min",
+    "adx14_min",
+    "atr_pct",
+    "day_change_max_pct",
+    "liquidity_min_traded_value_20d",
 ]
 
-OptionalFloat = float | None
+INTRADAY_CHECK_ORDER: List[str] = [
+    "starter_score_min_intraday",
+    "intraday_relvol_min",
+    "adx14_min",
+    "prox52w_min_pct",
+    "atr_pct",
+    "day_change_max_pct",
+    "liquidity_min_traded_value_20d",
+    "persistence",
+]
 
 
 @lru_cache(maxsize=1)
-def _alert_thresholds() -> Dict[str, Any]:
-    try:
-        settings = app_config.get_settings()
-        alerts_cfg = getattr(settings, "alerts", {}) or {}
-        if hasattr(alerts_cfg, "model_dump"):
-            alerts_cfg = alerts_cfg.model_dump()
-        thresholds = alerts_cfg.get("thresholds") or {}
-        if hasattr(thresholds, "model_dump"):
-            thresholds = thresholds.model_dump()
-        if isinstance(thresholds, dict):
-            return dict(thresholds)
-    except Exception:
-        pass
-    return {}
+def _strategy() -> "StrategyConfig":
+    return app_config.get_settings().strategy
 
 
-def _threshold_float(name: str, default: float) -> float:
-    values = _alert_thresholds()
-    val = values.get(name)
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return default
+@lru_cache(maxsize=1)
+def _trading_window() -> Tuple[ZoneInfo, time, time]:
+    settings = app_config.get_settings()
+    tw = getattr(settings.scheduler, "trading_window", None)
+    tz_name = getattr(tw, "tz", None) or "Asia/Kolkata"
+    tz = ZoneInfo(tz_name)
+    start_str = getattr(tw, "start", None) or "09:15"
+    end_str = getattr(tw, "end", None) or "15:30"
+    return tz, _parse_time(start_str, default=time(9, 15)), _parse_time(end_str, default=time(15, 30))
 
 
-def _threshold_range(name: str, default: Tuple[float, float]) -> Tuple[float, float]:
-    values = _alert_thresholds()
-    val = values.get(name)
-    if isinstance(val, (list, tuple)) and len(val) >= 2:
-        lo_raw, hi_raw = val[0], val[1]
-        lo = float(lo_raw) if lo_raw is not None else default[0]
-        hi = float(hi_raw) if hi_raw is not None else default[1]
-        return (lo, hi)
+def _parse_time(value: Any, *, default: time) -> time:
+    if isinstance(value, time):
+        return value
+    if isinstance(value, str):
+        parts = value.strip().split(":")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            second = int(parts[2]) if len(parts) > 2 else 0
+            return time(hour % 24, minute % 60, second % 60)
+        except Exception:
+            return default
     return default
 
 
-def _maybe_float(value: Any) -> OptionalFloat:
-    if value is None:
+def _coerce_float(value: Any) -> float | None:
+    if value in (None, "", "None"):
         return None
     try:
         f = float(value)
     except (TypeError, ValueError):
         return None
-    if f != f or f in (float("inf"), float("-inf")):  # NaN check
+    if f != f or f in (float("inf"), float("-inf")):
         return None
     return f
 
 
-def _format_percent(value: OptionalFloat, decimals: int = 1, include_sign: bool = False) -> str:
+def _coerce_int(value: Any) -> Optional[int]:
+    val = _coerce_float(value)
+    if val is None:
+        return None
+    try:
+        return int(round(val))
+    except Exception:
+        return None
+
+
+def _boolish(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if not s:
+            return None
+        if s in {"1", "true", "yes", "y", "on"}:
+            return True
+        if s in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
+def _format_number(value: Optional[float], *, decimals: int = 0) -> str:
+    if value is None:
+        return "NA"
+    return f"{value:.{decimals}f}"
+
+
+def _format_percent(value: Optional[float], *, decimals: int = 1, include_sign: bool = True) -> str:
     if value is None:
         return "NA"
     if include_sign:
@@ -72,780 +166,450 @@ def _format_percent(value: OptionalFloat, decimals: int = 1, include_sign: bool 
     return f"{value:.{decimals}f}%"
 
 
-def _format_multiplier(value: OptionalFloat, decimals: int = 1) -> str:
+def _format_multiplier(value: Optional[float], *, decimals: int = 1) -> str:
     if value is None:
         return "NA"
     return f"{value:.{decimals}f}x"
 
 
-def _format_int(value: OptionalFloat) -> str:
+def _format_currency_cr(value: Optional[float]) -> str:
     if value is None:
         return "NA"
-    return str(int(round(value)))
+    cr = value / 1e7
+    return f"₹{cr:.1f} Cr"
 
 
-def _format_liquidity(value: OptionalFloat) -> str:
-    if value is None:
-        return "NA"
-    return f"{value / 1e7:.1f}Cr"
-
-
-ReasonItem = Tuple[str, str, str]
-ReasonMetric = Tuple[str, str, str, bool]
-
-
-def _comparison_symbols(comparator: str) -> Tuple[str, str]:
-    if comparator == "ge":
-        return "≥", "<"
-    if comparator == "le":
-        return "≤", ">"
-    raise ValueError(f"Unsupported comparator '{comparator}'")
-
-
-def _format_threshold_display(
-    value_display: str,
-    rule_display: str,
-    *,
-    passed: bool,
-    comparator: str,
-) -> Tuple[str, str]:
-    pass_symbol, fail_symbol = _comparison_symbols(comparator)
-    if value_display == "NA":
-        return "NA", f"{pass_symbol} {rule_display}"
-    symbol = pass_symbol if passed else fail_symbol
-    return f"{value_display} {symbol} {rule_display}", f"{pass_symbol} {rule_display}"
-
-
-def _format_range_display(
-    value_display: str,
-    lower_value: OptionalFloat,
-    upper_value: OptionalFloat,
-    lower_display: str,
-    upper_display: str,
-    *,
-    passed: bool,
-    raw_value: OptionalFloat,
-) -> Tuple[str, str]:
-    rule_display = f"in {lower_display}...{upper_display}"
-    if value_display == "NA":
-        return "NA", rule_display
-    if passed or raw_value is None or lower_value is None or upper_value is None:
-        return f"{value_display} in {lower_display}...{upper_display}", rule_display
-    try:
-        raw = float(raw_value)
-    except (TypeError, ValueError):
-        return f"{value_display} in {lower_display}...{upper_display}", rule_display
-    if raw < lower_value:
-        return f"{value_display} < {lower_display}", rule_display
-    if raw > upper_value:
-        return f"{value_display} > {upper_display}", rule_display
-    return f"{value_display} in {lower_display}...{upper_display}", rule_display
-
-
-def _format_boolean_display(
-    value_display: str,
-    rule_display: str,
-    *,
-    passed: bool,
-) -> Tuple[str, str]:
-    if value_display == "NA":
-        return "NA", rule_display
-    comparator = "matches" if passed else "≠"
-    return f"{value_display} {comparator} {rule_display}", rule_display
-
-
-def _compose_reason_string(items: List[ReasonItem]) -> str:
-    return " | ".join(f"{label}: {value} ({desc})" for label, value, desc in items if label)
-
-
-def compose_human_reason(items: List[ReasonItem]) -> str:
-    return _compose_reason_string(items)
-
-
-def _summarize_score(value: Any, minimum: float, label: str = "Score") -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return label, "NA", "score unavailable", False
-    value_str = _format_int(val)
-    if val >= minimum:
-        return label, value_str, "quality met", True
-    return label, value_str, "strength low", False
-
-
-def _summarize_pivot(value: Any, lower: float, upper: float) -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return "pivot_clear", "NA", "pivot data missing", False
-    value_str = _format_percent(val, include_sign=True)
-    if val < 0:
-        desc = "below resistance"
-    elif val < lower:
-        desc = "testing breakout"
-    elif val <= upper:
-        desc = "clean breakout"
+def _format_range(lo: Optional[float], hi: Optional[float], *, unit: str) -> str:
+    if unit == "percent":
+        conv = lambda v: _format_percent(v, decimals=1, include_sign=True)
+    elif unit == "multiplier":
+        conv = lambda v: _format_multiplier(v, decimals=1)
     else:
-        desc = "overextended"
-    passed = lower <= val <= upper
-    return "pivot_clear", value_str, desc, passed
+        conv = lambda v: _format_number(v, decimals=1)
+
+    if lo is not None and hi is not None:
+        return f"in [{conv(lo)}, {conv(hi)}]"
+    if lo is not None:
+        return f">= {conv(lo)}"
+    if hi is not None:
+        return f"<= {conv(hi)}"
+    return "configured"
 
 
-def _summarize_base_len(value: Any, minimum: float) -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return "base_len", "NA", "base data unavailable", False
-    length = int(round(val))
-    if length < 10:
-        desc = "no clear base"
-    elif length < minimum:
-        desc = "early consolidation"
-    elif length <= 25:
-        desc = "ready to break"
-    elif length <= 35:
-        desc = "extended base"
-    else:
-        desc = "stale setup"
-    passed = length >= minimum
-    return "base_len", str(length), desc, passed
+def _resolve_eval_dt(row: Dict[str, Any], eval_time: Optional[datetime]) -> datetime:
+    candidates: List[datetime] = []
+    raw_as_of = row.get("as_of")
+    if isinstance(raw_as_of, datetime):
+        dt = raw_as_of if raw_as_of.tzinfo else raw_as_of.replace(tzinfo=timezone.utc)
+        candidates.append(dt)
+    elif isinstance(raw_as_of, str) and raw_as_of.strip():
+        text = raw_as_of.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+            dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            candidates.append(dt)
+        except Exception:
+            pass
+    if eval_time:
+        candidates.append(eval_time if eval_time.tzinfo else eval_time.replace(tzinfo=timezone.utc))
+    if not candidates:
+        candidates.append(datetime.now(timezone.utc))
+    return candidates[0].astimezone(timezone.utc)
 
 
-def _summarize_relvol(value: Any, minimum: float, label: str = "RelVol") -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return label, "NA", "volume data missing", False
-    value_str = _format_multiplier(val)
-    if val < 1.0:
-        desc = "quiet volume"
-    elif val < minimum:
-        desc = "average volume"
-    elif val <= 2.0:
-        desc = "strong buying"
-    else:
-        desc = "high-volume breakout"
-    passed = val >= minimum
-    return label, value_str, desc, passed
+def _minutes_since_open(eval_dt: datetime) -> int:
+    tz, start, _ = _trading_window()
+    local_dt = eval_dt.astimezone(tz)
+    minutes = (local_dt.hour * 60 + local_dt.minute) - (start.hour * 60 + start.minute)
+    return max(minutes, 0)
 
 
-def _summarize_atr(value: Any, lower: float, upper: float) -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return "ATR10", "NA", "ATR unavailable", False
-    value_str = _format_percent(val)
-    if val < lower:
-        desc = "low volatility"
-    elif val <= upper:
-        desc = "healthy volatility"
-    else:
-        desc = "too volatile"
-    passed = lower <= val <= upper
-    return "ATR10", value_str, desc, passed
+def _in_lunch_window(eval_dt: datetime, window: Tuple[time, time]) -> bool:
+    tz, _, _ = _trading_window()
+    local_dt = eval_dt.astimezone(tz)
+    start, end = window
+    t = local_dt.time()
+    if start <= end:
+        return start <= t < end
+    return t >= start or t < end
 
 
-def _summarize_adx(value: Any, minimum: float) -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return "ADX", "NA", "trend data missing", False
-    value_str = _format_int(val)
-    if val < 20:
-        desc = "weak trend"
-    elif val < minimum:
-        desc = "emerging trend"
-    elif val <= 35:
-        desc = "strong trend"
-    else:
-        desc = "euphoric trend"
-    passed = val >= minimum
-    return "ADX", value_str, desc, passed
+def _resolve_profile(is_eod: bool) -> Tuple[str, Optional["StrategyBuyProfileConfig"]]:
+    profiles = _strategy().profiles.buy or {}
+    code = "swing_eod" if is_eod else "intraday_breakout"
+    profile = profiles.get(code)
+    return code, profile
 
 
-def _summarize_proximity(value: Any, minimum: float) -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return "prox52", "NA", "proximity unknown", False
-    value_str = _format_percent(val, include_sign=True)
-    if val < -15:
-        desc = "far from highs"
-    elif val < minimum:
-        desc = "building base"
-    elif val <= 0:
-        desc = "near breakout zone"
-    else:
-        desc = "at highs"
-    passed = val >= minimum
-    return "prox52", value_str, desc, passed
+def _build_min_score(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_float(getattr(profile, "min_score", None))
+    value = _coerce_float(row.get("score"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {_format_number(threshold, decimals=0)}" if threshold is not None else ">= N/A"
+    actual = _format_number(value, decimals=0)
+    return CheckResult("min_score", CHECK_LABELS["min_score"], rule, actual, passed, value=value)
 
 
-def _summarize_day_change(value: Any, maximum: float, label: str = "day_change") -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return label, "NA", "day change unknown", False
-    value_str = _format_percent(val, include_sign=True)
-    if val > maximum:
-        return label, value_str, "too extended today", False
-    if val >= 0:
-        return label, value_str, "calm session", True
-    return label, value_str, "pullback day", True
+def _build_starter_score(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_float(getattr(profile, "starter_score_min_intraday", None))
+    value = _coerce_float(row.get("starter_score") or row.get("score"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {_format_number(threshold, decimals=0)}" if threshold is not None else ">= N/A"
+    actual = _format_number(value, decimals=0)
+    return CheckResult(
+        "starter_score_min_intraday",
+        CHECK_LABELS["starter_score_min_intraday"],
+        rule,
+        actual,
+        passed,
+        value=value,
+    )
 
 
-def _summarize_liquidity(value: Any, minimum: float) -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return "liquidity", "NA", "liquidity unknown", False
-    value_str = _format_liquidity(val)
-    if val >= minimum:
-        return "liquidity", value_str, "adequate liquidity", True
-    return "liquidity", value_str, "thin liquidity", False
-
-
-def _summarize_rsi(value: Any, lower: float, upper: float) -> ReasonMetric:
-    val = _maybe_float(value)
-    if val is None:
-        return "RSI", "NA", "RSI unavailable", False
-    value_str = _format_int(val)
-    if val < lower:
-        desc = "momentum weak"
-    elif val <= upper:
-        desc = "bullish momentum"
-    else:
-        desc = "overbought"
-    passed = lower <= val <= upper
-    return "RSI", value_str, desc, passed
-
-
-def _summarize_adx_slope(value: Any) -> ReasonMetric:
-    if value is True:
-        return "ADX_slope", "+", "trend strength rising", True
-    if value is False:
-        return "ADX_slope", "flat", "trend not improving", False
-    return "ADX_slope", "NA", "trend slope unknown", False
-
-
-def _summarize_persistence(value: Any) -> ReasonMetric:
-    if value is True:
-        return "persistence", "Yes", "holding pivot/VWAP", True
-    if value is False:
-        return "persistence", "No", "lost pivot/VWAP", False
-    return "persistence", "NA", "persistence unknown", False
-
-
-def _build_eod_buy_metrics(row: Dict[str, Any]) -> Tuple[bool, List[ReasonItem], List[Dict[str, Any]]]:
-    reason_items: List[ReasonItem] = []
-    checklist_items: List[Dict[str, Any]] = []
+def _build_pivot_clear(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    rng = getattr(profile, "pivot_clear_pct", None)
+    lo = _coerce_float(getattr(rng, "min", None)) if rng else None
+    hi = _coerce_float(getattr(rng, "max", None)) if rng else None
+    value = _coerce_float(row.get("pivot_clear_pct"))
     passed = True
-
-    def add(
-        metric: ReasonMetric,
-        *,
-        enforce: bool = True,
-        code: str | None = None,
-        label_override: str | None = None,
-        value_vs_rule: str | None = None,
-        rule_display: str | None = None,
-    ) -> None:
-        nonlocal passed
-        label, value_str, desc, ok = metric
-        factor_label = label_override or label.replace("_", " ").title()
-        metric_code = code or label
-        reason_items.append((factor_label, value_str, desc))
-        checklist_items.append(
-            {
-                "code": metric_code,
-                "factor": factor_label,
-                "value_display": value_str,
-                "value_vs_rule": value_vs_rule or value_str,
-                "rule_display": rule_display,
-                "description": desc,
-                "passed": bool(ok),
-                "enforced": bool(enforce),
-            }
-        )
-        if enforce:
-            passed = passed and bool(ok)
-
-    score_min = _threshold_float("breakout_score_min", 70.0)
-    score_metric = _summarize_score(row.get("score"), score_min)
-    score_rule_value = _format_int(score_min)
-    score_vr, score_rule_disp = _format_threshold_display(
-        score_metric[1], score_rule_value, passed=score_metric[3], comparator="ge"
-    )
-    add(
-        score_metric,
-        code="score",
-        label_override="Score",
-        value_vs_rule=score_vr,
-        rule_display=score_rule_disp,
-    )
-
-    pivot_lo, pivot_hi = _threshold_range("breakout_pivot_clear_pct_range", (1.0, 5.0))
-    pivot_val = _maybe_float(row.get("pivot_clear_pct"))
-    pivot_metric = _summarize_pivot(pivot_val, pivot_lo, pivot_hi)
-    pivot_vr, pivot_rule_disp = _format_range_display(
-        pivot_metric[1],
-        pivot_lo,
-        pivot_hi,
-        _format_percent(pivot_lo, include_sign=True),
-        _format_percent(pivot_hi, include_sign=True),
-        passed=pivot_metric[3],
-        raw_value=pivot_val,
-    )
-    add(
-        pivot_metric,
-        code="pivot_clear_pct",
-        label_override="Pivot Clear %",
-        value_vs_rule=pivot_vr,
-        rule_display=pivot_rule_disp,
-    )
-
-    base_len_min = _threshold_float("base_len_min_bars", 15.0)
-    if base_len_min <= 0:
-        base_len_min = 15.0
-    base_val = _maybe_float(row.get("base_len_bars"))
-    base_metric = _summarize_base_len(base_val, base_len_min)
-    base_rule_value = f"{int(round(base_len_min))} bars"
-    base_vr, base_rule_disp = _format_threshold_display(
-        base_metric[1], base_rule_value, passed=base_metric[3], comparator="ge"
-    )
-    add(
-        base_metric,
-        code="base_len_bars",
-        label_override="Base Length",
-        value_vs_rule=base_vr,
-        rule_display=base_rule_disp,
-    )
-
-    relvol_min = _threshold_float("breakout_relvol20_min", 1.5)
-    relvol_val = _maybe_float(row.get("relvol20"))
-    relvol_metric = _summarize_relvol(relvol_val, relvol_min, label="RelVol(20)")
-    relvol_rule_value = _format_multiplier(relvol_min)
-    relvol_vr, relvol_rule_disp = _format_threshold_display(
-        relvol_metric[1], relvol_rule_value, passed=relvol_metric[3], comparator="ge"
-    )
-    add(
-        relvol_metric,
-        code="relvol20",
-        label_override="RelVol(20)",
-        value_vs_rule=relvol_vr,
-        rule_display=relvol_rule_disp,
-    )
-
-    atr_lo, atr_hi = _threshold_range("atr10_pct_range", (3.0, 7.0))
-    atr_source = row.get("atr10_pct")
-    if atr_source is None:
-        atr_source = row.get("atr_pct")
-    atr_val = _maybe_float(atr_source)
-    atr_metric = _summarize_atr(atr_val, atr_lo, atr_hi)
-    atr_vr, atr_rule_disp = _format_range_display(
-        atr_metric[1],
-        atr_lo,
-        atr_hi,
-        _format_percent(atr_lo),
-        _format_percent(atr_hi),
-        passed=atr_metric[3],
-        raw_value=atr_val,
-    )
-    add(
-        atr_metric,
-        code="atr10_pct",
-        label_override="ATR10%",
-        value_vs_rule=atr_vr,
-        rule_display=atr_rule_disp,
-    )
-
-    adx_min = _threshold_float("adx14_min", 22.0)
-    adx_source = row.get("adx")
-    if adx_source is None:
-        adx_source = row.get("adx14")
-    adx_val = _maybe_float(adx_source)
-    adx_metric = _summarize_adx(adx_val, adx_min)
-    adx_rule_value = _format_int(adx_min)
-    adx_vr, adx_rule_disp = _format_threshold_display(
-        adx_metric[1], adx_rule_value, passed=adx_metric[3], comparator="ge"
-    )
-    add(
-        adx_metric,
-        code="adx14",
-        label_override="ADX(14)",
-        value_vs_rule=adx_vr,
-        rule_display=adx_rule_disp,
-    )
-
-    prox_min = _threshold_float("proximity_52w_min_pct", -8.0)
-    prox_source = row.get("pct_from_52w_high")
-    if prox_source is None:
-        prox_source = row.get("proximity_52w_high_pct")
-    prox_val = _maybe_float(prox_source)
-    prox_metric = _summarize_proximity(prox_val, prox_min)
-    prox_rule_value = _format_percent(prox_min, include_sign=True)
-    prox_vr, prox_rule_disp = _format_threshold_display(
-        prox_metric[1], prox_rule_value, passed=prox_metric[3], comparator="ge"
-    )
-    add(
-        prox_metric,
-        code="pct_from_52w_high",
-        label_override="52W Proximity",
-        value_vs_rule=prox_vr,
-        rule_display=prox_rule_disp,
-    )
-
-    day_cap = _threshold_float("day_change_cap_breakout_pct", 6.0)
-    day_source = row.get("change_pct")
-    if day_source is None:
-        day_source = row.get("pct_today")
-    day_val = _maybe_float(day_source)
-    day_metric = _summarize_day_change(day_val, day_cap)
-    day_rule_value = _format_percent(day_cap, include_sign=True)
-    day_vr, day_rule_disp = _format_threshold_display(
-        day_metric[1], day_rule_value, passed=day_metric[3], comparator="le"
-    )
-    add(
-        day_metric,
-        code="day_change_pct",
-        label_override="Day % Change",
-        value_vs_rule=day_vr,
-        rule_display=day_rule_disp,
-    )
-
-    liquidity_floor = _threshold_float("liquidity_floor_rupees", 5e7)
-    liquidity_source = row.get("liquidity")
-    if liquidity_source is None:
-        liquidity_source = row.get("median_traded_value_20d")
-    liquidity_val = _maybe_float(liquidity_source)
-    liquidity_metric = _summarize_liquidity(liquidity_val, liquidity_floor)
-    liquidity_rule_value = _format_liquidity(liquidity_floor)
-    liquidity_vr, liquidity_rule_disp = _format_threshold_display(
-        liquidity_metric[1],
-        liquidity_rule_value,
-        passed=liquidity_metric[3],
-        comparator="ge",
-    )
-    add(
-        liquidity_metric,
-        code="liquidity",
-        label_override="Liquidity (Median 20D)",
-        value_vs_rule=liquidity_vr,
-        rule_display=liquidity_rule_disp,
-    )
-
-    return passed, reason_items, checklist_items
+    if lo is not None and (value is None or value < lo):
+        passed = False
+    if hi is not None and (value is None or value > hi):
+        passed = False
+    rule = _format_range(lo, hi, unit="percent")
+    actual = _format_percent(value, decimals=1, include_sign=True)
+    return CheckResult("pivot_clear_pct", CHECK_LABELS["pivot_clear_pct"], rule, actual, passed, value=value)
 
 
-def _build_intraday_buy_metrics(row: Dict[str, Any]) -> Tuple[bool, List[ReasonItem], List[Dict[str, Any]]]:
-    reason_items: List[ReasonItem] = []
-    checklist_items: List[Dict[str, Any]] = []
+def _build_base_length(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_int(getattr(profile, "base_len_min_bars", None))
+    value = _coerce_int(row.get("base_len_bars"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {threshold} bars" if threshold is not None else ">= N/A"
+    actual = f"{value} bars" if value is not None else "NA"
+    return CheckResult("base_len_min_bars", CHECK_LABELS["base_len_min_bars"], rule, actual, passed, value=float(value) if value is not None else None)
+
+
+def _build_proximity(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_float(getattr(profile, "prox52w_min_pct", None))
+    value = _coerce_float(row.get("proximity_52w_high_pct") or row.get("pct_from_52w_high"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {_format_percent(threshold, decimals=1, include_sign=True)}" if threshold is not None else ">= N/A"
+    actual = _format_percent(value, decimals=1, include_sign=True)
+    return CheckResult("prox52w_min_pct", CHECK_LABELS["prox52w_min_pct"], rule, actual, passed, value=value)
+
+
+def _build_relvol20(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_float(getattr(profile, "relvol20_min", None))
+    value = _coerce_float(row.get("relvol20"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {_format_multiplier(threshold, decimals=1)}" if threshold is not None else ">= N/A"
+    actual = _format_multiplier(value, decimals=1)
+    return CheckResult("relvol20_min", CHECK_LABELS["relvol20_min"], rule, actual, passed, value=value)
+
+
+def _build_intraday_relvol(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_float(getattr(profile, "intraday_relvol_min", None))
+    value = _coerce_float(row.get("intraday_relvol") or row.get("relvol20"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {_format_multiplier(threshold, decimals=1)}" if threshold is not None else ">= N/A"
+    actual = _format_multiplier(value, decimals=1)
+    return CheckResult("intraday_relvol_min", CHECK_LABELS["intraday_relvol_min"], rule, actual, passed, value=value)
+
+
+def _build_adx14(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_float(getattr(profile, "adx14_min", None))
+    value = _coerce_float(row.get("adx14") or row.get("adx"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {_format_number(threshold, decimals=0)}" if threshold is not None else ">= N/A"
+    actual = _format_number(value, decimals=0)
+    return CheckResult("adx14_min", CHECK_LABELS["adx14_min"], rule, actual, passed, value=value)
+
+
+def _build_atr_pct(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    rng = getattr(profile, "atr_pct", None)
+    lo = _coerce_float(getattr(rng, "min", None)) if rng else None
+    hi = _coerce_float(getattr(rng, "max", None)) if rng else None
+    value = _coerce_float(row.get("atr10_pct") or row.get("atr_pct") or row.get("atr14_pct"))
     passed = True
+    if lo is not None and (value is None or value < lo):
+        passed = False
+    if hi is not None and (value is None or value > hi):
+        passed = False
+    rule = _format_range(lo, hi, unit="percent")
+    actual = _format_percent(value, decimals=1, include_sign=False)
+    return CheckResult("atr_pct", CHECK_LABELS["atr_pct"], rule, actual, passed, value=value)
 
-    def add(
-        metric: ReasonMetric,
-        *,
-        enforce: bool = True,
-        code: str | None = None,
-        label_override: str | None = None,
-        value_vs_rule: str | None = None,
-        rule_display: str | None = None,
-    ) -> None:
-        nonlocal passed
-        label, value_str, desc, ok = metric
-        factor_label = label_override or label.replace("_", " ").title()
-        metric_code = code or label
-        reason_items.append((factor_label, value_str, desc))
-        checklist_items.append(
-            {
-                "code": metric_code,
-                "factor": factor_label,
-                "value_display": value_str,
-                "value_vs_rule": value_vs_rule or value_str,
-                "rule_display": rule_display,
-                "description": desc,
-                "passed": bool(ok),
-                "enforced": bool(enforce),
-            }
+
+def _build_day_change(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    cap = _coerce_float(getattr(profile, "day_change_max_pct", None))
+    value = _coerce_float(row.get("change_pct") or row.get("pct_today"))
+    passed = value is not None and cap is not None and value <= cap
+    rule = f"<= {_format_percent(cap, decimals=1, include_sign=True)}" if cap is not None else "<= N/A"
+    actual = _format_percent(value, decimals=1, include_sign=True)
+    return CheckResult("day_change_max_pct", CHECK_LABELS["day_change_max_pct"], rule, actual, passed, value=value)
+
+
+def _build_liquidity(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
+    threshold = _coerce_float(getattr(profile, "liquidity_min_traded_value_20d", None))
+    value = _coerce_float(row.get("liquidity") or row.get("median_traded_value_20d"))
+    passed = value is not None and threshold is not None and value >= threshold
+    rule = f">= {_format_currency_cr(threshold)}" if threshold is not None else ">= N/A"
+    actual = _format_currency_cr(value)
+    return CheckResult(
+        "liquidity_min_traded_value_20d",
+        CHECK_LABELS["liquidity_min_traded_value_20d"],
+        rule,
+        actual,
+        passed,
+        value=value,
+    )
+
+
+def _build_persistence(
+    row: Dict[str, Any],
+    profile: "StrategyBuyProfileConfig",
+    *,
+    eval_dt: datetime,
+) -> Tuple[CheckResult, Dict[str, Any]]:
+    persistence_cfg = getattr(profile, "persistence", None)
+    if not isinstance(persistence_cfg, object):
+        return (
+            CheckResult("persistence", CHECK_LABELS["persistence"], "configured", "NA", False, value=None),
+            {},
         )
-        if enforce:
-            passed = passed and bool(ok)
 
-    score_min = _threshold_float("breakout_score_min", 70.0)
-    base_score_metric = _summarize_score(row.get("score"), score_min)
-    base_score_rule = _format_int(score_min)
-    base_score_vr, base_score_rule_disp = _format_threshold_display(
-        base_score_metric[1], base_score_rule, passed=base_score_metric[3], comparator="ge"
-    )
-    add(
-        base_score_metric,
-        enforce=False,
-        code="score",
-        label_override="Score",
-        value_vs_rule=base_score_vr,
-        rule_display=base_score_rule_disp,
-    )
+    require_above_vwap = bool(getattr(persistence_cfg, "require_above_vwap", False))
+    require_pdh_clear = bool(getattr(persistence_cfg, "require_prev_day_high_clear", False))
+    min_minutes = int(getattr(persistence_cfg, "min_minutes_since_open", 0) or 0)
+    avoid_lunch = bool(getattr(persistence_cfg, "avoid_lunch_window", False))
 
-    pivot_lo, pivot_hi = _threshold_range("breakout_pivot_clear_pct_range", (1.0, 5.0))
-    pivot_val = _maybe_float(row.get("pivot_clear_pct"))
-    pivot_metric = _summarize_pivot(pivot_val, pivot_lo, pivot_hi)
-    pivot_vr, pivot_rule_disp = _format_range_display(
-        pivot_metric[1],
-        pivot_lo,
-        pivot_hi,
-        _format_percent(pivot_lo, include_sign=True),
-        _format_percent(pivot_hi, include_sign=True),
-        passed=pivot_metric[3],
-        raw_value=pivot_val,
-    )
-    add(
-        pivot_metric,
-        enforce=False,
-        code="pivot_clear_pct",
-        label_override="Pivot Clear %",
-        value_vs_rule=pivot_vr,
-        rule_display=pivot_rule_disp,
-    )
+    above_vwap = _boolish(row.get("above_vwap"))
+    if above_vwap is None:
+        price = _coerce_float(row.get("last"))
+        vwap = _coerce_float(row.get("intraday_vwap") or row.get("vwap"))
+        if price is not None and vwap is not None:
+            above_vwap = price >= vwap
 
-    base_len_min = _threshold_float("base_len_min_bars", 15.0)
-    if base_len_min <= 0:
-        base_len_min = 15.0
-    base_val = _maybe_float(row.get("base_len_bars"))
-    base_metric = _summarize_base_len(base_val, base_len_min)
-    base_rule_value = f"{int(round(base_len_min))} bars"
-    base_vr, base_rule_disp = _format_threshold_display(
-        base_metric[1], base_rule_value, passed=base_metric[3], comparator="ge"
-    )
-    add(
-        base_metric,
-        enforce=False,
-        code="base_len_bars",
-        label_override="Base Length",
-        value_vs_rule=base_vr,
-        rule_display=base_rule_disp,
-    )
+    prev_day_high_clear = _boolish(row.get("prev_day_high_clear"))
+    if prev_day_high_clear is None:
+        prev_high = _coerce_float(row.get("prev_day_high") or row.get("pdh"))
+        price = _coerce_float(row.get("last"))
+        if prev_high is not None and price is not None:
+            prev_day_high_clear = price >= prev_high
 
-    starter_score_min = _threshold_float("starter_score_min_intraday", 65.0)
-    intraday_score = row.get("intraday_score")
-    if intraday_score is None:
-        intraday_score = row.get("score")
-    starter_metric = _summarize_score(intraday_score, starter_score_min, label="starter_score")
-    starter_rule_value = _format_int(starter_score_min)
-    starter_vr, starter_rule_disp = _format_threshold_display(
-        starter_metric[1], starter_rule_value, passed=starter_metric[3], comparator="ge"
-    )
-    add(
-        starter_metric,
-        code="starter_score",
-        label_override="Starter Score",
-        value_vs_rule=starter_vr,
-        rule_display=starter_rule_disp,
-    )
+    minutes_since_open = _coerce_int(row.get("minutes_since_open"))
+    if minutes_since_open is None:
+        minutes_since_open = _minutes_since_open(eval_dt)
 
-    relvol_source = row.get("intraday_relvol")
-    if relvol_source is None:
-        relvol_source = row.get("relvol20") if row.get("relvol20") is not None else row.get("vol_spike")
-    relvol_val = _maybe_float(relvol_source)
-    relvol_min = _threshold_float("intraday_relvol_min", 1.5)
-    relvol_metric = _summarize_relvol(relvol_val, relvol_min, label="RelVol")
-    relvol_rule_value = _format_multiplier(relvol_min)
-    relvol_vr, relvol_rule_disp = _format_threshold_display(
-        relvol_metric[1], relvol_rule_value, passed=relvol_metric[3], comparator="ge"
-    )
-    add(
-        relvol_metric,
-        code="intraday_relvol",
-        label_override="RelVol",
-        value_vs_rule=relvol_vr,
-        rule_display=relvol_rule_disp,
-    )
+    lunch_flag = _boolish(row.get("in_lunch_window"))
+    if lunch_flag is None:
+        lunch_flag = _in_lunch_window(eval_dt, LUNCH_WINDOW_DEFAULT)
 
-    adx_min = _threshold_float("adx14_min", 22.0)
-    adx_source = row.get("adx")
-    if adx_source is None:
-        adx_source = row.get("adx14")
-    adx_val = _maybe_float(adx_source)
-    adx_metric = _summarize_adx(adx_val, adx_min)
-    adx_rule_value = _format_int(adx_min)
-    adx_vr, adx_rule_disp = _format_threshold_display(
-        adx_metric[1], adx_rule_value, passed=adx_metric[3], comparator="ge"
-    )
-    add(
-        adx_metric,
-        code="adx14",
-        label_override="ADX(14)",
-        value_vs_rule=adx_vr,
-        rule_display=adx_rule_disp,
-    )
+    passed = True
+    if require_above_vwap and not (above_vwap is True):
+        passed = False
+    if require_pdh_clear and not (prev_day_high_clear is True):
+        passed = False
+    if min_minutes > 0 and (minutes_since_open is None or minutes_since_open < min_minutes):
+        passed = False
+    if avoid_lunch and lunch_flag:
+        passed = False
 
-    slope_metric = _summarize_adx_slope(row.get("adx_slope_pos"))
-    slope_vr, slope_rule_disp = _format_boolean_display(
-        slope_metric[1], "rising", passed=slope_metric[3]
-    )
-    add(
-        slope_metric,
-        code="adx_slope_pos",
-        label_override="ADX Slope",
-        value_vs_rule=slope_vr,
-        rule_display=slope_rule_disp,
-    )
+    requirements: List[str] = []
+    if require_above_vwap:
+        requirements.append("above VWAP")
+    if require_pdh_clear:
+        requirements.append("PDH cleared")
+    if min_minutes > 0:
+        requirements.append(f">= {min_minutes}m from open")
+    if avoid_lunch:
+        requirements.append("outside lunch")
+    rule = ", ".join(requirements) if requirements else "configured"
 
-    rsi_source = row.get("rsi")
-    if rsi_source is None:
-        rsi_source = row.get("rsi14")
-    rsi_val = _maybe_float(rsi_source)
-    rsi_metric = _summarize_rsi(rsi_val, 58.0, 70.0)
-    rsi_vr, rsi_rule_disp = _format_range_display(
-        rsi_metric[1],
-        58.0,
-        70.0,
-        _format_int(58.0),
-        _format_int(70.0),
-        passed=rsi_metric[3],
-        raw_value=rsi_val,
-    )
-    add(
-        rsi_metric,
-        code="rsi14",
-        label_override="RSI(14)",
-        value_vs_rule=rsi_vr,
-        rule_display=rsi_rule_disp,
-    )
-
-    prox_min = _threshold_float("proximity_52w_min_pct", -8.0)
-    prox_source = row.get("pct_from_52w_high")
-    if prox_source is None:
-        prox_source = row.get("proximity_52w_high_pct")
-    prox_val = _maybe_float(prox_source)
-    prox_metric = _summarize_proximity(prox_val, prox_min)
-    prox_rule_value = _format_percent(prox_min, include_sign=True)
-    prox_vr, prox_rule_disp = _format_threshold_display(
-        prox_metric[1], prox_rule_value, passed=prox_metric[3], comparator="ge"
-    )
-    add(
-        prox_metric,
-        code="pct_from_52w_high",
-        label_override="52W Proximity",
-        value_vs_rule=prox_vr,
-        rule_display=prox_rule_disp,
-    )
-
-    atr_lo, atr_hi = _threshold_range("atr10_pct_range", (3.0, 7.0))
-    atr_source = row.get("atr10_pct")
-    if atr_source is None:
-        atr_source = row.get("atr_pct")
-    atr_val = _maybe_float(atr_source)
-    atr_metric = _summarize_atr(atr_val, atr_lo, atr_hi)
-    atr_vr, atr_rule_disp = _format_range_display(
-        atr_metric[1],
-        atr_lo,
-        atr_hi,
-        _format_percent(atr_lo),
-        _format_percent(atr_hi),
-        passed=atr_metric[3],
-        raw_value=atr_val,
-    )
-    add(
-        atr_metric,
-        code="atr10_pct",
-        label_override="ATR10%",
-        value_vs_rule=atr_vr,
-        rule_display=atr_rule_disp,
-    )
-
-    day_cap = _threshold_float("day_change_cap_starter_pct", 4.0)
-    day_source = row.get("change_pct")
-    if day_source is None:
-        day_source = row.get("pct_today")
-    day_val = _maybe_float(day_source)
-    day_metric = _summarize_day_change(day_val, day_cap)
-    day_rule_value = _format_percent(day_cap, include_sign=True)
-    day_vr, day_rule_disp = _format_threshold_display(
-        day_metric[1], day_rule_value, passed=day_metric[3], comparator="le"
-    )
-    add(
-        day_metric,
-        code="day_change_pct",
-        label_override="Day % Change",
-        value_vs_rule=day_vr,
-        rule_display=day_rule_disp,
-    )
-
-    liquidity_floor = _threshold_float("liquidity_floor_rupees", 5e7)
-    liquidity_source = row.get("liquidity")
-    if liquidity_source is None:
-        liquidity_source = row.get("median_traded_value_20d")
-    liquidity_val = _maybe_float(liquidity_source)
-    liquidity_metric = _summarize_liquidity(liquidity_val, liquidity_floor)
-    liquidity_rule_value = _format_liquidity(liquidity_floor)
-    liquidity_vr, liquidity_rule_disp = _format_threshold_display(
-        liquidity_metric[1],
-        liquidity_rule_value,
-        passed=liquidity_metric[3],
-        comparator="ge",
-    )
-    add(
-        liquidity_metric,
-        code="liquidity",
-        label_override="Liquidity (Median 20D)",
-        value_vs_rule=liquidity_vr,
-        rule_display=liquidity_rule_disp,
-    )
-
-    persistence_metric = _summarize_persistence(row.get("persistence_ok"))
-    persistence_vr, persistence_rule_disp = _format_boolean_display(
-        persistence_metric[1], "Yes", passed=persistence_metric[3]
-    )
-    add(
-        persistence_metric,
-        code="persistence_ok",
-        label_override="Persistence",
-        value_vs_rule=persistence_vr,
-        rule_display=persistence_rule_disp,
-    )
-
-    return passed, reason_items, checklist_items
-
-
-def _assemble_buy_checklist(
-    mode: str,
-    passed: bool,
-    raw_items: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    enforced_items = [item for item in raw_items if item.get("enforced", True)]
-    total_items = len(enforced_items)
-    passed_items = sum(1 for item in enforced_items if item.get("passed"))
-    summary_prefix = "Yes" if passed else "No"
-    summary = (
-        summary_prefix
-        if total_items == 0
-        else f"{summary_prefix} — {passed_items} / {total_items} passed"
-    )
-    fail_parts = [
-        f"{item['factor']} — {item['description']}"
-        for item in raw_items
-        if not item.get("passed") and item.get("description")
+    actual_fragments = [
+        "VWAP ok" if above_vwap else "VWAP fail",
+        "PDH ok" if prev_day_high_clear else "PDH fail",
+        f"{minutes_since_open}m" if minutes_since_open is not None else "mins n/a",
     ]
-    public_items = [{k: v for k, v in item.items() if k != "enforced"} for item in raw_items]
-    return {
-        "label": f"BUY ({mode} gates)",
-        "mode": mode,
-        "passed": passed,
-        "passed_items": passed_items,
-        "total_items": total_items,
-        "summary": summary,
-        "fail_summary": "; ".join(fail_parts) if fail_parts else None,
-        "items": public_items,
+    if avoid_lunch:
+        actual_fragments.append("lunch" if lunch_flag else "not lunch")
+    actual = "; ".join(actual_fragments)
+
+    detail = {
+        "above_vwap": above_vwap,
+        "prev_day_high_clear": prev_day_high_clear,
+        "minutes_since_open": minutes_since_open,
+        "lunch_window_hit": lunch_flag if avoid_lunch else None,
     }
 
-
-def get_threshold_float(name: str, default: float) -> float:
-    return _threshold_float(name, default)
-
-
-def get_threshold_range(name: str, default: Tuple[float, float]) -> Tuple[float, float]:
-    return _threshold_range(name, default)
+    return (
+        CheckResult("persistence", CHECK_LABELS["persistence"], rule, actual, passed, value=None),
+        detail,
+    )
 
 
-def evaluate_buy_gate(row: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
+def _evaluate_checks(
+    row: Dict[str, Any],
+    profile: "StrategyBuyProfileConfig",
+    codes: List[str],
+    *,
+    eval_dt: datetime,
+) -> Tuple[Dict[str, CheckResult], Dict[str, Any]]:
+    checks: Dict[str, CheckResult] = {}
+    meta: Dict[str, Any] = {}
+    for code in codes:
+        builder = _CHECK_BUILDERS.get(code)
+        if builder is None:
+            continue
+        result = builder(row, profile, eval_dt=eval_dt)
+        if isinstance(result, tuple):
+            check, extra = result
+        else:
+            check, extra = result, None
+        checks[code] = check
+        if extra:
+            meta[code] = extra
+    return checks, meta
+
+
+def _compose_reasons(checks: Dict[str, CheckResult], mode: str) -> Tuple[str, List[str]]:
+    parts: List[str] = []
+
+    score_chk = checks.get("min_score")
+    if score_chk and score_chk.passed and score_chk.value is not None:
+        parts.append(f"Score {int(round(score_chk.value))}")
+
+    starter_chk = checks.get("starter_score_min_intraday")
+    if starter_chk and starter_chk.passed and starter_chk.value is not None:
+        parts.append(f"Starter {int(round(starter_chk.value))}")
+
+    relvol_chk = checks.get("relvol20_min")
+    if relvol_chk and relvol_chk.passed and relvol_chk.value is not None:
+        parts.append(f"RelVol20 {relvol_chk.value:.1f}x")
+
+    intrarelvol_chk = checks.get("intraday_relvol_min")
+    if intrarelvol_chk and intrarelvol_chk.passed and intrarelvol_chk.value is not None:
+        parts.append(f"IntrRelVol {intrarelvol_chk.value:.1f}x")
+
+    adx_chk = checks.get("adx14_min")
+    if adx_chk and adx_chk.passed and adx_chk.value is not None:
+        parts.append(f"ADX14 {int(round(adx_chk.value))}")
+
+    atr_chk = checks.get("atr_pct")
+    if atr_chk and atr_chk.passed and atr_chk.value is not None:
+        parts.append(f"ATR% {atr_chk.value:.1f}")
+
+    prox_chk = checks.get("prox52w_min_pct")
+    if prox_chk and prox_chk.passed and prox_chk.value is not None:
+        if prox_chk.value >= -2.0:
+            parts.append("near 52W")
+        else:
+            parts.append(f"52W {prox_chk.value:+.1f}%")
+
+    liquidity_chk = checks.get("liquidity_min_traded_value_20d")
+    if liquidity_chk and liquidity_chk.passed:
+        parts.append("Liquid")
+
+    persistence_chk = checks.get("persistence")
+    if mode == "INTRADAY" and persistence_chk and persistence_chk.passed:
+        parts.append("Persistence ok")
+
+    day_change_chk = checks.get("day_change_max_pct")
+    if day_change_chk and day_change_chk.passed and day_change_chk.value is not None:
+        parts.append(f"Day {day_change_chk.value:+.1f}%")
+
+    ordered = parts[:6]
+    return "; ".join(ordered), ordered
+
+
+def evaluate_buy_gate(row: Dict[str, Any], *, eval_time: Optional[datetime] = None) -> Dict[str, Any]:
+    eval_dt = _resolve_eval_dt(row, eval_time)
     is_eod = bool(row.get("is_eod"))
     mode = "EOD" if is_eod else "INTRADAY"
-    row["buy_mode"] = mode
-    passed, items, raw_checklist = (
-        _build_eod_buy_metrics(row) if is_eod else _build_intraday_buy_metrics(row)
-    )
-    reason = compose_human_reason(items)
-    checklist = _assemble_buy_checklist(mode, passed, raw_checklist)
-    row["buy_checklist"] = checklist
-    return ("Yes" if passed else "No"), reason, checklist
+    profile_code, profile = _resolve_profile(is_eod)
+
+    if profile is None:
+        return {
+            "profile": profile_code,
+            "mode": mode,
+            "flag": False,
+            "pass_count": 0,
+            "total_count": 0,
+            "buy_checks": [],
+            "checks": {},
+            "failed_codes": [],
+            "buy_failed_codes": [],
+            "reasons_inline": "",
+            "reason_parts": [],
+            "eval_ts": eval_dt.isoformat(),
+            "enforced_checks": [],
+        }
+
+    codes = EOD_CHECK_ORDER if is_eod else INTRADAY_CHECK_ORDER
+    checks_map, meta = _evaluate_checks(row, profile, codes, eval_dt=eval_dt)
+
+    enforced = list(getattr(profile, "enforced_checks", []) or [])
+    if not enforced:
+        enforced = EOD_CHECK_ORDER[:] if is_eod else INTRADAY_CHECK_ORDER[:]
+    else:
+        order = EOD_CHECK_ORDER if is_eod else INTRADAY_CHECK_ORDER
+        enforced = [code for code in order if code in enforced]
+    buy_checks: List[Dict[str, Any]] = []
+    pass_count = 0
+    failed_codes: List[str] = []
+
+    for code in enforced:
+        check = checks_map.get(code)
+        if check is None:
+            label = CHECK_LABELS.get(code, code)
+            check = CheckResult(code=code, label=label, rule="not configured", actual="NA", passed=False, value=None)
+            checks_map[code] = check
+        if check.passed:
+            pass_count += 1
+        else:
+            failed_codes.append(code)
+        buy_checks.append(check.to_dict())
+
+    total_count = len(enforced)
+    flag = total_count > 0 and pass_count == total_count
+
+    reasons_inline, reason_parts = _compose_reasons(checks_map, mode)
+
+    evaluation: Dict[str, Any] = {
+        "profile": profile_code,
+        "mode": mode,
+        "flag": flag,
+        "pass_count": pass_count,
+        "total_count": total_count,
+        "buy_checks": buy_checks,
+        "checks": {code: chk.to_dict(include_value=True) for code, chk in checks_map.items()},
+        "failed_codes": failed_codes,
+        "buy_failed_codes": failed_codes,
+        "reasons_inline": reasons_inline,
+        "reason_parts": reason_parts,
+        "human_reason": reasons_inline,
+        "eval_ts": eval_dt.isoformat(),
+        "enforced_checks": enforced,
+    }
+    if meta:
+        evaluation["debug"] = meta
+    return evaluation
+
+
+_CHECK_BUILDERS: Dict[str, Any] = {
+    "min_score": _build_min_score,
+    "pivot_clear_pct": _build_pivot_clear,
+    "base_len_min_bars": _build_base_length,
+    "prox52w_min_pct": _build_proximity,
+    "relvol20_min": _build_relvol20,
+    "intraday_relvol_min": _build_intraday_relvol,
+    "adx14_min": _build_adx14,
+    "atr_pct": _build_atr_pct,
+    "day_change_max_pct": _build_day_change,
+    "liquidity_min_traded_value_20d": _build_liquidity,
+    "starter_score_min_intraday": _build_starter_score,
+    "persistence": _build_persistence,
+}

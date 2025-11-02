@@ -277,12 +277,24 @@ def compute_indicator_frame(df: pd.DataFrame) -> pd.DataFrame:
     ind["proximity_52w_high_pct"] = prox
     ind["high_252"] = high.rolling(252, min_periods=10).max()
 
-    pivot_val, pivot_idx = _swing_high_pivot(high, window=20, gap=2)
+    pivot_gap = 2
+    pivot_val, pivot_idx = _swing_high_pivot(high, window=20, gap=pivot_gap)
     ind["pivot_high_20"] = pivot_val
     ind["pivot_clear_pct"] = (close / pivot_val - 1.0) * 100.0
     # Base length: bars since pivot index (clip >=0)
     bar_index = pd.Series(np.arange(len(df)), index=df.index, dtype=float)
-    ind["base_len_bars"] = (bar_index - pivot_idx).clip(lower=0.0)
+    base_len_raw = (bar_index - pivot_idx).clip(lower=0.0)
+    prev_base_len = base_len_raw.shift(1)
+
+    pivot_changed = pivot_idx.notna() & (~pivot_idx.shift(1).eq(pivot_idx))
+    new_pivot_today = pivot_changed & base_len_raw.le(float(pivot_gap) + 1e-9)
+    carry_condition = (
+        new_pivot_today
+        & ind["pivot_clear_pct"].gt(0)
+        & prev_base_len.notna()
+    )
+    base_len = base_len_raw.where(~carry_condition, prev_base_len + 1.0)
+    ind["base_len_bars"] = base_len
 
     ind["gap_up_pct"] = (adj["open"] / close.shift(1) - 1.0) * 100.0
     rng = high - low

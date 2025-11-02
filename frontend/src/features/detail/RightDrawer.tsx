@@ -21,7 +21,13 @@ import {
 } from '@mui/material';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import CancelRoundedIcon from '@mui/icons-material/CancelRounded';
-import type { DrawerDetail, DrawerDiagnosticsBuyChecklist, NewsCard, AlertTemplate } from '@/lib/api/types';
+import type {
+  DrawerDetail,
+  DrawerDiagnosticsBuyChecklist,
+  BuyEvaluation,
+  NewsCard,
+  AlertTemplate,
+} from '@/lib/api/types';
 import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks';
 import { drawerPaperSx } from './styles';
 
@@ -41,6 +47,16 @@ const checklistHeaderCellSx = {
   textTransform: 'uppercase',
   color: 'text.secondary',
 } as const;
+
+type SelectionMeta = {
+  selected: boolean;
+  reason?: string | null;
+  rMultiple?: number | null;
+  stopPrice?: number | null;
+  targetPrice?: number | null;
+  runId?: string | null;
+  tradingDay?: string | null;
+};
 
 type Props = {
   symbol: string | null;
@@ -79,19 +95,108 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-function BuyChecklistSection({ data }: { data?: DrawerDiagnosticsBuyChecklist | null }) {
-  if (!data || !Array.isArray(data.items) || data.items.length === 0) return null;
+function BuyChecklistSection({
+  evaluation,
+  selection,
+}: {
+  evaluation?: BuyEvaluation | null;
+  selection?: SelectionMeta | null;
+}) {
+  if (!evaluation || !Array.isArray(evaluation.checks) || evaluation.checks.length === 0) {
+    return null;
+  }
+
+  const sanitizeActual = (value: unknown): string => {
+    if (value === null || value === undefined) return 'NA';
+    let text = String(value).trim();
+    text = text.replace(/^(Actual|Value)\s*:\s*/i, '').trim();
+    text = text.replace(/\u2022\s*(Pass|Fail)$/i, '').trim();
+    return text.length ? text : 'NA';
+  };
+
+  const normalizeRule = (value: string | undefined): string => {
+    if (!value) return 'Configured in defaults';
+    return value
+      .replace(/^Rule\s*:\s*/i, '')
+      .replace(/value\s*vs\s*/i, '')
+      .replace(/>=/g, '≥')
+      .replace(/<=/g, '≤')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const composeComparison = (actual: string, rule: string): string => {
+    if (!rule || rule === 'Configured in defaults') {
+      return actual;
+    }
+    const bracket = rule.match(/\[([^\]]+)\]/) || rule.match(/\(([^)]+)\)/);
+    if (bracket) {
+      const parts = bracket[1]
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+      if (parts.length) {
+        return `${actual} in ${parts.join(' … ')}`;
+      }
+    }
+    const comparatorPrefix = rule.match(/^(≥|≤|>|<|=)\s*(.+)$/);
+    if (comparatorPrefix) {
+      return `${actual} ${comparatorPrefix[1]} ${comparatorPrefix[2]}`;
+    }
+    if (/(≥|≤|>|<|=)/.test(rule)) {
+      return `${actual} ${rule}`;
+    }
+    return `${actual} • ${rule}`;
+  };
+
+  const passed = evaluation.pass_count ?? evaluation.checks.filter((c) => c.pass).length;
+  const total = evaluation.total_count ?? evaluation.checks.length;
+  const selectionMeta = selection ?? null;
+
+  const formatPrice = (value: number | null | undefined): string | null => {
+    if (value === null || value === undefined || Number.isNaN(value)) return null;
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value);
+  };
+  const formattedRMultiple =
+    selectionMeta?.rMultiple != null ? selectionMeta.rMultiple.toFixed(2) : null;
+  const formattedStopPrice = formatPrice(selectionMeta?.stopPrice);
+  const formattedTargetPrice = formatPrice(selectionMeta?.targetPrice);
+  const selectionDetails: string[] = [];
+  if (formattedRMultiple) selectionDetails.push(`R ${formattedRMultiple}`);
+  if (formattedStopPrice) selectionDetails.push(`Stop ${formattedStopPrice}`);
+  if (formattedTargetPrice) selectionDetails.push(`Target ${formattedTargetPrice}`);
 
   return (
     <Box sx={{ mt: 2.5, mb: 2 }}>
       <SectionHeader>Buy Checklist</SectionHeader>
       <Box>
         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-          {`${data.label}: ${data.summary}`}
+          {`${evaluation.flag ? 'BUY = Yes' : 'BUY = No'} • ${passed} / ${total} passed`}
         </Typography>
-        {data.fail_summary ? (
+        {evaluation.reasons_inline ? (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
+            {evaluation.reasons_inline}
+          </Typography>
+        ) : null}
+        {evaluation.failed_codes && evaluation.failed_codes.length ? (
           <Typography variant="caption" color="error.main" sx={{ mt: 0.25 }}>
-            {`Fails: ${data.fail_summary}`}
+            {`Failed: ${evaluation.failed_codes.join(', ')}`}
+          </Typography>
+        ) : null}
+        {selectionMeta?.selected ? (
+          <>
+            <Typography variant="caption" color="success.main" sx={{ mt: 0.25, fontWeight: 600 }}>
+              {`Selected${selectionMeta.reason ? ` — ${selectionMeta.reason}` : ''}`}
+            </Typography>
+            {selectionDetails.length ? (
+              <Typography variant="caption" color="success.main">
+                {selectionDetails.join(' • ')}
+              </Typography>
+            ) : null}
+          </>
+        ) : selectionMeta?.reason ? (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
+            {`Not selected — ${selectionMeta.reason}`}
           </Typography>
         ) : null}
       </Box>
@@ -118,50 +223,69 @@ function BuyChecklistSection({ data }: { data?: DrawerDiagnosticsBuyChecklist | 
             Factor
           </Typography>
           <Typography variant="caption" sx={checklistHeaderCellSx}>
-            Reason (value vs rule)
+            Value vs Rule
           </Typography>
-          <Typography
-            variant="caption"
-            sx={{ ...checklistHeaderCellSx, textAlign: 'center' }}
-          >
+          <Typography variant="caption" sx={{ ...checklistHeaderCellSx, textAlign: 'center' }}>
             Pass?
           </Typography>
         </Box>
-        {data.items.map((item, idx) => (
-          <Box
-            key={item.code || `${idx}`}
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(140px, 0.9fr) minmax(220px, 1.4fr) auto',
-              gap: 1,
-              px: 2,
-              py: 1.2,
-              borderTop: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              {item.factor}
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-              <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                {item.value_vs_rule}
+        {evaluation.checks.map((check, idx) => {
+          const actual = sanitizeActual(
+            check.actual ?? (check as any).value_display ?? (check as any).value,
+          );
+          const rule = normalizeRule(
+            (check.rule as string | undefined) ??
+              (check as any).rule_text ??
+              (check as any).value_vs_rule ??
+              (check as any).description,
+          );
+          const comparison = composeComparison(actual, rule);
+
+          return (
+            <Box
+              key={check.code || `${idx}`}
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(140px, 0.9fr) minmax(220px, 1.4fr) auto',
+                gap: 1,
+                px: 2,
+                py: 1.2,
+                borderTop: '1px solid',
+                borderColor: 'divider',
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {check.label || check.code || `Gate ${idx + 1}`}
               </Typography>
-              {item.description ? (
-                <Typography variant="caption" color="text.secondary">
-                  {item.description}
+              <Box
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 0.25,
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                <Typography
+                  variant="body2"
+                  color={check.pass ? 'success.main' : 'error.main'}
+                  sx={{ fontWeight: 600 }}
+                >
+                  {comparison}
                 </Typography>
-              ) : null}
+                <Typography variant="caption" color="text.secondary">
+                  {rule}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                {check.pass ? (
+                  <CheckCircleRoundedIcon fontSize="small" color="success" />
+                ) : (
+                  <CancelRoundedIcon fontSize="small" color="error" />
+                )}
+              </Box>
             </Box>
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-              {item.passed ? (
-                <CheckCircleRoundedIcon fontSize="small" color="success" />
-              ) : (
-                <CancelRoundedIcon fontSize="small" color="error" />
-              )}
-            </Box>
-          </Box>
-        ))}
+          );
+        })}
       </Box>
     </Box>
   );
@@ -204,7 +328,88 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
   const na = d?.next_action || {};
   const refs = na?.refs || {};
   const diagnostics = d?.diagnostics || {};
-  const buyChecklist = diagnostics?.buy_checklist as DrawerDiagnosticsBuyChecklist | undefined;
+  const buyEvaluation = React.useMemo<BuyEvaluation | undefined>(() => {
+    const direct = diagnostics?.buy_evaluation as BuyEvaluation | undefined;
+    if (direct && Array.isArray(direct.checks) && direct.checks.length) {
+      return {
+        ...direct,
+        checks: direct.checks.map((item) => ({
+          ...item,
+          rule: (item.rule ?? '').toString(),
+          actual: (item.actual ?? '').toString(),
+        })),
+      };
+    }
+
+    const legacy = diagnostics?.buy_checklist as DrawerDiagnosticsBuyChecklist | undefined;
+    if (!legacy || !Array.isArray(legacy.items) || legacy.items.length === 0) {
+      return direct;
+    }
+
+    const checks = legacy.items.map((item, idx) => ({
+      code: item.code ?? item.factor ?? `gate_${idx + 1}`,
+      label: item.factor ?? item.code ?? `Gate ${idx + 1}`,
+      rule: (item.description ?? item.value_vs_rule ?? '').toString(),
+      actual: (item.value_display ?? item.value_vs_rule ?? '').toString(),
+      pass: Boolean(item.passed),
+    }));
+
+    return {
+      flag: Boolean(legacy.passed),
+      profile: legacy.label ?? undefined,
+      mode: legacy.mode ?? undefined,
+      pass_count: legacy.passed_items ?? checks.filter((c) => c.pass).length,
+      total_count: legacy.total_items ?? checks.length,
+      checks,
+      failed_codes: checks.filter((c) => !c.pass).map((c) => c.code ?? ''),
+      enforced_checks: legacy.items
+        .map((item) => item.code ?? item.factor ?? '')
+        .filter((code) => Boolean(code) && typeof code === 'string'),
+      reasons_inline: legacy.summary ?? undefined,
+      eval_ts: undefined,
+    } as BuyEvaluation;
+  }, [diagnostics]);
+  const selection = React.useMemo<SelectionMeta>(() => {
+    const raw = (d?.selection ?? {}) as Record<string, unknown>;
+    const coerceNumber = (value: unknown): number | null => {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string') {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+      return null;
+    };
+    return {
+      selected: Boolean(
+        raw.selected ??
+          (d as any)?.buy_selected ??
+          (diagnostics?.buy_evaluation as any)?.selected ??
+          false,
+      ),
+      reason:
+        (raw.reason as string | undefined) ??
+        (d as any)?.buy_selection_reason ??
+        undefined,
+      rMultiple:
+        coerceNumber(raw.r_multiple) ??
+        coerceNumber((d as any)?.buy_r_multiple) ??
+        null,
+      stopPrice:
+        coerceNumber(raw.stop_price) ?? coerceNumber((d as any)?.buy_stop_price) ?? null,
+      targetPrice:
+        coerceNumber(raw.target_price) ??
+        coerceNumber((d as any)?.buy_target_price) ??
+        null,
+      runId:
+        (raw.run_id as string | undefined) ??
+        (d as any)?.buy_selection_run_id ??
+        undefined,
+      tradingDay:
+        (raw.trading_day as string | undefined) ??
+        (d as any)?.buy_selection_trading_day ??
+        undefined,
+    };
+  }, [d, diagnostics]);
   const alertEvents = d?.alerts?.recent_events;
 
   const pctToday =
@@ -519,7 +724,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
 
             <IndicatorsGrid ind={ind} />
 
-            <BuyChecklistSection data={buyChecklist} />
+            <BuyChecklistSection evaluation={buyEvaluation} />
 
             {tradeOn && activePosition ? (
               <React.Fragment>

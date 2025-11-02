@@ -2,9 +2,9 @@
 from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple, Literal
 import os, re, yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, ConfigDict, field_validator, model_validator
 
 # Track which files were loaded (for logging/diagnostics)
 _LOADED_FILES: list[Path] = []
@@ -84,28 +84,442 @@ class DataCfg(BaseModel):
     adapter: str = "stub"
 
 
-class RulesEuphoriaCfg(BaseModel):
+class FloatRange(BaseModel):
+    """Normalized inclusive float range stored as min/max."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    min: float | None = None
+    max: float | None = None
+
+    @model_validator(mode="before")
+    def _coerce_input(cls, value: Any) -> Dict[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, (list, tuple)):
+            lo = value[0] if len(value) > 0 else None
+            hi = value[1] if len(value) > 1 else None
+            return {"min": lo, "max": hi}
+        if isinstance(value, dict):
+            return value
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return {}
+        return {"min": f, "max": f}
+
+    @field_validator("min", "max", mode="before")
+    def _to_float(cls, raw: Any) -> float | None:
+        if raw in (None, "", "None"):
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def as_tuple(self) -> Tuple[float | None, float | None]:
+        return (self.min, self.max)
+
+
+class StrategyIndiaSafetyConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    block_buy: bool = False
+    blocklist: List[str] = Field(default_factory=list)
+
+
+class StrategyRulesPreGatesConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    min_close: float = 50.0
+    min_score: float = 35.0
+    min_relvol20: float = 0.9
+    min_adx14: float = 20.0
+    min_prox52w_pct: float = -12.0
+
+
+class StrategyRulesEuphoriaConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     rsi_min: float = 75.0
     adx_min: float = 30.0
     alt_rsi_min: float = 70.0
     alt_adx_min: float = 25.0
     adx_slope5_min: float = 0.0
 
-class RulesSoftGatesCfg(BaseModel):
-    min_score: float = 35.0
-    min_relvol20: float = 0.8
-    min_adx14: float = 22.0
-    min_prox52w_pct: float = -10.0
-    require_base_len_bars: float = 15.0
-    breakout_overrides_soft_gates: bool = True
 
-class RulesCfg(BaseModel):
+class StrategyRulesRiskConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     breakeven_gain_pct: float = 5.0
+    atr_init_mult: float = 2.0
     atr_chand_mult: float = 2.0
     atr_chand_mult_euphoria: float = 1.4
-    atr_init_mult: float = 2.0
-    euphoria: RulesEuphoriaCfg = RulesEuphoriaCfg()
-    soft_gates: RulesSoftGatesCfg = RulesSoftGatesCfg()
+
+
+class StrategyRulesConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    pre_gates: StrategyRulesPreGatesConfig = StrategyRulesPreGatesConfig()
+    euphoria: StrategyRulesEuphoriaConfig = StrategyRulesEuphoriaConfig()
+    risk: StrategyRulesRiskConfig = StrategyRulesRiskConfig()
+
+
+class StrategyBuyPersistenceConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    require_above_vwap: bool = False
+    require_prev_day_high_clear: bool = False
+    min_minutes_since_open: int = 0
+    avoid_lunch_window: bool = False
+
+    @field_validator("min_minutes_since_open", mode="before")
+    def _coerce_int(cls, value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+
+class StrategyBuyProfileConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    min_score: float | None = None
+    starter_score_min_intraday: float | None = None
+    pivot_clear_pct: FloatRange | None = None
+    base_len_min_bars: int | None = None
+    prox52w_min_pct: float | None = None
+    relvol20_min: float | None = None
+    intraday_relvol_min: float | None = None
+    adx14_min: float | None = None
+    atr_pct: FloatRange | None = None
+    day_change_max_pct: float | None = None
+    liquidity_min_traded_value_20d: float | None = None
+    persistence: StrategyBuyPersistenceConfig = StrategyBuyPersistenceConfig()
+    enforced_checks: List[str] = Field(default_factory=list)
+
+    @field_validator(
+        "base_len_min_bars",
+        mode="before",
+    )
+    def _coerce_int(cls, value: Any) -> int | None:
+        if value in (None, "", "None"):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("enforced_checks", mode="before")
+    def _listify_checks(cls, value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            val = value.strip()
+            return [val] if val else []
+        if isinstance(value, (list, tuple, set)):
+            out: List[str] = []
+            for item in value:
+                if not isinstance(item, str):
+                    item = str(item)
+                item = item.strip()
+                if item:
+                    out.append(item)
+            return out
+        return []
+
+
+class StrategySellStopConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    method: str = "chandelier"
+    lookback_bars: int = 22
+    atr_period: int = 10
+    atr_multiple: float = 2.0
+    atr_multiple_euphoria: float = 1.4
+    floor_pct: float | None = None
+
+
+class StrategySellBreakevenConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    gain_pct: float = 5.0
+    retrace_to_pct: float = 0.10
+    intraday_enabled: bool = False
+
+
+class StrategySellTargetsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    t1_gain_pct: float = 10.0
+    t2_gain_pct: float = 15.0
+    allow_intraday: bool = True
+
+
+class StrategySellWeaknessConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    eod_only: bool = True
+    fast_ema_period: int = 10
+    max_closes_below_fast_ema: int = 2
+    confirm_relvol_min: float = 1.2
+
+
+class StrategySellFailedBreakoutConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    eod_only: bool = True
+    lookback_days: int = 5
+    relvol_down_min: float = 1.2
+
+
+class StrategySellTimeoutConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    eod_only: bool = True
+    max_holding_days: int = 20
+
+
+class StrategySellTrailUpdateConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    min_tick_move: float = 0.25
+    route_alerts: bool = False
+
+
+class StrategySellCommonConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    stop: StrategySellStopConfig = StrategySellStopConfig()
+    breakeven: StrategySellBreakevenConfig = StrategySellBreakevenConfig()
+    targets: StrategySellTargetsConfig = StrategySellTargetsConfig()
+    weakness: StrategySellWeaknessConfig = StrategySellWeaknessConfig()
+    failed_breakout: StrategySellFailedBreakoutConfig = StrategySellFailedBreakoutConfig()
+    timeout: StrategySellTimeoutConfig = StrategySellTimeoutConfig()
+    trail_update: StrategySellTrailUpdateConfig = StrategySellTrailUpdateConfig()
+
+
+class StrategySellConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    common: StrategySellCommonConfig = StrategySellCommonConfig()
+
+
+class StrategyProfilesConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    buy: Dict[str, StrategyBuyProfileConfig] = Field(default_factory=dict)
+    sell: StrategySellConfig = StrategySellConfig()
+
+
+class StrategySelectionBreadthConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    min_ratio: float | None = None
+    lookback_days: int | None = None
+
+
+class StrategySelectionRegimeConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    index_symbol: str = "NIFTY_50"
+    require_index_above_fast: bool = True
+    require_index_above_slow: bool = False
+    fast_ma_period: int = 50
+    slow_ma_period: int = 200
+    breadth: StrategySelectionBreadthConfig = StrategySelectionBreadthConfig()
+
+
+class StrategySelectionRMultipleConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    stop_from: str = "profiles.sell.common.stop"
+    target_from: str = "profiles.sell.common.targets.t1_gain_pct"
+
+
+class StrategySelectionPolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    apply_at_buy: bool = False
+    apply_at_selection: bool = True
+    weekly_quota: int = 1
+    max_open_positions: int = 5
+    sector_cooldown_days: int = 10
+    symbol_cooldown_days: int = 30
+    regime: StrategySelectionRegimeConfig = StrategySelectionRegimeConfig()
+    tiebreaker: str = "R_multiple_then_score"
+    r_multiple: StrategySelectionRMultipleConfig = StrategySelectionRMultipleConfig()
+
+
+class StrategyConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    india_safety: StrategyIndiaSafetyConfig = StrategyIndiaSafetyConfig()
+    rules: StrategyRulesConfig = StrategyRulesConfig()
+    profiles: StrategyProfilesConfig = StrategyProfilesConfig()
+    selection_policy: StrategySelectionPolicyConfig = StrategySelectionPolicyConfig()
+    scores: Dict[str, Any] = Field(default_factory=dict)
+    segments: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AlertThrottleConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    per_symbol_cooldown_min: int | None = None
+    per_event_cooldown_min: int | None = None
+
+    @field_validator("per_symbol_cooldown_min", "per_event_cooldown_min", mode="before")
+    def _coerce_int(cls, value: Any) -> int | None:
+        if value in (None, "", "None"):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+
+class AlertRouteConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    topic: str = ""
+    channels: List[str] | None = None
+    throttle: AlertThrottleConfig | None = None
+
+
+class AlertTopicConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    channels: List[str] = Field(default_factory=list)
+
+
+class AlertDeliveryEmailSMTPConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    host: str | None = None
+    port: int | None = None
+    use_tls: bool = True
+    username: str | None = None
+    password: str | None = None
+    from_name: str | None = None
+    from_addr: str | None = None
+
+    @field_validator("port", mode="before")
+    def _port(cls, value: Any) -> int | None:
+        if value in (None, "", "None"):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+
+class AlertDeliveryEmailDefaultsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    to: List[str] = Field(default_factory=list)
+
+    @field_validator("to", mode="before")
+    def _listify(cls, value: Any) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, (list, tuple, set)):
+            return [str(x) for x in value]
+        return []
+
+
+class AlertDeliveryEmailConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    on_backfill_digest: bool = True
+    include_trades: bool = True
+    smtp: AlertDeliveryEmailSMTPConfig = AlertDeliveryEmailSMTPConfig()
+    defaults: AlertDeliveryEmailDefaultsConfig = AlertDeliveryEmailDefaultsConfig()
+
+
+class AlertDeliveryNtfyConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = True
+    server: str | None = None
+    topic_high: str | None = None
+    topic_low: str | None = None
+
+
+class AlertDeliveryConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    email: AlertDeliveryEmailConfig = AlertDeliveryEmailConfig()
+    ntfy: AlertDeliveryNtfyConfig = AlertDeliveryNtfyConfig()
+
+
+class AlertEmailTemplate(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    subject: str = ""
+    body: str = ""
+
+
+class AlertTemplatesConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    ntfy: Dict[str, str] = Field(default_factory=dict)
+    email: Dict[str, AlertEmailTemplate] = Field(default_factory=dict)
+
+
+class AlertDigestScheduleConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    schedule_local_time: str | None = None
+    timezone: str | None = None
+    include: Dict[str, Any] = Field(default_factory=dict)
+    sort: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AlertDigestConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    eod: AlertDigestScheduleConfig = AlertDigestScheduleConfig()
+    weekly: AlertDigestScheduleConfig = AlertDigestScheduleConfig()
+
+
+class AlertThrottleDefaultsConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    per_symbol_cooldown_min: int | None = None
+    per_event_cooldown_min: int | None = None
+
+
+class AlertsRoutingConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    version: int | str | None = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    delivery: AlertDeliveryConfig = AlertDeliveryConfig()
+    topics: Dict[str, AlertTopicConfig] = Field(default_factory=dict)
+    routes: Dict[str, AlertRouteConfig] = Field(default_factory=dict)
+    digest: AlertDigestConfig = AlertDigestConfig()
+    templates: AlertTemplatesConfig = AlertTemplatesConfig()
+    throttle_defaults: AlertThrottleDefaultsConfig = AlertThrottleDefaultsConfig()
+
+    def get_route(self, code: str) -> AlertRouteConfig | None:
+        return self.routes.get(code)
+
+    def get_topic_channels(self, topic: str) -> List[str]:
+        cfg = self.topics.get(topic)
+        return list(cfg.channels) if cfg else []
 
 
 # ----------------- NEW: News (flexible, YAML-first) -----------------
@@ -135,22 +549,20 @@ class NewsCfg(BaseModel):
 
 
 class Settings(BaseModel):
-    # Existing sections
+    model_config = ConfigDict(extra="ignore")
+
+    version: int | str | None = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     app: AppCfg = AppCfg()
     logging: LoggingCfg = LoggingCfg()
     server: ServerCfg = ServerCfg()
     storage: StorageCfg = StorageCfg()
     backfill_runtime: BackfillRuntimeCfg = BackfillRuntimeCfg()
-    # NEW sections (Phase 10)
     screener: ScreenerCfg = ScreenerCfg()
     scheduler: SchedulerCfg = SchedulerCfg()
     data: DataCfg = DataCfg()
-    rules: RulesCfg = RulesCfg()
-    # --- Minimal addition for Alerts (non-breaking) ---
-    # Keep it as a free-form dict so YAML can evolve (rules, channels, throttle, etc.)
-    # The alerts service will parse/normalize it.
-    alerts: Dict[str, Any] = Field(default_factory=dict)
-    # --- NEW: features & news (keep flexible) ---
+    strategy: StrategyConfig = StrategyConfig()
+    alerts: AlertsRoutingConfig = AlertsRoutingConfig()
     features: Dict[str, Any] = Field(default_factory=dict)
     news: NewsCfg = NewsCfg()
 
@@ -160,6 +572,22 @@ class Settings(BaseModel):
         if storage_root:
             return storage_root
         return str((REPO_ROOT / 'backend' / 'parquet').resolve())
+
+    @property
+    def rules(self) -> StrategyRulesConfig:
+        return self.strategy.rules
+
+    @property
+    def india_safety(self) -> StrategyIndiaSafetyConfig:
+        return self.strategy.india_safety
+
+    @property
+    def selection_policy(self) -> StrategySelectionPolicyConfig:
+        return self.strategy.selection_policy
+
+    @property
+    def profiles(self) -> StrategyProfilesConfig:
+        return self.strategy.profiles
 
 
 # ----------------- YAML helpers (unchanged + small additions) -----------------
@@ -340,6 +768,13 @@ def load() -> Settings:
     if os.getenv("NEWS_INGEST_TOKEN"):
         data = _deep_merge(data, {"news": {"ingest": {"require_token": True, "token_env": "NEWS_INGEST_TOKEN"}}})
 
+    # Consolidate trading strategy knobs under a single strategy object (SSOT).
+    strategy_payload = dict(data.get("strategy") or {})
+    for key in ("india_safety", "rules", "profiles", "selection_policy", "scores", "segments"):
+        if key in data:
+            strategy_payload.setdefault(key, data.pop(key))
+    data["strategy"] = strategy_payload
+
     # Alerts config (external file resolution)
     alerts_cfg_path = os.getenv("ALERTS_CONFIG_PATH") or data.get("alerts_config_path")
     resolved_alerts_path = _resolve_alerts_path(alerts_cfg_path) if alerts_cfg_path else None
@@ -373,6 +808,13 @@ def load() -> Settings:
     # --- NEW: interpolate ${ENV} and ${ENV:-default} inside alerts.* ---
     if isinstance(data.get("alerts"), dict):
         data["alerts"] = _env_interpolate_obj(data["alerts"])
+    else:
+        data["alerts"] = {}
+
+    if isinstance(data.get("strategy"), dict):
+        data["strategy"] = _env_interpolate_obj(data["strategy"])
+    else:
+        data["strategy"] = {}
 
     try:
         return Settings(**data)

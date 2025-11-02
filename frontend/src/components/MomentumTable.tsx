@@ -9,7 +9,7 @@ import {
   GridLoadingOverlayProps,
   GridOverlay,
 } from '@mui/x-data-grid';
-import { Box, Alert, LinearProgress, Tooltip, Chip, alpha } from '@mui/material';
+import { Box, Alert, LinearProgress, Tooltip, Chip, Typography, alpha } from '@mui/material';
 import { useGetApiV1Screener } from '@/lib/api/client';
 import type { GetApiV1ScreenerParams } from '@/lib/api/types';
 import RightDrawer from '@/features/detail/RightDrawer';
@@ -74,6 +74,40 @@ const PriceDeltaCell = (params: GridRenderCellParams) => {
           {pctStr ? `(${pctStr})` : ''}
         </span>
       )}
+    </Box>
+  );
+};
+
+const BuyCell = (params: GridRenderCellParams) => {
+  const flag = Boolean(params?.row?.buy_flag);
+  const passCount =
+    Number.isFinite(params?.row?.buy_pass_count) && params.row.buy_pass_count != null
+      ? Number(params.row.buy_pass_count)
+      : null;
+  const totalCount =
+    Number.isFinite(params?.row?.buy_total_count) && params.row.buy_total_count != null
+      ? Number(params.row.buy_total_count)
+      : null;
+  const selected = Boolean(params?.row?.buy_selected);
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+      <Typography
+        variant="body2"
+        sx={{ fontWeight: 600, color: (theme) => (flag ? theme.palette.success.main : theme.palette.error.main) }}
+      >
+        {flag ? 'Yes' : 'No'}
+      </Typography>
+      {passCount != null && totalCount != null ? (
+        <Typography variant="caption" color="text.secondary">
+          {`${passCount} / ${totalCount}`}
+        </Typography>
+      ) : null}
+      {selected ? (
+        <Typography variant="caption" color="success.main">
+          Selected
+        </Typography>
+      ) : null}
     </Box>
   );
 };
@@ -371,12 +405,20 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
       { field: 'pct_from_52w_high', headerName: '% 52W H', width: 90, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
       
 
-      { field: 'buy', headerName: 'Buy', width: 60 },
+      {
+        field: 'buy',
+        headerName: 'Buy',
+        width: 100,
+        sortable: false,
+        filterable: false,
+        valueGetter: (params) => (params?.row?.buy_flag ? 1 : 0),
+        renderCell: BuyCell,
+      },
 
       {
         field: 'badges',
         headerName: 'Momentum',
-        minWidth: 100,
+        minWidth: 300,
         sortable: false,
         filterable: false,
         renderCell: BadgesCell,

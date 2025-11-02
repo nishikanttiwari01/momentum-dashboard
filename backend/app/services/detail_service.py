@@ -104,6 +104,14 @@ def _ratchet_stop(prev: Optional[float], now: Optional[float]) -> Optional[float
     
 _TZ_DEFAULT = _app_timezone_default()
 
+def _safe_float(value: Any) -> Optional[float]:
+    if value in (None, "", "None"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 def _as_of_from_run_id(run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
     """Parse 'YYYYMMDDHHMMSS' run_id to tz-aware datetime; fallback to now."""
     try:
@@ -781,17 +789,109 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
         "blocked_reason": None,
     }
 
-    buy_checklist = (row or {}).get("buy_checklist")
-    if not buy_checklist:
+    buy_eval_current: Dict[str, Any] = {
+        "flag": bool((row or {}).get("buy_flag")),
+        "profile": (row or {}).get("buy_profile"),
+        "pass_count": (row or {}).get("buy_pass_count"),
+        "total_count": (row or {}).get("buy_total_count"),
+        "checks": (row or {}).get("buy_checks") or [],
+        "failed_codes": (row or {}).get("buy_failed_codes") or [],
+        "reasons_inline": (row or {}).get("buy_reasons_inline") or "",
+        "eval_ts": (row or {}).get("buy_eval_ts"),
+        "checks_map": (row or {}).get("buy_check_details") or {},
+        "enforced_checks": (row or {}).get("buy_enforced_checks") or [],
+    }
+    if not buy_eval_current["checks"]:
         try:
             evaluation_payload = {**(row or {})}
             evaluation_payload["is_eod"] = row_is_eod
-            _, _, computed_checklist = evaluate_buy_gate(evaluation_payload)
-            buy_checklist = computed_checklist
+            recomputed = evaluate_buy_gate(evaluation_payload)
         except Exception:
-            buy_checklist = None
-    if buy_checklist:
-        diagnostics["buy_checklist"] = buy_checklist
+            recomputed = None
+        if recomputed:
+            buy_eval_current = {
+                "flag": bool(recomputed.get("flag")),
+                "profile": recomputed.get("profile"),
+                "pass_count": recomputed.get("pass_count"),
+                "total_count": recomputed.get("total_count"),
+                "checks": recomputed.get("buy_checks") or [],
+                "failed_codes": recomputed.get("buy_failed_codes") or [],
+                "reasons_inline": recomputed.get("reasons_inline") or "",
+                "eval_ts": recomputed.get("eval_ts"),
+                "checks_map": recomputed.get("checks") or {},
+                "enforced_checks": recomputed.get("enforced_checks") or [],
+            }
+    if buy_eval_current["checks"]:
+        checks_for_diag = []
+        for check in buy_eval_current["checks"]:
+            mapped = dict(check)
+            mapped["code"] = (mapped.get("code") or mapped.get("label") or "").strip()
+            mapped["label"] = (mapped.get("label") or mapped.get("code") or "").strip()
+            mapped["actual"] = str(mapped.get("actual") or "").strip()
+            mapped["rule"] = str(mapped.get("rule") or "").strip()
+            checks_for_diag.append(mapped)
+
+        diagnostics["buy_evaluation"] = {
+            "flag": bool(buy_eval_current.get("flag")),
+            "profile": buy_eval_current.get("profile"),
+            "pass_count": int(buy_eval_current.get("pass_count") or 0),
+            "total_count": int(buy_eval_current.get("total_count") or 0),
+            "checks": checks_for_diag,
+            "failed_codes": buy_eval_current.get("failed_codes") or [],
+            "reasons_inline": buy_eval_current.get("reasons_inline") or "",
+            "eval_ts": buy_eval_current.get("eval_ts"),
+            "enforced_checks": list(buy_eval_current.get("enforced_checks") or []),
+        }
+        diagnostics["buy_reasons_inline"] = diagnostics["buy_evaluation"]["reasons_inline"]
+        diagnostics["buy_failed_codes"] = diagnostics["buy_evaluation"]["failed_codes"]
+        # Legacy compatibility for UI components expecting buy_checklist
+        total_items = diagnostics["buy_evaluation"]["total_count"]
+        passed_items = diagnostics["buy_evaluation"]["pass_count"]
+        passed_flag = diagnostics["buy_evaluation"]["flag"]
+        summary_prefix = "Yes" if passed_flag else "No"
+        summary = (
+            summary_prefix
+            if total_items == 0
+            else f"{summary_prefix} - {passed_items} / {total_items} passed"
+        )
+        def _compose_value_vs_rule(actual_text: str, rule_text: str) -> str:
+            actual_text = actual_text.strip() or "NA"
+            rule_text = rule_text.strip()
+            if not rule_text or rule_text == "Configured in defaults":
+                return actual_text
+            for open_char, close_char in (("[", "]"), ("(", ")")):
+                if open_char in rule_text and close_char in rule_text:
+                    inner = rule_text.split(open_char, 1)[1].split(close_char, 1)[0]
+                    parts = [part.strip() for part in inner.split(",") if part.strip()]
+                    if parts:
+                        return f"{actual_text} in {' … '.join(parts)}"
+            if rule_text[0:1] in {"≥", "≤", ">", "<", "="}:
+                return f"{actual_text} {rule_text}"
+            if any(sym in rule_text for sym in ["≥", "≤", ">", "<", "="]):
+                return f"{actual_text} {rule_text}"
+            return f"{actual_text} • {rule_text}"
+
+        failed_labels = [check["label"] for check in checks_for_diag if not check.get("pass")]
+        diagnostics["buy_checklist"] = {
+            "label": f"BUY ({'EOD' if row_is_eod else 'INTRADAY'} gates)",
+            "mode": "EOD" if row_is_eod else "INTRADAY",
+            "passed": passed_flag,
+            "passed_items": passed_items,
+            "total_items": total_items,
+            "summary": summary,
+            "fail_summary": "; ".join(failed_labels) if failed_labels else None,
+            "items": [
+                {
+                    "code": check["code"],
+                    "factor": check["label"],
+                    "value_display": check["actual"],
+                    "value_vs_rule": _compose_value_vs_rule(check["actual"], check["rule"]),
+                    "description": check["rule"],
+                    "passed": bool(check.get("pass")),
+                }
+                for check in checks_for_diag
+            ],
+        }
 
     # Align diagnostics tone with BUY actions
     if isinstance(next_action, dict):
@@ -828,6 +928,15 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
         "next_action": next_action,
         "alerts": {"suggestions": [], "recent_events": alerts_recent or []},
         "diagnostics": diagnostics,
+        "selection": {
+            "selected": bool((row or {}).get("buy_selected")),
+            "reason": (row or {}).get("buy_selection_reason") or None,
+            "stop_price": _safe_float((row or {}).get("buy_stop_price")),
+            "target_price": _safe_float((row or {}).get("buy_target_price")),
+            "r_multiple": _safe_float((row or {}).get("buy_r_multiple")),
+            "run_id": (row or {}).get("buy_selection_run_id") or None,
+            "trading_day": (row or {}).get("buy_selection_trading_day") or None,
+        },
         "news_recent_hours": _right_drawer_news_hours(),
 
         # FE compatibility fields (kept)

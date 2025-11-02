@@ -245,6 +245,7 @@ def run(
                 conn,
                 event=event_row,
                 content={"title": title, "body": body},
+                channel_contents=None,
                 channels_cfg=channels_cfg_eff,
                 send_policy=defaults.get("send_policy"),
                 quiet_hours=defaults.get("quiet_hours"),

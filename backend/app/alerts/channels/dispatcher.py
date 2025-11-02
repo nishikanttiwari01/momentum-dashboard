@@ -68,6 +68,7 @@ def deliver_event(
     *,
     event: Dict[str, Any],
     content: Dict[str, str],            # {"title": ..., "body": ...}
+    channel_contents: Dict[str, Dict[str, str]] | None,
     channels_cfg: Dict[str, Any],       # effective config: {"ntfy":{...}, "email":{...}, "webhook":{...}}
     send_policy: Dict[str, Any] | None,
     quiet_hours: Dict[str, Any] | None,
@@ -131,10 +132,11 @@ def deliver_event(
             return
 
         last_result: DeliveryResult | None = None
+        channel_content = (channel_contents or {}).get(name, content)
         for i in range(1, max(1, attempts) + 1):
             try:
                 log.debug("Channel %s attempt=%s sending event_id=%s", name, i, event["id"])
-                last_result = sender_func(event, content, chan_cfg)
+                last_result = sender_func(event, channel_content, chan_cfg)
             except Exception as e:
                 log.exception("Channel %s attempt=%s failed event_id=%s", name, i, event["id"], exc_info=True)
                 last_result = DeliveryResult(status="FAILED", response_code=None, response_meta={"error": repr(e)}, attempts=i)

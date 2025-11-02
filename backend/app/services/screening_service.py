@@ -26,10 +26,14 @@ from app.adapters.yahoo_adapter import YahooAdapter  # ctor takes NO args
 import yfinance as yf
 
 # Phase 11 domain helpers (vectorized)
+from app.alerts.types import Mode
 from app.domain.indicators import compute_indicator_frame
 from app.domain.scoring import compute_score
 from app.domain.rules.next_action import global_pre_gates, compute_next_action
-from app.services.buy_logic import evaluate_buy_gate, get_threshold_float
+from app.services.alerts import route_event as route_alert_event
+from app.services.buy_logic import evaluate_buy_gate
+from app.services.sell_engine import evaluate_positions as evaluate_sell_positions
+from app.services.selection_service import SelectionResult, apply_selection_policy
 
 log = logging.getLogger(__name__)
 
@@ -267,152 +271,6 @@ def _maybe_float(v):
     except Exception:
         return None
 
-
-BUY_ACTION_CODES = {"BUY_BREAKOUT", "BUY_PULLBACK", "BUY_STARTER"}
-
-
-def _resolve_persistence_config() -> Dict[str, Any]:
-    bars = 3
-    score_min = get_threshold_float("starter_score_min_intraday", 65.0)
-    relvol_min = get_threshold_float("intraday_relvol_min", 1.5)
-    prox_min = get_threshold_float("proximity_52w_min_pct", -8.0)
-    return {
-        "bars": max(int(bars), 1),
-        "score_min": score_min,
-        "relvol_min": relvol_min,
-        "proximity_min": prox_min,
-        "require_buy_flag": False,
-        "require_action": True,
-        "require_pre_gates": True,
-        "require_above_pivot": True,
-    }
-
-
-def _normalize_persistence_snapshot(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    symbol = row.get("symbol")
-    if not symbol:
-        return None
-    relvol_val = row.get("intraday_relvol")
-    if relvol_val is None:
-        relvol_val = row.get("relvol20")
-    next_action = row.get("next_action") or row.get("next_action_code")
-    pre_raw = row.get("pre_gates_pass")
-    if isinstance(pre_raw, bool):
-        pre_bool = pre_raw
-    else:
-        pre_bool = str(pre_raw or "").strip().lower() in {"1", "true", "yes", "y"}
-    return {
-        "score": _maybe_float(row.get("score")),
-        "relvol": _maybe_float(relvol_val),
-        "proximity": _maybe_float(row.get("proximity_52w_high_pct") or row.get("pct_from_52w_high")),
-        "buy_flag": str(row.get("buy") or "").strip().upper(),
-        "next_action": str(next_action or "").strip().upper(),
-        "pre_gates_pass": pre_bool,
-        "pivot": _maybe_float(row.get("pivot_high_20")),
-        "last": _maybe_float(row.get("last")),
-    }
-
-
-def _compute_persistence_ok(
-    current_snapshot: Dict[str, Any],
-    history_snapshots: List[Dict[str, Any]],
-    cfg: Dict[str, Any],
-) -> bool:
-    bars_required = max(int(cfg.get("bars", 3)), 1)
-    if bars_required <= 1:
-        return True
-    window = list(history_snapshots[-(bars_required - 1) :])
-    window.append(current_snapshot)
-    if len(window) < bars_required:
-        return False
-
-    score_min = float(cfg.get("score_min", 0.0))
-    relvol_min = float(cfg.get("relvol_min", 0.0))
-    prox_min = float(cfg.get("proximity_min", -100.0))
-    require_buy_flag = bool(cfg.get("require_buy_flag", False))
-    require_action = bool(cfg.get("require_action", False))
-    require_pre_gates = bool(cfg.get("require_pre_gates", False))
-    require_above_pivot = bool(cfg.get("require_above_pivot", False))
-
-    for snap in window:
-        score = snap.get("score")
-        relvol = snap.get("relvol")
-        proximity = snap.get("proximity")
-        buy_flag = snap.get("buy_flag", "")
-        next_action = snap.get("next_action", "")
-        pre_gates = bool(snap.get("pre_gates_pass"))
-        pivot = snap.get("pivot")
-        last_price = snap.get("last")
-
-        if score is None or score < score_min:
-            return False
-        if relvol is None or relvol < relvol_min:
-            return False
-        if proximity is None or proximity < prox_min:
-            return False
-        if require_buy_flag and buy_flag != "YES":
-            return False
-        if require_action and next_action not in BUY_ACTION_CODES:
-            return False
-        if require_pre_gates and not pre_gates:
-            return False
-        if require_above_pivot and pivot is not None and last_price is not None and last_price < pivot:
-            return False
-    return True
-
-
-def _load_persistence_history(
-    date_str: Optional[str],
-    current_run_id: Optional[str],
-    bars_required: int,
-) -> Dict[str, List[Dict[str, Any]]]:
-    if not date_str or not current_run_id or bars_required <= 1:
-        return {}
-    try:
-        runs = datasets.list_intraday_runs(date_str)
-    except Exception:
-        runs = []
-    if not runs:
-        return {}
-    prior_runs = [rid for rid in runs if rid < str(current_run_id)]
-    if not prior_runs:
-        return {}
-    needed = prior_runs[-(bars_required - 1) :]
-    if not needed:
-        return {}
-    columns = [
-        "symbol",
-        "score",
-        "relvol20",
-        "intraday_relvol",
-        "proximity_52w_high_pct",
-        "pct_from_52w_high",
-        "buy",
-        "next_action",
-        "next_action_code",
-        "pre_gates_pass",
-        "pivot_high_20",
-        "last",
-    ]
-    history: Dict[str, List[Dict[str, Any]]] = {}
-    for rid in needed:
-        try:
-            table = datasets.scan_scores_intraday(date_str, rid, columns=columns)
-            records = table.to_pylist()
-        except Exception:
-            records = []
-        for rec in records:
-            sym = rec.get("symbol")
-            if not sym:
-                continue
-            snapshot = _normalize_persistence_snapshot(rec)
-            if snapshot is None:
-                continue
-            history.setdefault(str(sym), []).append(snapshot)
-    return history
-
-
-
 def _make_scores_row(
     *,
     symbol: str,
@@ -426,13 +284,16 @@ def _make_scores_row(
     regime_hint: Optional[str] = None,
     asm_hint: Optional[bool] = None,
     is_eod_snapshot: bool = False,
-    persistence_history: Optional[Dict[str, List[Dict[str, Any]]]] = None,
-    persistence_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     # Build the final Screener row for this symbol (spec 2025-10-12A).
     last = float(df["close"].iloc[-1]) if not df.empty else None
     prev = float(df["close"].iloc[-2]) if len(df) >= 2 else None
     change_pct = ((last - prev) * 100.0 / prev) if (last is not None and prev not in (None, 0)) else None
+
+    prev_day_high = float(df["high"].iloc[-2]) if len(df) >= 2 else None
+    prev_day_high_clear = None
+    if prev_day_high is not None and last is not None:
+        prev_day_high_clear = last >= prev_day_high
 
     r = ind.iloc[-1].to_dict() if not ind.empty else {}
     rsi14 = _maybe_float(r.get("rsi14"))
@@ -590,6 +451,8 @@ def _make_scores_row(
         "close_pos_in_bar": close_pos_in_bar,
         "median_traded_value_20d": median_traded_value_20d,
         "delivery_ratio_20d": delivery_ratio_20d,
+        "prev_day_high": prev_day_high,
+        "prev_day_high_clear": prev_day_high_clear,
         "n_consecutive_up": (int(n_consecutive_up) if n_consecutive_up is not None else None),
         "n_consecutive_down": (int(n_consecutive_down) if n_consecutive_down is not None else None),
         "recent_failed_breakout_10d": recent_failed_breakout_10d,
@@ -637,6 +500,8 @@ def _make_scores_row(
     row.setdefault("pct_from_52w_high", row.get("proximity_52w_high_pct"))
     row.setdefault("atr_pct", row.get("atr14_pct"))
     row.setdefault("pct_today", row.get("change_pct"))
+    row.setdefault("minutes_since_open", None)
+    row.setdefault("in_lunch_window", None)
 
     try:
         row["pre_gates_pass"] = global_pre_gates({**row, "close": row.get("last")})
@@ -683,23 +548,50 @@ def _make_scores_row(
         except Exception:
             row["liquidity"] = None
 
-    if not is_eod_snapshot:
-        history_snapshots = (persistence_history or {}).get(symbol, [])
-        current_snapshot = _normalize_persistence_snapshot({**row, "symbol": symbol})
-        if current_snapshot is not None and persistence_config:
-            row["persistence_ok"] = _compute_persistence_ok(current_snapshot, history_snapshots, persistence_config)
-        else:
-            row["persistence_ok"] = False
-    else:
-        row.setdefault("persistence_ok", None)
+    row["persistence_ok"] = None
 
-    buy_flag, buy_reason, buy_checklist = evaluate_buy_gate(row)
-    row["buy"] = buy_flag
-    if buy_reason:
-        row["reason"] = buy_reason
+    buy_eval = evaluate_buy_gate(row)
+    buy_flag = bool(buy_eval.get("flag"))
+    row["buy_flag"] = buy_flag
+    row["buy"] = "Yes" if buy_flag else "No"
+    row["buy_profile"] = buy_eval.get("profile")
+    row["buy_mode"] = buy_eval.get("mode")
+    row["buy_pass_count"] = int(buy_eval.get("pass_count") or 0)
+    row["buy_total_count"] = int(buy_eval.get("total_count") or 0)
+    row["buy_checks"] = buy_eval.get("buy_checks") or []
+    row["buy_failed_codes"] = buy_eval.get("buy_failed_codes") or []
+    row["buy_reasons_inline"] = buy_eval.get("reasons_inline") or ""
+    row["buy_eval_ts"] = buy_eval.get("eval_ts")
+    row["buy_enforced_checks"] = buy_eval.get("enforced_checks") or []
+    row["buy_check_details"] = buy_eval.get("checks") or {}
+    row["reason_parts"] = buy_eval.get("reason_parts") or []
+    row["buy_reason_parts"] = row["reason_parts"]
+    row.setdefault("buy_selected", False)
+    row.setdefault("buy_selection_reason", None)
+    row.setdefault("buy_stop_price", None)
+    row.setdefault("buy_target_price", None)
+    row.setdefault("buy_r_multiple", None)
+    row.setdefault("buy_selection_run_id", None)
+    row.setdefault("buy_selection_trading_day", None)
+    if row["buy_reasons_inline"]:
+        row["reason"] = row["buy_reasons_inline"]
     else:
         row["reason"] = reason_before_buy
-    row["buy_checklist"] = buy_checklist
+    checks_map = buy_eval.get("checks") or {}
+    persistence_check = checks_map.get("persistence")
+    if isinstance(persistence_check, dict) and "pass" in persistence_check:
+        row["persistence_ok"] = bool(persistence_check["pass"])
+    debug_meta = buy_eval.get("debug") or {}
+    persistence_debug = debug_meta.get("persistence")
+    if isinstance(persistence_debug, dict):
+        if persistence_debug.get("minutes_since_open") is not None:
+            row["minutes_since_open"] = persistence_debug.get("minutes_since_open")
+        if persistence_debug.get("lunch_window_hit") is not None:
+            row["in_lunch_window"] = persistence_debug.get("lunch_window_hit")
+        if persistence_debug.get("above_vwap") is not None:
+            row["above_vwap"] = persistence_debug.get("above_vwap")
+        if persistence_debug.get("prev_day_high_clear") is not None:
+            row["prev_day_high_clear"] = persistence_debug.get("prev_day_high_clear")
 
     if row.get("vol_spike") is None:
         try:
@@ -911,23 +803,11 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 False,
             )
 
-    persistence_cfg: Optional[Dict[str, Any]] = None
-    persistence_history: Dict[str, List[Dict[str, Any]]] = {}
-    if not as_of_date:
-        persistence_cfg = _resolve_persistence_config()
-        bars_required = persistence_cfg.get("bars", 3) if persistence_cfg else 3
-        try:
-            persistence_history = _load_persistence_history(
-                intraday_date_str,
-                job.run_id,
-                int(bars_required),
-            )
-        except Exception:
-            persistence_history = {}
-
     symbols_processed = 0
     rows_written = 0
     snapshot_path = None
+    selection_result: Optional[SelectionResult] = None
+    selection_row: Optional[Dict[str, Any]] = None
 
     try:
         cfg = app_config.load()
@@ -987,6 +867,9 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         # Compute full rows
         prep_rows: List[Tuple[str, Dict[str, Any], pd.DataFrame, pd.DataFrame, bool]] = []
         breadth_total = 0
+        rows_by_symbol: Dict[str, Dict[str, Any]] = {}
+        buy_signal_rows: List[Dict[str, Any]] = []
+        frames_by_symbol: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
         breadth_above = 0
         for sym in symbols:
             df = _history_df(sym, period="400d")
@@ -1040,8 +923,6 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 regime_hint=nifty_regime_value,
                 asm_hint=asm_flag,
                 is_eod_snapshot=is_eod_snapshot,
-                persistence_history=None if is_eod_snapshot else persistence_history,
-                persistence_config=persistence_cfg,
             )
             if breadth_pct is not None:
                 row["breadth_pct_50dma"] = breadth_pct
@@ -1050,6 +931,44 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             elif not row.get("nifty_regime"):
                 row["nifty_regime"] = "NEUTRAL"
             rows.append(row)
+
+            symbol_key = str(row.get("symbol") or sym).upper()
+            rows_by_symbol[symbol_key] = row
+            frames_by_symbol[symbol_key] = (df_eff, ind)
+            if row.get("buy_flag"):
+                buy_signal_rows.append(row)
+
+        selection_trading_day = now_utc.date()
+        selection_day_raw = as_of_date or intraday_date_override
+        if selection_day_raw:
+            parsed = pd.to_datetime(selection_day_raw, errors="coerce")
+            if parsed is not None and not pd.isna(parsed):
+                selection_trading_day = parsed.to_pydatetime().date()
+
+        selection_result = None
+        try:
+            selection_result = apply_selection_policy(
+                session=session,
+                rows=rows,
+                strategy=cfg.strategy,
+                policy=cfg.selection_policy,
+                run_id=job.run_id,
+                trading_day=selection_trading_day,
+                nifty_regime=nifty_regime_value,
+                now_utc=now_utc,
+            )
+        except Exception:
+            selection_result = None
+
+        if selection_result:
+            selection_row = rows[selection_result.row_index]
+            selection_row["buy_selected"] = True
+            selection_row["buy_selection_reason"] = selection_result.reason
+            selection_row["buy_stop_price"] = selection_result.stop_price
+            selection_row["buy_target_price"] = selection_result.target_price
+            selection_row["buy_r_multiple"] = selection_result.r_multiple
+            selection_row["buy_selection_run_id"] = selection_result.run_id
+            selection_row["buy_selection_trading_day"] = selection_result.trading_date.isoformat()
 
         rows_written = len(rows)
         try:
@@ -1142,10 +1061,110 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             log.exception("snapshot write failed", extra={"run_id": job.run_id})
             raise
 
-        # ------------------- END WRITES -------------------
+            # ------------------- END WRITES -------------------
 
-        # Mark success + write history (best-effort)
-        jobs.complete_run(run_id=job.run_id, status="SUCCEEDED", error=None)
+            event_mode = Mode.EOD if is_eod_snapshot else Mode.INTRADAY
+            buy_event_code = "BUY_SIGNAL_EOD" if is_eod_snapshot else "BUY_SIGNAL_INTRADAY"
+            for row in buy_signal_rows:
+                symbol_value = row.get("symbol")
+                if not symbol_value:
+                    continue
+                symbol = str(symbol_value).upper()
+                context_payload = {
+                    "symbol": symbol,
+                    "profile": row.get("buy_profile"),
+                    "mode": row.get("buy_mode") or event_mode.value,
+                    "run_id": job.run_id,
+                    "as_of": row.get("as_of"),
+                    "price": row.get("last"),
+                    "score": row.get("score"),
+                    "adx14": row.get("adx14"),
+                    "relvol20": row.get("relvol20"),
+                    "intraday_relvol": row.get("intraday_relvol"),
+                    "atr_pct": row.get("atr_pct") or row.get("atr10_pct"),
+                    "reasons_inline": row.get("buy_reasons_inline"),
+                    "pass_count": row.get("buy_pass_count"),
+                    "total_count": row.get("buy_total_count"),
+                    "minutes_since_open": row.get("minutes_since_open"),
+                    "above_vwap": row.get("above_vwap"),
+                    "prev_day_high_clear": row.get("prev_day_high_clear"),
+                    "liquidity": row.get("liquidity"),
+                    "buy_checks": row.get("buy_checks"),
+                    "pivot": row.get("pivot_high_20"),
+                    "base_len_bars": row.get("base_len_bars"),
+                }
+                if row.get("buy_reasons_inline") and not context_payload.get("description"):
+                    context_payload["description"] = row.get("buy_reasons_inline")
+                elif row.get("reason"):
+                    context_payload["description"] = row.get("reason")
+                route_alert_event(
+                    session,
+                    event_code=buy_event_code,
+                    symbol=symbol,
+                    mode=event_mode,
+                    trading_date=selection_trading_day,
+                    context=context_payload,
+                    score_at_fire=_maybe_float(row.get("score")),
+                    next_action_code=str(row.get("next_action_code") or "").upper() or None,
+                )
+
+            if selection_result and selection_row:
+                selection_symbol_raw = selection_result.symbol or selection_row.get("symbol")
+                selection_symbol = str(selection_symbol_raw or "").upper()
+                if not selection_symbol:
+                    selection_symbol = "UNKNOWN"
+                selection_context = {
+                    "symbol": selection_symbol,
+                    "profile": selection_result.profile or selection_row.get("buy_profile"),
+                    "mode": selection_result.mode or event_mode.value,
+                    "entry_ref": selection_result.price,
+                    "entry_context": selection_row.get("buy_selection_reason") or "Screening selection",
+                    "stop": selection_result.stop_price,
+                    "stop_method": cfg.strategy.profiles.sell.common.stop.method,
+                    "target_price": selection_result.target_price,
+                    "t1": cfg.strategy.profiles.sell.common.targets.t1_gain_pct,
+                    "t2": cfg.strategy.profiles.sell.common.targets.t2_gain_pct,
+                    "r_multiple": selection_result.r_multiple,
+                    "reasons_inline": selection_row.get("buy_reasons_inline"),
+                    "reason": selection_result.reason,
+                    "run_id": selection_result.run_id,
+                }
+                if selection_context.get("reasons_inline") and not selection_context.get("description"):
+                    selection_context["description"] = selection_context["reasons_inline"]
+                route_alert_event(
+                    session,
+                    event_code="BUY_SELECTED",
+                    symbol=selection_symbol,
+                    mode=event_mode,
+                    trading_date=selection_trading_day,
+                    context=selection_context,
+                    score_at_fire=_maybe_float(selection_row.get("score")),
+                    next_action_code="BUY_SELECTED",
+                )
+
+            sell_events = evaluate_sell_positions(
+                session=session,
+                rows_by_symbol=rows_by_symbol,
+                frames_by_symbol=frames_by_symbol,
+                strategy=cfg.strategy,
+                mode=event_mode,
+                trading_day=selection_trading_day,
+                now_utc=now_utc,
+            )
+            for sell_event in sell_events:
+                route_alert_event(
+                    session,
+                    event_code=sell_event.event_code,
+                    symbol=sell_event.symbol,
+                    mode=event_mode,
+                    trading_date=selection_trading_day,
+                    context=sell_event.context,
+                    score_at_fire=sell_event.score_at_fire,
+                    next_action_code=sell_event.event_code,
+                )
+
+            # Mark success + write history (best-effort)
+            jobs.complete_run(run_id=job.run_id, status="SUCCEEDED", error=None)
         try:
             history.insert_run_summary(run_id=job.run_id, as_of=as_of_iso, rows=rows_written)
         except Exception:

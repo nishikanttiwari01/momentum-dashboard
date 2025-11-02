@@ -1,441 +1,207 @@
-# alerts.yaml — v2 schema (everything alert-related under the top-level `alerts` key)
-# Drop-in file path: backend/config/alerts.yaml
-# Notes:
-# - Centralized `thresholds` so rules don’t hard-code numbers
-# - Per-alert channels/topics defined under each item (defaults are overrideable)
-# - Templates and engine hints are nested under `alerts` (single namespace)
-# - Naming: replaced legacy SCORE_75_PLUS with QUALITY_SCORE_THRESHOLD (configurable)
+version: 3
+metadata:
+  name: Momentum Suite — Alerts & Routing (v3.2)
+  last_updated: "2025-11-01"
 
-alerts:
-  version: 2
-  delivery:
-    email:
-      enabled: true
-      # Daily digest sender can reuse these (your existing email_digest.py may already read similar keys)
-      on_backfill_digest: true
-      include_trades: true
-      smtp:
-        host: smtp.gmail.com
-        port: 587
-        use_tls: true
-        username: nishikantworld@gmail.com
-        password: tzrtcknnvhfqrzly
-        from_name: ${SMTP_FROM_NAME:-Momentum Suite}
-        from_addr: nishikantworld@gmail.com
-      defaults:
-        to:
-          - ${ALERT_EMAIL_TO_1:-nishikant.tiwari01@gmail.com }
-          # - ${ALERT_EMAIL_TO_2:-}
-    ntfy:
-      enabled: true
-      server: ${NTFY_SERVER:-https://ntfy.sh}
-      topic_default: momentum-alerts-nishi
-      token: ${NTFY_TOKEN:-}            # optional; leave blank if public server
-    webhook:
-      enabled: false
-      url: ${ALERT_WEBHOOK_URL:-}
-      auth_header: ${ALERT_WEBHOOK_AUTH:-}
-  # ---------------------------
-  # Metadata & market timings
-  # ---------------------------
-  metadata:
-    name: momentum-dashboard-alerts
-    schema_version: 2
-    timezone: "${ALERT_TIMEZONE:-Asia/Kolkata}"
-    market_close_hhmm: "15:30"
-    eod_delay_minutes: 35
-    intraday_bar_minutes: 15
-
-  # ---------------------------
-  # Profiles (optional, Python-friendly overlays)
-  # ---------------------------
-  profiles:
-    active: "${ALERTS_PROFILE:-personal}"
-    personal:
-      overrides: {}
-    dev:
-      overrides:
-        defaults:
-          channels:
-            ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-            email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
-    prod:
-      overrides:
-        defaults:
-          channels:
-            ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-            email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
-
-  # ---------------------------
-  # Global alert behaviour (applies to every alert unless overridden below)
-  # ---------------------------
-  defaults:
+delivery:
+  email:
     enabled: true
-    severity: INFO            # INFO | WARN | CRITICAL
-    mode:
-      allow_intraday: false   # default = EOD only
-      allow_eod: true
-    repeat_policy:
-      repeat_within_day: false          # not in use - de-dupe per (code,symbol,day)
-      min_cooldown_minutes: 240            # intraday cooldown if repeat_within_day=true
-    channels:                            # per-alert can override these
-      ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-      email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
-      webhook: { enabled: false, url: "" }
-    throttles:
-      max_alerts_per_run: 200
-      max_alerts_per_symbol_day: 5
-    quiet_hours:
-      enabled: false
-      local_from: "22:00"
-      local_to: "07:00"
-      override_for_severity: ["CRITICAL"]
-    # --- Global pre-gates (hard guards applied before any alert) ---
-    pregates:
-      market_calendar: "NSE"
-      skip_holidays: true
-      # personal use: don’t block early/late minutes by default
-      skip_preopen_minutes: 0
-      skip_last_minutes: 0
-      min_price: 50.0
-      min_avg_daily_turnover_rupees_20d: 50000000
-      exclude_lists: []   # e.g., ["ASM_GSM", "FNO_BAN", "SYMBOL_BLACKLIST"]
-    # --- Per-channel basic delivery policy ---
-    send_policy:
-      retry:
-        attempts: 2
-        backoff_seconds: [3, 15]
-      rate_limit:
-        ntfy_per_minute: 120
-        email_per_minute: 30
-      digest:
-        eod:
-          enabled: true
-          top_n: 10
-        intraday:
-          enabled: false
-    # --- Optional per-alert evaluation windows (disabled by default) ---
-    evaluation_windows:
-      enabled: false
-      include: []   # [{ from_min: 45, to_min: -45 }]
-      exclude: []
+    on_backfill_digest: true
+    include_trades: true
+    smtp:
+      host: ${SMTP_HOST:-smtp.gmail.com}
+      port: ${SMTP_PORT:-587}
+      use_tls: true
+      username: ${SMTP_USERNAME:-}
+      password: ${SMTP_PASSWORD:-}
+      from_name: ${SMTP_FROM_NAME:-Momentum Suite}
+      from_addr: ${SMTP_FROM_ADDR:-alerts@example.com}
+    defaults:
+      to:
+        - ${ALERT_EMAIL_TO_1:-you@example.com}
 
-  # ---------------------------
-  # Centralized thresholds so names don’t hard-code numbers
-  # ---------------------------
-  thresholds:
-    high_quality_score: 80     # used by QUALITY_SCORE_THRESHOLD
-    breakout_score_min: 70
-    pullback_score_min: 60
-    starter_score_min_intraday: 65
-    atr10_pct_range: [3.0, 7.0]
-    liquidity_floor_rupees: 50000000
-    breakout_pivot_clear_pct_range: [1.0, 5.0]
-    breakout_relvol20_min: 1.5
-    pullback_relvol20_min: 1.2
-    intraday_relvol_min: 1.5
-    proximity_52w_min_pct: -8.0
-    day_change_cap_breakout_pct: 6.0
-    day_change_cap_starter_pct: 4.0
-    strong_close_min_pos_in_bar: 0.60
-    caution_close_min_pos_in_bar: 0.50
+  ntfy:
+    enabled: true
+    server: ${NTFY_SERVER:-https://ntfy.sh}
+    topic_high: ${NTFY_TOPIC_HIGH:-momentum-high}
+    topic_low: ${NTFY_TOPIC_LOW:-momentum-low}
 
-  # ---------------------------
-  # Alerts catalogue
-  # ---------------------------
-  items:
+topics:
+  high_signal:
+    channels: ["ntfy", "email"]    # most actionable alerts
+  low_signal:
+    channels: ["ntfy"]             # fyi/low-noise
+  digest:
+    channels: ["email"]            # keep digest email-only
 
-    # === BUY SIDE ===
-    - code: BUY_BREAKOUT
-      digest_bucket: "BUY"
-      tags: ["buy", "eod", "breakout"]
-      description: Confirmed EOD breakout; full entry next session open.
-      severity: INFO
-      mode: { allow_intraday: false, allow_eod: true }
-      suppress_if_fired: ["BUY_STARTER"]
-      filters:
-        buy_flag_in: ["Yes"]
-        score_min: ${alerts.thresholds.breakout_score_min}
-        atr10_pct_range: ${alerts.thresholds.atr10_pct_range}
-        liquidity_floor_rupees: ${alerts.thresholds.liquidity_floor_rupees}
-        next_action_in: ["BUY_BREAKOUT"]
-        pivot_clear_pct_range: ${alerts.thresholds.breakout_pivot_clear_pct_range}
-        base_len_bars_min: 15
-        relvol20_min: ${alerts.thresholds.breakout_relvol20_min}
-        day_change_max_pct: ${alerts.thresholds.day_change_cap_breakout_pct}
-        min_close_pos_in_bar: ${alerts.thresholds.strong_close_min_pos_in_bar}
-      template:
-        title: "Buy — {{ symbol }} — Breakout confirmed"
-        body: >
-          Strong breakout above the buy point. Close is near today's high and
-          price cleared the level by {{ pivot_clear_pct }}%. Volume looks higher than
-          usual and the setup score is {{ score }}. Consider a full entry next session.
-      channels:
-        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-        email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
-        webhook: { enabled: false }
+# Per-alert routing (optional per-alert channels override the topic’s channels)
+routes:
+  # ---- BUY ----
+  BUY_SIGNAL_EOD:
+    enabled: true
+    topic: low_signal
+    # channels: ["ntfy"]          # override example (usually let topic decide)
+    throttle: { per_symbol_cooldown_min: 60 }
 
-    - code: BUY_PULLBACK
-      digest_bucket: "BUY"
-      tags: ["buy", "eod", "pullback"]
-      description: Confirmed EOD pullback near EMA10 on extended leader; full entry.
-      severity: INFO
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        buy_flag_in: ["Yes"]
-        score_min: ${alerts.thresholds.pullback_score_min}
-        atr10_pct_range: ${alerts.thresholds.atr10_pct_range}
-        liquidity_floor_rupees: ${alerts.thresholds.liquidity_floor_rupees}
-        next_action_in: ["BUY_PULLBACK"]
-        relvol20_min: ${alerts.thresholds.pullback_relvol20_min}
-        requires_extended_recent: true
-        ema10_pullback_zone: true
-        min_close_pos_in_bar: ${alerts.thresholds.caution_close_min_pos_in_bar}
-      template:
-        title: "Buy — {{ symbol }} — Calm pullback"
-        body: >
-          Healthy dip towards the short-term average after a strong run.
-          If strength returns, consider a full entry. Current setup score is {{ score }}.
-      channels:
-        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-        email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
+  BUY_SIGNAL_INTRADAY:
+    enabled: true
+    topic: low_signal
+    throttle: { per_symbol_cooldown_min: 30 }
 
-    - code: BUY_STARTER
-      digest_bucket: "BUY"
-      tags: ["buy", "intraday", "starter"]
-      description: Optional intraday starter (¼–⅓ size) on 2-hour persistence.
-      severity: INFO
-      mode: { allow_intraday: true, allow_eod: false }
-      escalates_to: "BUY_BREAKOUT"
-      repeat_policy: { repeat_within_day: false, min_cooldown_minutes: 120 }
-      filters:
-        buy_flag_in: ["Yes"]
-        intraday_score_min: ${alerts.thresholds.starter_score_min_intraday}
-        adx14_min: 22
-        adx14_rising: true
-        rsi14_range: [58, 70]
-        intraday_relvol_min: ${alerts.thresholds.intraday_relvol_min}
-        proximity_52w_min_pct: ${alerts.thresholds.proximity_52w_min_pct}
-        day_change_max_pct: ${alerts.thresholds.day_change_cap_starter_pct}
-        atr10_pct_range: ${alerts.thresholds.atr10_pct_range}
-        liquidity_floor_rupees: ${alerts.thresholds.liquidity_floor_rupees}
-        persistence_bars:
-          timeframe_minutes: 15
-          bars: 3
-          above_pivot: true
-          above_vwap: true
-          min_close_pos_in_bar: ${alerts.thresholds.strong_close_min_pos_in_bar}
-      auto_cancel_rules:
-        below_pivot_bars: 2
-        below_vwap_last_minutes: 60
-        intraday_score_falls_below: 60
-      template:
-        title: "Starter — {{ symbol }} — Intraday strength"
-        body: >
-          Small initial entry idea (¼–⅓ size). Price stayed above the buy point and
-          VWAP for 3 bars with improving trend strength. Reassess near the close.
-      channels:
-        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-        email:  { enabled: false }
+  BUY_SELECTED:
+    enabled: true
+    topic: high_signal
+    throttle: { per_symbol_cooldown_min: 1440 }
 
-    # === HOLD / MGMT (ACTIVE ONLY) ===
-    - code: HOLD_TIGHT
-      digest_bucket: "MGMT"
-      tags: ["hold", "eod"]
-      description: Structure intact; hold position.
-      severity: INFO
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        for_active_positions_only: true
-        price_above_method_line: true
-        score_min: 65
-      template:
-        title: "Hold — {{ symbol }} — Trend intact"
-        body: >
-          Uptrend looks healthy. Price is holding above your guide line. No action today.
-      channels:
-        ntfy:  { enabled: true }
-        email: { enabled: false }
+  # ---- SELL ----
+  SELL_STOP:
+    enabled: true
+    topic: high_signal
+    throttle: { per_symbol_cooldown_min: 30 }
 
-    - code: HOLD_CAUTION
-      digest_bucket: "MGMT"
-      tags: ["hold", "eod", "caution"]
-      description: Minor pullback; watch next close.
-      severity: INFO
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        for_active_positions_only: true
-        within_pct_below_method_line: 2.0
-        min_close_pos_in_bar: ${alerts.thresholds.caution_close_min_pos_in_bar}
-      template:
-        title: "Hold — {{ symbol }} — Gentle pullback"
-        body: >
-          Small dip but still fine. Keep an eye on tomorrow's close; no change for now.
-      channels:
-        ntfy:  { enabled: true }
-        email: { enabled: false }
+  SELL_TARGET_T1:
+    enabled: true
+    topic: high_signal
+    throttle: { per_symbol_cooldown_min: 60 }
 
-    # === SELL SIDE (ACTIVE ONLY) ===
-    - code: SELL_STOP_NOW
-      digest_bucket: "SELL"
-      tags: ["sell", "intraday", "risk"]
-      description: Stop-loss violated intraday or gap-through at open.
-      severity: CRITICAL
-      mode: { allow_intraday: true, allow_eod: false }
-      filters:
-        for_active_positions_only: true
-        stop_violated: true
-      template:
-        title: "Sell now — {{ symbol }} — Stop hit"
-        body: >
-          Protect capital. Your stop level ({{ position_ctx.stop | default('N/A') }})
-          was breached. Exit the position immediately.
-      channels:
-        ntfy:   { enabled: true,  topic: "momentum-alerts-nishi" }
-        email:  { enabled: true,  to: ["nishikant.tiwari01@gmail.com"] }
-        webhook: { enabled: true,  url: "https://hooks.example.com/alert" }
+  SELL_TARGET_T2:
+    enabled: true
+    topic: high_signal
+    throttle: { per_symbol_cooldown_min: 60 }
 
-    - code: SELL_TREND_BREACH
-      digest_bucket: "SELL"
-      tags: ["sell", "eod", "trend"]
-      description: Two consecutive closes below method line (EMA10/8).
-      severity: WARN
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        for_active_positions_only: true
-        consecutive_closes_below_method_line: 2
-      template:
-        title: "Sell — {{ symbol }} — Trend broken"
-        body: >
-          Trend has weakened after two closes below your guide line.
-          Plan to exit on the next session.
-      channels:
-        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
+  SELL_WEAKNESS:
+    enabled: true
+    topic: low_signal
+    throttle: { per_symbol_cooldown_min: 720 }
 
-    - code: SELL_FAILED_BREAKOUT
-      digest_bucket: "SELL"
-      tags: ["sell", "eod", "breakout"]
-      description: Breakout failed; close back below pivot with weak candle.
-      severity: WARN
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        for_active_positions_only: true
-        breakout_yesterday: true
-        close_below_pivot_today: true
-        max_close_pos_in_bar: 0.50
-      template:
-        title: "Sell — {{ symbol }} — Breakout failed"
-        body: >
-          Breakout attempt fizzled: price closed back below the buy point with a weak
-          candle. Consider exiting in the next session.
-      channels:
-        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
+  SELL_FAILED_BREAKOUT:
+    enabled: true
+    topic: high_signal
+    throttle: { per_symbol_cooldown_min: 1440 }
 
-    - code: TRIM_10PCT
-      digest_bucket: "SELL"
-      tags: ["sell", "eod", "trim"]
-      description: Take half at +10%; trail remainder by EMA10 or 2×ATR.
-      severity: INFO
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        for_active_positions_only: true
-        unrealized_gain_min_pct: 10.0
-      template:
-        title: "Trim — {{ symbol }} — Lock some gains"
-        body: >
-          Consider booking half the position after a ~10% rise. Keep the rest and
-          trail with a closer guide.
-      channels:
-        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
+  SELL_TIMEOUT:
+    enabled: true
+    topic: high_signal
+    throttle: { per_symbol_cooldown_min: 1440 }
 
-    - code: TIME_STOP
-      digest_bucket: "SELL"
-      tags: ["sell", "eod", "time"]
-      description: No progress 5–7 days; recycle capital.
-      severity: INFO
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        for_active_positions_only: true
-        days_since_entry_min: 5
-        gain_max_pct: 2.0
-        score_max: 60
-        next_action_in: ["HOLD", "WATCH"]
-      template:
-        title: "Exit — {{ symbol }} — Time stop"
-        body: >
-          Sideways too long with little progress. Free up capital and look for
-          better opportunities.
-      channels:
-        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
+  SELL_BREAKEVEN:
+    enabled: true
+    topic: digest               # this is informational; send via email/digest
+    throttle: { per_symbol_cooldown_min: 1440 }
 
-    - code: EUPHORIA_EXIT
-      digest_bucket: "SELL"
-      tags: ["sell", "eod", "euphoria"]
-      description: Parabolic run; lock profits or tighten stop to EMA8.
-      severity: INFO
-      mode: { allow_intraday: false, allow_eod: true }
-      filters:
-        for_active_positions_only: true
-        fast_gain_min_pct: 15.0
-        fast_gain_days_max: 3
-        rsi14_min: 75
-      template:
-        title: "Trim — {{ symbol }} — Fast run-up"
-        body: >
-          Quick, steep rise. Lock in some gains or tighten to a closer guide
-          (e.g., the 8‑day) to protect profits.
-      channels:
-        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-        email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
+  SELL_TRAIL_UPDATE:
+    enabled: false              # noisy; keep off unless you want state pings
+    topic: low_signal
+    throttle: { per_symbol_cooldown_min: 60 }
 
-    # === LEGACY / COMPAT ===
-    - code: QUALITY_SCORE_THRESHOLD
-      digest_bucket: "SCORE"
-      tags: ["score", "compat"]
-      description: Legacy high-score alert (compat). Uses configurable score threshold.
-      severity: INFO
-      mode: { allow_intraday: true, allow_eod: true }
-      filters:
-        score_min: ${alerts.thresholds.high_quality_score}
-      template:
-        title: "{{ symbol }} — QUALITY_SCORE_THRESHOLD"
-        body: >
-          Momentum score {{ score }} is above your quality bar. Review for
-          potential entry or keep on the watchlist.
-      channels:
-        ntfy:  { enabled: true, topic: "momentum-alerts-nishi" }
-       # email: { enabled: true, to: ["nishikant.tiwari01@gmail.com"] }
+digest:
+  eod:
+    enabled: true
+    schedule_local_time: "18:30"
+    timezone: "Asia/Kolkata"
+    include:
+      top_gainers: 10
+      top_losers: 10
+      top_scores: 15
+      buy_signals: true
+      positions: true
+      alerts_since_prev_digest: true
+    sort:
+      top_scores: ["score", "desc"]
+  weekly:
+    enabled: false
 
-  # ---------------------------
-  # Templates for message rendering (fallback)
-  # ---------------------------
-  templates:
-    default:
-      title: "{{ code }} • {{ symbol }}"
-      body: >
-        {{ description }}
-        Score={{ score }}; Price={{ price_close }}; Change={{ day_change_pct }}%.
+templates:
+  ntfy:
+    BUY_SELECTED:        "BUY SELECTED {{symbol}} @ {{entry_ref}} | Stop {{stop}} | R {{r_multiple|round(2)}}"
+    BUY_SIGNAL_EOD:      "BUY CANDIDATE (EOD) {{symbol}} | Score {{score}} | ADX {{adx14}} | RelVol20 {{relvol20}} | ATR% {{atr_pct}}"
+    BUY_SIGNAL_INTRADAY: "BUY CANDIDATE (INTRA) {{symbol}} | IntrRelVol {{intraday_relvol}} | ADX {{adx14}} | VWAP {{above_vwap}} | PDH {{prev_day_high_clear}}"
 
-  # ---------------------------
-  # Engine hints (non-binding)
-  # ---------------------------
-  engine_hints:
-    idempotency:
-      eod_business_key: "{{ code }}:{{ symbol }}:{{ eod_date }}"
-      intraday_business_key: "{{ code }}:{{ symbol }}:{{ date }}:{{ hh }}{{ mm//15*15 }}"
-      intraday_window_minutes: 15
-    # personal-use startup behavior: if the app wasn’t running, do a light catch-up
-    startup_catchup:
-      enabled: true
-      catchup_eod_days: 1           # run last trading day’s EOD checks on startup
-      catchup_intraday_minutes: 0   # avoid noisy intraday backfills on startup
-    pack_summaries:
-      eod_digest_email: true
-      eod_digest_top_n: 10
-      eod_digest_group_by: ["digest_bucket"]
-      eod_digest_sort_by: "-score"
-      intraday_digest_ntfy: false
+    SELL_STOP:           "STOP {{symbol}} @ {{price}} | Stop {{stop}} | P/L {{pnl_pct}}%"
+    SELL_TARGET_T1:      "T1 {{symbol}} +{{t1}}% hit | P/L {{pnl_pct}}%"
+    SELL_TARGET_T2:      "T2 {{symbol}} +{{t2}}% hit | P/L {{pnl_pct}}%"
+    SELL_FAILED_BREAKOUT:"FAILED BO {{symbol}} < pivot {{pivot}} | DownRelVol {{relvol_down}} | P/L {{pnl_pct}}%"
+    SELL_TIMEOUT:        "TIMEOUT {{symbol}} after {{days_since_entry}}d | P/L {{pnl_pct}}%"
+    SELL_WEAKNESS:       "WEAKNESS {{symbol}} below EMA{{ema}} {{streak}} bars | RelVol {{relvol}} | P/L {{pnl_pct}}%"
+    SELL_BREAKEVEN:      "BREAKEVEN {{symbol}} retraced to entry | P/L {{pnl_pct}}%"
+    SELL_TRAIL_UPDATE:   "TRAIL UPDATE {{symbol}} -> {{stop}}"
+
+  email:
+    BUY_SELECTED:
+      subject: "[BUY SELECTED] {{symbol}} @ {{entry_ref}} | Stop {{stop}} | R {{r_multiple|round(2)}}"
+      body: |
+        {{symbol}} — BUY SELECTED ({{profile}}) on {{as_of}}
+        Entry ref: {{entry_ref}} ({{entry_context}})
+        Stop: {{stop}} ({{stop_method}})
+        Targets: T1 {{t1}} / T2 {{t2}}
+        R multiple: {{r_multiple|round(2)}}
+        Reasons: {{reasons_inline}}
+        Run: {{run_id}}
+
+    BUY_SIGNAL_EOD:
+      subject: "[BUY CANDIDATE] {{symbol}} (EOD)"
+      body: |
+        {{symbol}} — BUY gate passed (EOD). Candidate, not selected yet.
+        Score: {{score}} | ADX14: {{adx14}} | RelVol20: {{relvol20}} | ATR10%: {{atr_pct}}
+        Pivot: {{pivot}} | Base: {{base_len_bars}} bars
+        Reasons: {{reasons_inline}}
+        Run: {{run_id}}
+
+    BUY_SIGNAL_INTRADAY:
+      subject: "[BUY CANDIDATE] {{symbol}} (Intraday)"
+      body: |
+        {{symbol}} — BUY gate passed (Intraday). Candidate, not selected yet.
+        Score: {{score}} | ADX14: {{adx14}} | IntradayRelVol: {{intraday_relvol}}
+        VWAP: {{above_vwap}} | PDH clear: {{prev_day_high_clear}}
+        Reasons: {{reasons_inline}}
+        Run: {{run_id}}
+
+    SELL_STOP:
+      subject: "[STOP] {{symbol}} hit stop @ {{price}}"
+      body: |
+        {{symbol}} — STOP triggered at {{price}} on {{as_of}}
+        Last stop: {{stop}} ({{stop_method}})
+        Entry: {{entry_price}} | P/L: {{pnl_pct}}%
+        Run: {{run_id}}
+
+    SELL_TARGET_T1:
+      subject: "[T1] {{symbol}} hit +{{t1}}%"
+      body: |
+        {{symbol}} — Target T1 (+{{t1}}%) hit on {{as_of}}
+        Entry: {{entry_price}} | Current: {{last_price}} | P/L: {{pnl_pct}}%
+        Suggest: consider partial book / trail update
+        Run: {{run_id}}
+
+    SELL_TARGET_T2:
+      subject: "[T2] {{symbol}} hit +{{t2}}%"
+      body: |
+        {{symbol}} — Target T2 (+{{t2}}%) hit on {{as_of}}
+        Entry: {{entry_price}} | Current: {{last_price}} | P/L: {{pnl_pct}}%
+        Action: consider full/major book
+        Run: {{run_id}}
+
+    SELL_FAILED_BREAKOUT:
+      subject: "[FAILED BO] {{symbol}} lost pivot {{pivot}}"
+      body: |
+        {{symbol}} — Failed breakout: close < pivot {{pivot}} on {{as_of}}
+        Volume (down): {{relvol_down}}
+        Entry: {{entry_price}} | Current: {{last_price}} | P/L: {{pnl_pct}}%
+        Run: {{run_id}}
+
+    SELL_TIMEOUT:
+      subject: "[TIMEOUT] {{symbol}} aged {{days_since_entry}}d"
+      body: |
+        {{symbol}} — Timeout exit after {{days_since_entry}} trading days
+        Entry: {{entry_price}} | Current: {{last_price}} | P/L: {{pnl_pct}}%
+        Run: {{run_id}}
+
+    SELL_WEAKNESS:
+      subject: "[WEAKNESS] {{symbol}} below EMA{{ema}} ({{streak}} bars)"
+      body: |
+        {{symbol}} — {{streak}} closes below EMA{{ema}} with relvol {{relvol}}
+        Entry: {{entry_price}} | Current: {{last_price}} | P/L: {{pnl_pct}}%
+        Run: {{run_id}}
+
+throttle_defaults:
+  per_symbol_cooldown_min: 10
+  per_event_cooldown_min: 5

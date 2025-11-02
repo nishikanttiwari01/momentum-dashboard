@@ -14,11 +14,13 @@ I have another full time job hence may or may not be running this app everyday. 
 - **Trades Page:** This page shows all booked trades.
 - **Alert Page:** This page shows all fired alerts.
 
+### Goal
+10 % percent gain per month with minimal trade consisting of 3 to 5 stocks ideally.
+
 ### AI prompt
 Analyse attached project zip like an expert python and react developer with 15 years of expereince. No guessing, go through the code before you stop. 
 
-### Goal
-10 % percent gain per month with minimal trade consisting of 3 to 5 stocks ideally.
+
 
 # Backend Run
 cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard

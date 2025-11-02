@@ -1,16 +1,10 @@
 from __future__ import annotations
 from typing import Dict, Any
-import os, smtplib, logging
+import smtplib, logging
 from email.message import EmailMessage
 
 # Keep existing import contract
 from .base import DeliveryResult
-
-# New: read global delivery transport if per-alert channel cfg doesn't provide it
-try:
-    from app.core.config import load as cfg_load
-except Exception:  # very defensive: don’t crash sends if config import fails
-    cfg_load = None  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -23,77 +17,34 @@ def _as_list(v: Any) -> list[str]:
     return [str(v)]
 
 
-def _global_email_transport() -> dict:
-    """
-    Pull SMTP transport from alerts.delivery.email.smtp (v2),
-    with ENV fallbacks for personal use.
-    """
-    smtp: dict[str, Any] = {}
-    if cfg_load:
-        try:
-            alerts = cfg_load().alerts or {}
-            smtp = ((alerts.get("delivery") or {}).get("email") or {}).get("smtp") or {}
-        except Exception:
-            smtp = {}
-
-    # env fallbacks (do not force)
-    return {
-        "host": smtp.get("host") or os.getenv("SMTP_HOST"),
-        "port": int(smtp.get("port") or os.getenv("SMTP_PORT") or 587),
-        "username": smtp.get("username") or os.getenv("SMTP_USERNAME") or os.getenv("SMTP_USER"),
-        "password": smtp.get("password") or os.getenv("SMTP_PASSWORD") or os.getenv("SMTP_PASS"),
-        "use_tls": bool(smtp.get("use_tls", True)),
-        "from_addr": smtp.get("from_addr") or os.getenv("SMTP_FROM_ADDR") or smtp.get("username") or os.getenv("SMTP_USERNAME"),
-        "from_name": smtp.get("from_name") or os.getenv("SMTP_FROM_NAME") or "Momentum Suite",
-        # optional defaults.to (for last-resort recipients)
-        "_defaults_to": ((cfg_load().alerts.get("delivery") or {}).get("email") or {}).get("defaults", {}).get("to") if cfg_load else None,  # type: ignore[attr-defined]
-    }
-
-
-def _resolve_recipients(chan_cfg: Dict[str, Any], transport_defaults_to: Any) -> list[str]:
-    # Priority: per-alert item.channels.email.to -> alerts.defaults.channels.email.to -> delivery.email.defaults.to
-    to_direct = _as_list(chan_cfg.get("to"))
-    if to_direct:
-        return to_direct
-
-    # try global defaults under alerts.defaults.channels.email.to
-    try:
-        if cfg_load:
-            defaults_to = (((cfg_load().alerts or {}).get("defaults") or {}).get("channels") or {}).get("email", {}).get("to")
-            defaults_to_l = _as_list(defaults_to)
-            if defaults_to_l:
-                return defaults_to_l
-    except Exception:
-        pass
-
-    # last resort: delivery.email.defaults.to
-    return _as_list(transport_defaults_to)
-
-
 def send(event: Dict[str, Any], content: Dict[str, str], chan_cfg: Dict[str, Any]) -> DeliveryResult:
     """
     SMTP email sender.
-    - Recipients resolved from item/defaults/delivery (in that order).
-    - Transport resolved from alerts.delivery.email.smtp with ENV fallbacks.
+    Expects chan_cfg to supply:
+      {
+        "enabled": bool,
+        "smtp": {"host": ..., "port": ..., "username": ..., "password": ..., "use_tls": bool, "from_addr": ..., "from_name": ...},
+        "to": ["recipient@example.com", ...]
+      }
     """
     if not chan_cfg.get("enabled", True):
         log.debug("Email channel disabled for event_id=%s", event.get("id"))
         return DeliveryResult(status="SKIPPED", response_meta={"reason": "DISABLED"})
 
-    transport = _global_email_transport()
-    to_list = _resolve_recipients(chan_cfg, transport.get("_defaults_to"))
+    smtp_cfg = chan_cfg.get("smtp") or {}
+    to_list = _as_list(chan_cfg.get("to"))
 
     if not to_list:
         log.warning("Email channel has no recipients for event_id=%s", event.get("id"))
         return DeliveryResult(status="SKIPPED", response_meta={"reason": "NO_RECIPIENTS"})
 
-    host = transport.get("host")
-    user = transport.get("username")
-    pwd = transport.get("password")
-    port = int(transport.get("port") or 587)
-    use_tls = bool(transport.get("use_tls", True))
-    from_addr = transport.get("from_addr") or user or "alerts@localhost"
-    from_name = transport.get("from_name") or ""
+    host = smtp_cfg.get("host")
+    user = smtp_cfg.get("username")
+    pwd = smtp_cfg.get("password")
+    port = int(smtp_cfg.get("port") or 587)
+    use_tls = bool(smtp_cfg.get("use_tls", True))
+    from_addr = smtp_cfg.get("from_addr") or user or "alerts@localhost"
+    from_name = smtp_cfg.get("from_name") or ""
 
     if not (host and user and pwd):
         log.error("Email channel missing SMTP transport config (host/user/password) for event_id=%s", event.get("id"))

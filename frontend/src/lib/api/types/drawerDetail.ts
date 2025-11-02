@@ -16,6 +16,7 @@ import type { DrawerMeters } from './drawerMeters';
 import type { DrawerNextAction } from './drawerNextAction';
 import type { DrawerPosition } from './drawerPosition';
 import type { DrawerScoreBreakdown } from './drawerScoreBreakdown';
+import type { DrawerSelection } from './drawerSelection';
 import type { DrawerSparkline } from './drawerSparkline';
 
 export interface DrawerDetail {
@@ -33,6 +34,8 @@ export interface DrawerDetail {
    */
   channels?: DrawerDetailChannels;
   diagnostics: DrawerDiagnostics;
+  /** @nullable */
+  selection?: DrawerSelection | null;
   /** Semantic version for the drawer contract. */
   drawer_contract_version: string;
   header: DrawerHeader;

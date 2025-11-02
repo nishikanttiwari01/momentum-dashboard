@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.7.0
  */
 import type { Badge } from './badge';
+import type { BuyCheck } from './buyCheck';
 
 export interface ScreenerRow {
   adx?: number;
@@ -13,6 +14,33 @@ export interface ScreenerRow {
   atr_pct?: number;
   badges?: Badge[];
   buy?: boolean;
+  buy_flag?: boolean;
+  buy_profile?: string;
+  buy_mode?: 'EOD' | 'INTRADAY';
+  buy_pass_count?: number;
+  buy_total_count?: number;
+  buy_checks?: BuyCheck[];
+  buy_failed_codes?: string[];
+  buy_reasons_inline?: string;
+  buy_eval_ts?: string;
+  /** @nullable */
+  buy_enforced_checks?: string[] | null;
+  /** @nullable */
+  buy_reason_parts?: string[] | null;
+  /** @nullable */
+  buy_selected?: boolean | null;
+  /** @nullable */
+  buy_selection_reason?: string | null;
+  /** @nullable */
+  buy_stop_price?: number | null;
+  /** @nullable */
+  buy_target_price?: number | null;
+  /** @nullable */
+  buy_r_multiple?: number | null;
+  /** @nullable */
+  buy_selection_run_id?: string | null;
+  /** @nullable */
+  buy_selection_trading_day?: string | null;
   change_pct: number;
   last: number;
   last_index?: string;

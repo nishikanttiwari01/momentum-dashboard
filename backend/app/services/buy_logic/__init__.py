@@ -1,13 +1,5 @@
-from .reasoning import (
-    evaluate_buy_gate,
-    compose_human_reason,
-    get_threshold_float,
-    get_threshold_range,
-)
+from .reasoning import evaluate_buy_gate
 
 __all__ = [
     "evaluate_buy_gate",
-    "compose_human_reason",
-    "get_threshold_float",
-    "get_threshold_range",
 ]

@@ -1914,6 +1914,89 @@ components:
         buy:
           type: boolean
           example: false
+        buy_flag:
+          type: boolean
+          description: True when all enforced buy gates passed.
+        buy_profile:
+          type: string
+          nullable: true
+          description: Active buy profile key (e.g., swing_eod, intraday_breakout).
+        buy_mode:
+          type: string
+          nullable: true
+          description: Evaluation mode used for the buy gates.
+          enum: [EOD, INTRADAY]
+        buy_pass_count:
+          type: integer
+          nullable: true
+          description: Number of enforced buy gates that passed.
+        buy_total_count:
+          type: integer
+          nullable: true
+          description: Total enforced buy gates evaluated.
+        buy_checks:
+          type: array
+          description: Checklist rows for enforced buy gates.
+          items:
+            $ref: '#/components/schemas/BuyCheck'
+        buy_failed_codes:
+          type: array
+          nullable: true
+          description: Codes of enforced buy gates that failed.
+          items:
+            type: string
+        buy_reasons_inline:
+          type: string
+          nullable: true
+          description: Inline summary of buy reasons.
+        buy_eval_ts:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the buy evaluation occurred.
+        buy_enforced_checks:
+          type: array
+          nullable: true
+          description: Enforced gate codes considered during evaluation.
+          items:
+            type: string
+        buy_reason_parts:
+          type: array
+          nullable: true
+          description: Structured fragments of the buy reasons summary.
+          items:
+            type: string
+        buy_selected:
+          type: boolean
+          nullable: true
+          description: True when the row represents the selected candidate for the day.
+        buy_selection_reason:
+          type: string
+          nullable: true
+          description: Short explanation of why this symbol was selected.
+        buy_stop_price:
+          type: number
+          format: float
+          nullable: true
+          description: Trailing stop price applied at selection time.
+        buy_target_price:
+          type: number
+          format: float
+          nullable: true
+          description: Initial target price used for selection ranking.
+        buy_r_multiple:
+          type: number
+          format: float
+          nullable: true
+          description: R multiple computed for selection ranking.
+        buy_selection_run_id:
+          type: string
+          nullable: true
+          description: Run identifier that produced the selection.
+        buy_selection_trading_day:
+          type: string
+          nullable: true
+          description: Trading date associated with the selection result.
         reason:
           type: string
           example: ''
@@ -2631,6 +2714,9 @@ components:
           $ref: '#/components/schemas/DrawerAlerts'
         diagnostics:
           $ref: '#/components/schemas/DrawerDiagnostics'
+        selection:
+          $ref: '#/components/schemas/DrawerSelection'
+          nullable: true
         news_recent_hours:
           type: integer
           description: Default lookback window (hours) for the right-drawer news tab.
@@ -2999,6 +3085,85 @@ components:
           additionalProperties: { type: object }
           description: Delivery status keyed by channel.
 
+    BuyCheck:
+      type: object
+      required: [code, label, rule, actual, pass]
+      properties:
+        code:
+          type: string
+          description: Stable identifier for the gate factor.
+          example: min_score
+        label:
+          type: string
+          description: Human-readable gate name.
+          example: Score
+        rule:
+          type: string
+          description: Textual rule applied to the gate.
+          example: ">= 70"
+        actual:
+          type: string
+          description: Formatted value observed for the gate.
+          example: "81"
+        pass:
+          type: boolean
+          description: Indicates whether the gate passed.
+        value:
+          type: number
+          nullable: true
+          description: Optional numeric representation of the observed value.
+
+    BuyEvaluation:
+      type: object
+      required: [flag, profile, mode, pass_count, total_count, checks, failed_codes]
+      properties:
+        flag:
+          type: boolean
+          description: True when all enforced buy gates passed.
+        profile:
+          type: string
+          nullable: true
+          description: Active buy profile key (e.g., swing_eod, intraday_breakout).
+          example: swing_eod
+        mode:
+          type: string
+          nullable: true
+          description: Evaluation mode used for the buy gates.
+          enum: [EOD, INTRADAY]
+        pass_count:
+          type: integer
+          description: Number of enforced gates that passed.
+          example: 8
+        total_count:
+          type: integer
+          description: Total enforced gates evaluated.
+          example: 9
+        checks:
+          type: array
+          description: Checklist rows for the enforced gates.
+          items:
+            $ref: '#/components/schemas/BuyCheck'
+        failed_codes:
+          type: array
+          description: Codes of the enforced gates that failed.
+          items:
+            type: string
+        enforced_checks:
+          type: array
+          nullable: true
+          description: Snapshot of enforced gate codes applied during evaluation.
+          items:
+            type: string
+        reasons_inline:
+          type: string
+          nullable: true
+          description: Inline summary of the buy reasons.
+        eval_ts:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the buy evaluation was performed.
+
     DrawerDiagnostics:
       type: object
       required: [reason, rules_version]
@@ -3018,6 +3183,16 @@ components:
           nullable: true
         buy_checklist:
           $ref: '#/components/schemas/DrawerDiagnosticsBuyChecklist'
+        buy_evaluation:
+          $ref: '#/components/schemas/BuyEvaluation'
+        buy_reasons_inline:
+          type: string
+          nullable: true
+        buy_failed_codes:
+          type: array
+          nullable: true
+          items:
+            type: string
     DrawerDiagnosticsBuyChecklist:
       type: object
       required: [label, mode, passed, passed_items, total_items, summary, items]
@@ -3304,3 +3479,30 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/NewsAttributionItem" }
+
+    DrawerSelection:
+      type: object
+      properties:
+        selected:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        stop_price:
+          type: number
+          format: float
+          nullable: true
+        target_price:
+          type: number
+          format: float
+          nullable: true
+        r_multiple:
+          type: number
+          format: float
+          nullable: true
+        run_id:
+          type: string
+          nullable: true
+        trading_day:
+          type: string
+          nullable: true

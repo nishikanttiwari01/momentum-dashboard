@@ -811,6 +811,21 @@ class NewsMoveAttributionResponse(BaseModel):
     items: list[NewsAttributionItem]
 
 
+class BuyCheck(BaseModel):
+    code: str = Field(..., examples=["min_score"])
+    label: str = Field(..., examples=["Score"])
+    rule: str = Field(..., examples=[">= 70"])
+    actual: str = Field(..., examples=["81"])
+    pass_: bool = Field(..., alias="pass", examples=[True])
+    value: Optional[float] = Field(
+        None,
+        description="Optional numeric representation of the observed value.",
+        examples=[81.0],
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class ScreenerRow(BaseModel):
     symbol: str = Field(..., examples=["RELIANCE"])
     name: Optional[str] = Field(None, examples=["Reliance Industries"])
@@ -834,6 +849,36 @@ class ScreenerRow(BaseModel):
     vol_spike: Optional[float] = Field(None, examples=[1.4])
     pct_today: Optional[float] = Field(None, examples=[0.85])
     buy: Optional[bool] = Field(None, examples=[False])
+    buy_flag: Optional[bool] = Field(
+        None, description="True when all enforced buy gates passed.", examples=[True]
+    )
+    buy_profile: Optional[str] = Field(
+        None, description="Active buy profile key.", examples=["swing_eod"]
+    )
+    buy_mode: Optional[Literal["EOD", "INTRADAY"]] = Field(
+        None, description="Evaluation mode used for the buy gates."
+    )
+    buy_pass_count: Optional[int] = Field(
+        None, description="Number of enforced buy gates that passed.", examples=[8]
+    )
+    buy_total_count: Optional[int] = Field(
+        None, description="Total enforced buy gates evaluated.", examples=[9]
+    )
+    buy_checks: Optional[list[BuyCheck]] = None
+    buy_failed_codes: Optional[list[str]] = None
+    buy_reasons_inline: Optional[str] = Field(
+        None, examples=["Score 81; RelVol20 1.6x; ADX14 44"]
+    )
+    buy_eval_ts: Optional[AwareDatetime] = None
+    buy_selected: Optional[bool] = None
+    buy_selection_reason: Optional[str] = None
+    buy_stop_price: Optional[float] = None
+    buy_target_price: Optional[float] = None
+    buy_r_multiple: Optional[float] = None
+    buy_selection_run_id: Optional[str] = None
+    buy_selection_trading_day: Optional[str] = None
+    buy_enforced_checks: Optional[list[str]] = None
+    buy_reason_parts: Optional[list[str]] = None
     reason: Optional[str] = Field(None, examples=[""])
     source: Optional[str] = Field(None, examples=["scan"])
     stale: Optional[bool] = Field(None, examples=[False])
@@ -878,6 +923,40 @@ class DrawerAlerts(BaseModel):
         None,
         description="Alerts fired for this symbol during the recent lookback window.",
     )
+
+
+class BuyEvaluation(BaseModel):
+    flag: bool = Field(
+        ...,
+        description="True when all enforced buy gates passed.",
+    )
+    profile: Optional[str] = Field(
+        None,
+        description="Active buy profile key.",
+        examples=["swing_eod"],
+    )
+    mode: Optional[Literal["EOD", "INTRADAY"]] = Field(
+        None,
+        description="Evaluation mode used for the buy gates.",
+    )
+    pass_count: int = Field(
+        ...,
+        description="Number of enforced buy gates that passed.",
+        examples=[8],
+    )
+    total_count: int = Field(
+        ...,
+        description="Total enforced buy gates evaluated.",
+        examples=[9],
+    )
+    checks: list[BuyCheck]
+    failed_codes: list[str] = Field(default_factory=list)
+    enforced_checks: Optional[list[str]] = None
+    reasons_inline: Optional[str] = Field(
+        None,
+        description="Inline summary of buy reasons.",
+    )
+    eval_ts: Optional[AwareDatetime] = None
 
 
 class DrawerDiagnosticsBuyChecklist(BaseModel):
@@ -930,6 +1009,19 @@ class DrawerDiagnostics(BaseModel):
     rules_version: str = Field(..., examples=["scores_v2"])
     blocked_reason: Optional[str] = None
     buy_checklist: Optional[DrawerDiagnosticsBuyChecklist] = None
+    buy_evaluation: Optional[BuyEvaluation] = None
+    buy_reasons_inline: Optional[str] = None
+    buy_failed_codes: Optional[list[str]] = None
+
+
+class DrawerSelection(BaseModel):
+    selected: bool = Field(default=False)
+    reason: Optional[str] = None
+    stop_price: Optional[float] = None
+    target_price: Optional[float] = None
+    r_multiple: Optional[float] = None
+    run_id: Optional[str] = None
+    trading_day: Optional[str] = None
 
 
 class DrawerDetail(BaseModel):
@@ -961,6 +1053,7 @@ class DrawerDetail(BaseModel):
     next_action: DrawerNextAction
     alerts: Optional[DrawerAlerts] = None
     diagnostics: DrawerDiagnostics
+    selection: Optional[DrawerSelection] = None
     news_recent_hours: Optional[int] = Field(
         None,
         description="Default lookback window (hours) for the right-drawer news tab.",
