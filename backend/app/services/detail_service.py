@@ -1,4 +1,4 @@
-# backend/app/services/detail_service.py
+﻿# backend/app/services/detail_service.py
 from __future__ import annotations
 
 import json
@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, List
 from datetime import datetime, date, timedelta, timezone
+import math
 from zoneinfo import ZoneInfo
 
 try:
@@ -111,6 +112,20 @@ def _safe_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    """
+    Recursively coerce non-finite floats (NaN/Inf) into JSON-safe None values.
+    Also normalizes tuples/sets to lists so FastAPI can serialize them.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_for_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_for_json(val) for key, val in value.items()}
+    return value
 
 def _as_of_from_run_id(run_id: str, tz_name: str = _TZ_DEFAULT) -> datetime:
     """Parse 'YYYYMMDDHHMMSS' run_id to tz-aware datetime; fallback to now."""
@@ -698,8 +713,8 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
     header = {
         "name": name,
         "sector": sector or None,
-        "price": price_now,
-        "pct_1d": pct_today,
+        "price": price_now or 0.0,
+        "pct_1d": pct_today or 0.0,
         "badges": _header_badges_from_row(row or {}),
     }
 
@@ -944,7 +959,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
         "as_of": as_of_val,
         "name": name,
         "sector": sector,
-        "price": price_now,
+        "price": price_now or 0.0,
         "pct_today": pct_today,
         "score": score,
         "indicators": indicators,
@@ -958,6 +973,30 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
     # Ensure tz-aware 'as_of' and serialize to ISO8601 string
     _asof_dt = _coerce_as_of(payload.get("as_of"), run_id=rid_used or run_id, tz_name=_TZ_DEFAULT)
     payload["as_of"] = _asof_dt.isoformat()
+
+    payload = _sanitize_for_json(payload)
+
+    header_payload = dict(payload.get("header") or {})
+    try:
+        header_price = float(header_payload.get("price"))
+    except (TypeError, ValueError):
+        header_price = float(payload.get("price") or 0.0)
+    if not math.isfinite(header_price):
+        header_price = float(payload.get("price") or 0.0)
+        if not math.isfinite(header_price):
+            header_price = 0.0
+    header_payload["price"] = header_price
+    payload["header"] = header_payload
+
+    try:
+        payload_price = float(payload.get("price"))
+    except (TypeError, ValueError):
+        payload_price = header_price
+    if not math.isfinite(payload_price):
+        payload_price = header_price
+    if not math.isfinite(payload_price):
+        payload_price = 0.0
+    payload["price"] = payload_price
 
     log.info("build: payload %s@%s as_of=%s price=%s", sym_in, payload["run_id"], payload["as_of"], payload["price"])
     return payload
@@ -1282,8 +1321,11 @@ def _i(x) -> int:
     try: return int(x)
     except Exception: return 0
 def _f(x) -> float:
-    try: return float(x)
-    except Exception: return 0.0
+    try:
+        value = float(x)
+    except Exception:
+        return 0.0
+    return value if math.isfinite(value) else 0.0
 def _is_number(x) -> bool:
     try:
         float(x)

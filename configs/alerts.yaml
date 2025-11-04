@@ -12,19 +12,19 @@ delivery:
       host: ${SMTP_HOST:-smtp.gmail.com}
       port: ${SMTP_PORT:-587}
       use_tls: true
-      username: ${SMTP_USERNAME:-}
-      password: ${SMTP_PASSWORD:-}
+      username: ${SMTP_USERNAME:-nishikantworld@gmail.com}
+      password: ${SMTP_PASSWORD:-tzrtcknnvhfqrzly}
       from_name: ${SMTP_FROM_NAME:-Momentum Suite}
-      from_addr: ${SMTP_FROM_ADDR:-alerts@example.com}
+      from_addr: ${SMTP_FROM_ADDR:-nishikantworld@gmail.com}
     defaults:
       to:
-        - ${ALERT_EMAIL_TO_1:-you@example.com}
+        - ${ALERT_EMAIL_TO_1:-nishikant.tiwari01@gmail.com}
 
   ntfy:
     enabled: true
     server: ${NTFY_SERVER:-https://ntfy.sh}
-    topic_high: ${NTFY_TOPIC_HIGH:-momentum-high}
-    topic_low: ${NTFY_TOPIC_LOW:-momentum-low}
+    topic_high: ${NTFY_TOPIC_HIGH:-momentum-alerts-nishi}
+    topic_low: ${NTFY_TOPIC_LOW:-momentum-alerts-nishi}
 
 topics:
   high_signal:
@@ -114,17 +114,17 @@ digest:
 templates:
   ntfy:
     BUY_SELECTED:        "BUY SELECTED {{symbol}} @ {{entry_ref}} | Stop {{stop}} | R {{r_multiple|round(2)}}"
-    BUY_SIGNAL_EOD:      "BUY CANDIDATE (EOD) {{symbol}} | Score {{score}} | ADX {{adx14}} | RelVol20 {{relvol20}} | ATR% {{atr_pct}}"
-    BUY_SIGNAL_INTRADAY: "BUY CANDIDATE (INTRA) {{symbol}} | IntrRelVol {{intraday_relvol}} | ADX {{adx14}} | VWAP {{above_vwap}} | PDH {{prev_day_high_clear}}"
+    BUY_SIGNAL_EOD:      "BUY (EOD) {{symbol}} | Score {{score}} | ADX {{adx14}} | RelVol20 {{relvol20}} | ATR% {{atr_pct}}"
+    BUY_SIGNAL_INTRADAY: "BUY (INTRA) {{symbol}} | IntrRelVol {{intraday_relvol}} | ADX {{adx14}} | VWAP {{above_vwap}} | PDH {{prev_day_high_clear}}"
 
-    SELL_STOP:           "STOP {{symbol}} @ {{price}} | Stop {{stop}} | P/L {{pnl_pct}}%"
-    SELL_TARGET_T1:      "T1 {{symbol}} +{{t1}}% hit | P/L {{pnl_pct}}%"
-    SELL_TARGET_T2:      "T2 {{symbol}} +{{t2}}% hit | P/L {{pnl_pct}}%"
-    SELL_FAILED_BREAKOUT:"FAILED BO {{symbol}} < pivot {{pivot}} | DownRelVol {{relvol_down}} | P/L {{pnl_pct}}%"
-    SELL_TIMEOUT:        "TIMEOUT {{symbol}} after {{days_since_entry}}d | P/L {{pnl_pct}}%"
-    SELL_WEAKNESS:       "WEAKNESS {{symbol}} below EMA{{ema}} {{streak}} bars | RelVol {{relvol}} | P/L {{pnl_pct}}%"
-    SELL_BREAKEVEN:      "BREAKEVEN {{symbol}} retraced to entry | P/L {{pnl_pct}}%"
-    SELL_TRAIL_UPDATE:   "TRAIL UPDATE {{symbol}} -> {{stop}}"
+    SELL_STOP:           "SELL STOP {{symbol}} @ {{price}} | Stop {{stop}} | P/L {{pnl_pct}}%"
+    SELL_TARGET_T1:      "SELL Target T1 {{symbol}} +{{t1}}% hit | P/L {{pnl_pct}}%"
+    SELL_TARGET_T2:      "SELL Target T2 {{symbol}} +{{t2}}% hit | P/L {{pnl_pct}}%"
+    SELL_FAILED_BREAKOUT: "SELL FAILED BO {{symbol}} < pivot {{pivot}} | DownRelVol {{relvol_down}} | P/L {{pnl_pct}}%"
+    SELL_TIMEOUT:        "SELL TIMEOUT {{symbol}} after {{days_since_entry}}d | P/L {{pnl_pct}}%"
+    SELL_WEAKNESS:       "SELL WEAKNESS {{symbol}} below EMA{{ema}} {{streak}} bars | RelVol {{relvol}} | P/L {{pnl_pct}}%"
+    SELL_BREAKEVEN:      "SELL BREAKEVEN {{symbol}} retraced to entry | P/L {{pnl_pct}}%"
+    SELL_TRAIL_UPDATE:   "SELL TRAIL UPDATE {{symbol}} -> {{stop}}"
 
   email:
     BUY_SELECTED:

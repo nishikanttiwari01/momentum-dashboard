@@ -108,45 +108,89 @@ function BuyChecklistSection({
 
   const sanitizeActual = (value: unknown): string => {
     if (value === null || value === undefined) return 'NA';
-    let text = String(value).trim();
-    text = text.replace(/^(Actual|Value)\s*:\s*/i, '').trim();
-    text = text.replace(/\u2022\s*(Pass|Fail)$/i, '').trim();
-    return text.length ? text : 'NA';
+    const text = String(value).trim();
+    if (!text) return 'NA';
+    return text.replace(/^(Actual|Value)\s*:\s*/i, '').trim() || 'NA';
   };
 
   const normalizeRule = (value: string | undefined): string => {
-    if (!value) return 'Configured in defaults';
-    return value
-      .replace(/^Rule\s*:\s*/i, '')
-      .replace(/value\s*vs\s*/i, '')
-      .replace(/>=/g, '≥')
-      .replace(/<=/g, '≤')
-      .replace(/\s+/g, ' ')
-      .trim();
+    if (!value) return '';
+    return value.replace(/^Rule\s*:\s*/i, '').trim();
   };
 
-  const composeComparison = (actual: string, rule: string): string => {
-    if (!rule || rule === 'Configured in defaults') {
-      return actual;
+  const composeComparison = (actualRaw: string, ruleRaw: string): string => {
+    const actual = actualRaw || 'NA';
+    const rule = ruleRaw.trim();
+    if (!rule) return actual;
+
+    const upper = rule.toUpperCase();
+    if (upper.startsWith('>=')) {
+      return `${actual} ≥ ${rule.slice(2).trim()}`;
     }
-    const bracket = rule.match(/\[([^\]]+)\]/) || rule.match(/\(([^)]+)\)/);
-    if (bracket) {
-      const parts = bracket[1]
+    if (upper.startsWith('<=')) {
+      return `${actual} ≤ ${rule.slice(2).trim()}`;
+    }
+    if (upper.startsWith('>')) {
+      return `${actual} > ${rule.slice(1).trim()}`;
+    }
+    if (upper.startsWith('<')) {
+      return `${actual} < ${rule.slice(1).trim()}`;
+    }
+
+    const inBracket = rule.match(/^in\s*\[([^\]]+)\]/i);
+    if (inBracket) {
+      const parts = inBracket[1]
         .split(',')
         .map((part) => part.trim())
         .filter(Boolean);
-      if (parts.length) {
-        return `${actual} in ${parts.join(' … ')}`;
+      if (parts.length === 2) {
+        return `${actual} in ${parts[0]}...${parts[1]}`;
+      }
+      if (parts.length === 1) {
+        return `${actual} in ${parts[0]}`;
       }
     }
-    const comparatorPrefix = rule.match(/^(≥|≤|>|<|=)\s*(.+)$/);
-    if (comparatorPrefix) {
-      return `${actual} ${comparatorPrefix[1]} ${comparatorPrefix[2]}`;
+
+    const inParen = rule.match(/^in\s*\(([^)]+)\)/i);
+    if (inParen) {
+      const parts = inParen[1]
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+      if (parts.length === 2) {
+        return `${actual} in ${parts[0]}...${parts[1]}`;
+      }
+      if (parts.length === 1) {
+        return `${actual} in ${parts[0]}`;
+      }
     }
-    if (/(≥|≤|>|<|=)/.test(rule)) {
-      return `${actual} ${rule}`;
+
+    return `${actual} | ${rule}`;
+  };
+
+  const statusLookup: Record<string, { pass: string; fail: string }> = React.useMemo(
+    () => ({
+      min_score: { pass: 'quality met', fail: 'needs quality' },
+      starter_score_min_intraday: { pass: 'starter ready', fail: 'starter score low' },
+      pivot_clear_pct: { pass: 'cleared pivot', fail: 'below resistance' },
+      base_len_min_bars: { pass: 'base ready', fail: 'no clear base' },
+      prox52w_min_pct: { pass: 'near breakout zone', fail: 'too far from 52W' },
+      relvol20_min: { pass: 'strong buying', fail: 'needs volume' },
+      intraday_relvol_min: { pass: 'intraday demand strong', fail: 'intraday demand weak' },
+      adx14_min: { pass: 'euphoric trend', fail: 'trend weak' },
+      atr_pct: { pass: 'healthy volatility', fail: 'needs better ATR' },
+      day_change_max_pct: { pass: 'within day range', fail: 'too extended today' },
+      liquidity_min_traded_value_20d: { pass: 'meets liquidity', fail: 'liquidity too low' },
+      persistence: { pass: 'persistence confirmed', fail: 'persistence missing' },
+    }),
+    [],
+  );
+
+  const resolveStatusLine = (code: string | undefined, passed: boolean): string => {
+    if (code && statusLookup[code]) {
+      return passed ? statusLookup[code].pass : statusLookup[code].fail;
     }
-    return `${actual} • ${rule}`;
+    return passed ? 'pass' : 'fail';
   };
 
   const passed = evaluation.pass_count ?? evaluation.checks.filter((c) => c.pass).length;
@@ -240,6 +284,7 @@ function BuyChecklistSection({
               (check as any).description,
           );
           const comparison = composeComparison(actual, rule);
+          const statusLine = resolveStatusLine(check.code, Boolean(check.pass));
 
           return (
             <Box
@@ -272,8 +317,11 @@ function BuyChecklistSection({
                 >
                   {comparison}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {rule}
+                <Typography
+                  variant="caption"
+                  color={check.pass ? 'success.main' : 'error.main'}
+                >
+                  {statusLine}
                 </Typography>
               </Box>
               <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>

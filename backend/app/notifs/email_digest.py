@@ -41,7 +41,16 @@ def _email_cfg() -> dict:
     v2-first configuration loader (alerts.delivery.email),
     with full back-compat for legacy (alerts.email) keys.
     """
-    alerts = cfg_load().alerts or {}
+    settings = cfg_load()
+    alerts_model = getattr(settings, "alerts", None)
+    if alerts_model is None:
+        alerts: dict = {}
+    elif hasattr(alerts_model, "model_dump"):
+        alerts = alerts_model.model_dump(mode="python")  # type: ignore[assignment]
+    elif isinstance(alerts_model, dict):
+        alerts = alerts_model
+    else:
+        alerts = dict(alerts_model) if hasattr(alerts_model, "items") else {}
 
     # v2
     delivery_email = (alerts.get("delivery") or {}).get("email") or {}

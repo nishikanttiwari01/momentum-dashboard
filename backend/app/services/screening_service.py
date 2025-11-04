@@ -4,6 +4,7 @@ from datetime import datetime, timezone, time as dtime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 import logging
 from uuid import uuid4
+import math
 
 import pyarrow as pa
 import pandas as pd
@@ -270,6 +271,16 @@ def _maybe_float(v):
         return float(v)
     except Exception:
         return None
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_for_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_for_json(val) for key, val in value.items()}
+    return value
 
 def _make_scores_row(
     *,
@@ -1061,110 +1072,111 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             log.exception("snapshot write failed", extra={"run_id": job.run_id})
             raise
 
-            # ------------------- END WRITES -------------------
+        # ------------------- END WRITES -------------------
 
-            event_mode = Mode.EOD if is_eod_snapshot else Mode.INTRADAY
-            buy_event_code = "BUY_SIGNAL_EOD" if is_eod_snapshot else "BUY_SIGNAL_INTRADAY"
-            for row in buy_signal_rows:
-                symbol_value = row.get("symbol")
-                if not symbol_value:
-                    continue
-                symbol = str(symbol_value).upper()
-                context_payload = {
-                    "symbol": symbol,
-                    "profile": row.get("buy_profile"),
-                    "mode": row.get("buy_mode") or event_mode.value,
-                    "run_id": job.run_id,
-                    "as_of": row.get("as_of"),
-                    "price": row.get("last"),
-                    "score": row.get("score"),
-                    "adx14": row.get("adx14"),
-                    "relvol20": row.get("relvol20"),
-                    "intraday_relvol": row.get("intraday_relvol"),
-                    "atr_pct": row.get("atr_pct") or row.get("atr10_pct"),
-                    "reasons_inline": row.get("buy_reasons_inline"),
-                    "pass_count": row.get("buy_pass_count"),
-                    "total_count": row.get("buy_total_count"),
-                    "minutes_since_open": row.get("minutes_since_open"),
-                    "above_vwap": row.get("above_vwap"),
-                    "prev_day_high_clear": row.get("prev_day_high_clear"),
-                    "liquidity": row.get("liquidity"),
-                    "buy_checks": row.get("buy_checks"),
-                    "pivot": row.get("pivot_high_20"),
-                    "base_len_bars": row.get("base_len_bars"),
-                }
-                if row.get("buy_reasons_inline") and not context_payload.get("description"):
-                    context_payload["description"] = row.get("buy_reasons_inline")
-                elif row.get("reason"):
-                    context_payload["description"] = row.get("reason")
-                route_alert_event(
-                    session,
-                    event_code=buy_event_code,
-                    symbol=symbol,
-                    mode=event_mode,
-                    trading_date=selection_trading_day,
-                    context=context_payload,
-                    score_at_fire=_maybe_float(row.get("score")),
-                    next_action_code=str(row.get("next_action_code") or "").upper() or None,
-                )
-
-            if selection_result and selection_row:
-                selection_symbol_raw = selection_result.symbol or selection_row.get("symbol")
-                selection_symbol = str(selection_symbol_raw or "").upper()
-                if not selection_symbol:
-                    selection_symbol = "UNKNOWN"
-                selection_context = {
-                    "symbol": selection_symbol,
-                    "profile": selection_result.profile or selection_row.get("buy_profile"),
-                    "mode": selection_result.mode or event_mode.value,
-                    "entry_ref": selection_result.price,
-                    "entry_context": selection_row.get("buy_selection_reason") or "Screening selection",
-                    "stop": selection_result.stop_price,
-                    "stop_method": cfg.strategy.profiles.sell.common.stop.method,
-                    "target_price": selection_result.target_price,
-                    "t1": cfg.strategy.profiles.sell.common.targets.t1_gain_pct,
-                    "t2": cfg.strategy.profiles.sell.common.targets.t2_gain_pct,
-                    "r_multiple": selection_result.r_multiple,
-                    "reasons_inline": selection_row.get("buy_reasons_inline"),
-                    "reason": selection_result.reason,
-                    "run_id": selection_result.run_id,
-                }
-                if selection_context.get("reasons_inline") and not selection_context.get("description"):
-                    selection_context["description"] = selection_context["reasons_inline"]
-                route_alert_event(
-                    session,
-                    event_code="BUY_SELECTED",
-                    symbol=selection_symbol,
-                    mode=event_mode,
-                    trading_date=selection_trading_day,
-                    context=selection_context,
-                    score_at_fire=_maybe_float(selection_row.get("score")),
-                    next_action_code="BUY_SELECTED",
-                )
-
-            sell_events = evaluate_sell_positions(
-                session=session,
-                rows_by_symbol=rows_by_symbol,
-                frames_by_symbol=frames_by_symbol,
-                strategy=cfg.strategy,
+        event_mode = Mode.EOD if is_eod_snapshot else Mode.INTRADAY
+        buy_event_code = "BUY_SIGNAL_EOD" if is_eod_snapshot else "BUY_SIGNAL_INTRADAY"
+        for row in buy_signal_rows:
+            symbol_value = row.get("symbol")
+            if not symbol_value:
+                continue
+            symbol = str(symbol_value).upper()
+            context_payload = _sanitize_for_json({
+                "symbol": symbol,
+                "profile": row.get("buy_profile"),
+                "mode": row.get("buy_mode") or event_mode.value,
+                "run_id": job.run_id,
+                "as_of": row.get("as_of"),
+                "price": row.get("last"),
+                "score": row.get("score"),
+                "adx14": row.get("adx14"),
+                "relvol20": row.get("relvol20"),
+                "intraday_relvol": row.get("intraday_relvol"),
+                "atr_pct": row.get("atr_pct") or row.get("atr10_pct"),
+                "reasons_inline": row.get("buy_reasons_inline"),
+                "pass_count": row.get("buy_pass_count"),
+                "total_count": row.get("buy_total_count"),
+                "minutes_since_open": row.get("minutes_since_open"),
+                "above_vwap": row.get("above_vwap"),
+                "prev_day_high_clear": row.get("prev_day_high_clear"),
+                "liquidity": row.get("liquidity"),
+                "buy_checks": row.get("buy_checks"),
+                "pivot": row.get("pivot_high_20"),
+                "base_len_bars": row.get("base_len_bars"),
+            })
+            if row.get("buy_reasons_inline") and not context_payload.get("description"):
+                context_payload["description"] = row.get("buy_reasons_inline")
+            elif row.get("reason"):
+                context_payload["description"] = row.get("reason")
+            route_alert_event(
+                session,
+                event_code=buy_event_code,
+                symbol=symbol,
                 mode=event_mode,
-                trading_day=selection_trading_day,
-                now_utc=now_utc,
+                trading_date=selection_trading_day,
+                context=context_payload,
+                score_at_fire=_maybe_float(row.get("score")),
+                next_action_code=str(row.get("next_action_code") or "").upper() or None,
             )
-            for sell_event in sell_events:
-                route_alert_event(
-                    session,
-                    event_code=sell_event.event_code,
-                    symbol=sell_event.symbol,
-                    mode=event_mode,
-                    trading_date=selection_trading_day,
-                    context=sell_event.context,
-                    score_at_fire=sell_event.score_at_fire,
-                    next_action_code=sell_event.event_code,
-                )
 
-            # Mark success + write history (best-effort)
-            jobs.complete_run(run_id=job.run_id, status="SUCCEEDED", error=None)
+        if selection_result and selection_row:
+            selection_symbol_raw = selection_result.symbol or selection_row.get("symbol")
+            selection_symbol = str(selection_symbol_raw or "").upper()
+            if not selection_symbol:
+                selection_symbol = "UNKNOWN"
+            selection_context = _sanitize_for_json({
+                "symbol": selection_symbol,
+                "profile": selection_result.profile or selection_row.get("buy_profile"),
+                "mode": selection_result.mode or event_mode.value,
+                "entry_ref": selection_result.price,
+                "entry_context": selection_row.get("buy_selection_reason") or "Screening selection",
+                "stop": selection_result.stop_price,
+                "stop_method": cfg.strategy.profiles.sell.common.stop.method,
+                "target_price": selection_result.target_price,
+                "t1": cfg.strategy.profiles.sell.common.targets.t1_gain_pct,
+                "t2": cfg.strategy.profiles.sell.common.targets.t2_gain_pct,
+                "r_multiple": selection_result.r_multiple,
+                "reasons_inline": selection_row.get("buy_reasons_inline"),
+                "reason": selection_result.reason,
+                "run_id": selection_result.run_id,
+            })
+            if selection_context.get("reasons_inline") and not selection_context.get("description"):
+                selection_context["description"] = selection_context["reasons_inline"]
+            route_alert_event(
+                session,
+                event_code="BUY_SELECTED",
+                symbol=selection_symbol,
+                mode=event_mode,
+                trading_date=selection_trading_day,
+                context=selection_context,
+                score_at_fire=_maybe_float(selection_row.get("score")),
+                next_action_code="BUY_SELECTED",
+            )
+
+        sell_events = evaluate_sell_positions(
+            session=session,
+            rows_by_symbol=rows_by_symbol,
+            frames_by_symbol=frames_by_symbol,
+            strategy=cfg.strategy,
+            mode=event_mode,
+            trading_day=selection_trading_day,
+            now_utc=now_utc,
+        )
+        for sell_event in sell_events:
+            sell_context = _sanitize_for_json(sell_event.context)
+            route_alert_event(
+                session,
+                event_code=sell_event.event_code,
+                symbol=sell_event.symbol,
+                mode=event_mode,
+                trading_date=selection_trading_day,
+                context=sell_context,
+                score_at_fire=sell_event.score_at_fire,
+                next_action_code=sell_event.event_code,
+            )
+
+        # Mark success + write history (best-effort)
+        jobs.complete_run(run_id=job.run_id, status="SUCCEEDED", error=None)
         try:
             history.insert_run_summary(run_id=job.run_id, as_of=as_of_iso, rows=rows_written)
         except Exception:

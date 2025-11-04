@@ -10,12 +10,23 @@ from dataclasses import dataclass
 from datetime import date, timedelta, datetime, timezone  # <-- added datetime, timezone
 from typing import Iterable, Optional, Tuple, Dict, Any, Callable  # <-- added Callable
 import csv  # <-- added
+import math
 from uuid import uuid4
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pathlib import Path as _Path
+
+try:
+    import pyarrow.dataset as _pa_ds
+    import pyarrow.compute as _pa_compute
+except Exception:  # pragma: no cover
+    _pa_ds = None  # type: ignore
+    _pa_compute = None  # type: ignore
+
+from app.services.alerts import route_event as _route_alert_event
+from app.alerts.types import Mode as _RouteMode
 
 from backend.util import run_fetch_details, run_fetch_screener_pages
 from app.notifs.email_digest import send_backfill_digest_if_enabled
@@ -398,62 +409,191 @@ def _resolve_alerts_cfg_dict() -> Dict[str, Any] | None:
         return None
 
 
+def _sanitize_metric_value(value: Any) -> Any:
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, list):
+        return [_sanitize_metric_value(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _sanitize_metric_value(v) for k, v in value.items()}
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()  # datetime/date
+        except Exception:
+            return value
+    return value
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    if value in (None, "", "None"):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_for_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_for_json(val) for key, val in value.items()}
+    return value
+
+
+def _load_metrics_from_daily_scores(as_of: date) -> tuple[list[str], Dict[str, Dict[str, Any]]]:
+    if _pa_ds is None or _pa_compute is None:
+        log.warning(
+            "alerts_metrics_pyarrow_missing",
+            extra={"date": as_of.isoformat()},
+        )
+        return [], {}
+
+    root = _parquet_root_abs() / "scores" / "daily" / f"as_of={as_of.isoformat()}"
+    if not root.exists():
+        log.info(
+            "alerts_metrics_parquet_missing",
+            extra={"date": as_of.isoformat(), "path": str(root)},
+        )
+        return [], {}
+
+    run_dirs = sorted([p for p in root.glob("run_id=*") if p.is_dir()])
+    dataset_source = str(run_dirs[-1] if run_dirs else root)
+
+    try:
+        dataset = _pa_ds.dataset(
+            dataset_source,
+            format="parquet",
+            partitioning="hive",
+            exclude_invalid_files=True,
+        )
+        table = dataset.to_table()
+    except Exception as exc:
+        log.warning(
+            "alerts_metrics_parquet_read_failed",
+            extra={"date": as_of.isoformat(), "path": str(root), "error": str(exc)},
+        )
+        return [], {}
+
+    if table.num_rows == 0:
+        log.info(
+            "alerts_metrics_parquet_empty",
+            extra={"date": as_of.isoformat(), "path": str(root)},
+        )
+        return [], {}
+
+    if "buy_flag" not in table.column_names:
+        log.info(
+            "alerts_metrics_parquet_no_buy_flag",
+            extra={"date": as_of.isoformat(), "path": str(root)},
+        )
+        return [], {}
+
+    try:
+        mask = _pa_compute.equal(table["buy_flag"], True)
+        filtered = table.filter(mask)
+    except Exception as exc:
+        log.warning(
+            "alerts_metrics_parquet_filter_failed",
+            extra={"date": as_of.isoformat(), "error": str(exc)},
+        )
+        return [], {}
+
+    if filtered.num_rows == 0:
+        log.info(
+            "alerts_metrics_parquet_no_buy_candidates",
+            extra={"date": as_of.isoformat()},
+        )
+        return [], {}
+
+    metrics: Dict[str, Dict[str, Any]] = {}
+    symbols: list[str] = []
+
+    for record in filtered.to_pylist():
+        sym_raw = record.get("symbol")
+        symbol = str(sym_raw).strip().upper() if sym_raw else ""
+        if not symbol:
+            continue
+        if symbol in metrics:
+            continue
+        symbol_metrics: Dict[str, Any] = {}
+        for key, value in record.items():
+            lowered = str(key).strip().lower()
+            symbol_metrics[lowered] = _sanitize_metric_value(value)
+        metrics[symbol] = symbol_metrics
+        symbols.append(symbol)
+
+    log.info(
+        "alerts_metrics_parquet_loaded",
+        extra={"date": as_of.isoformat(), "symbols": len(symbols)},
+    )
+    return symbols, metrics
+
+
 def _read_symbols_and_metrics_from_details_csv(as_of: date) -> tuple[list[str], Dict[str, Dict[str, Any]]]:
     """
-    Use the existing details export (CSV) as a light data source for alerts.
-    Returns (symbols, metrics_by_symbol). Missing columns are OK.
+    Preferred path: load BUY=Yes rows from the daily scores parquet snapshot.
+    Falls back to the legacy detail-export reader if parquet is unavailable.
     """
-    symbols: list[str] = []
-    metrics: Dict[str, Dict[str, Any]] = {}
+    symbols, metrics = _load_metrics_from_daily_scores(as_of)
+    if symbols:
+        return symbols, metrics
+
+    # Legacy fallback (NDJSON/CSV export) for environments where parquet is unavailable.
+    fallback_symbols: list[str] = []
+    fallback_metrics: Dict[str, Dict[str, Any]] = {}
 
     try:
         csv_path = run_fetch_details(as_of=as_of)  # idempotent
         p = _Path(str(csv_path))
         if not p.exists():
-            return symbols, metrics
+            return fallback_symbols, fallback_metrics
 
         with p.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
-            # Find symbol column case-insensitively
             fieldnames = [fn for fn in (reader.fieldnames or [])]
             lower_map = {fn.lower(): fn for fn in fieldnames}
             sym_col = lower_map.get("symbol") or lower_map.get("sym") or lower_map.get("ticker")
             if not sym_col:
-                return symbols, metrics
+                return fallback_symbols, fallback_metrics
 
             for row in reader:
                 sym = (row.get(sym_col) or "").strip().upper()
                 if not sym:
                     continue
-                if sym not in metrics:
-                    metrics[sym] = {}
-                    symbols.append(sym)
+                if sym not in fallback_metrics:
+                    fallback_metrics[sym] = {}
+                    fallback_symbols.append(sym)
 
-                # Normalize keys to lowercase for metric_getter
                 for k, v in row.items():
                     if k is None:
                         continue
                     key = k.strip().lower()
-                    # attempt numeric conversion where it looks like a number
                     if isinstance(v, str):
                         vv = v.strip()
                         if vv == "":
-                            metrics[sym][key] = None
+                            fallback_metrics[sym][key] = None
                             continue
                         try:
-                            # int or float
                             if vv.isdigit() or (vv.startswith("-") and vv[1:].isdigit()):
-                                metrics[sym][key] = int(vv)
+                                fallback_metrics[sym][key] = int(vv)
                             else:
-                                metrics[sym][key] = float(vv)
+                                fallback_metrics[sym][key] = float(vv)
                         except ValueError:
-                            metrics[sym][key] = vv
+                            fallback_metrics[sym][key] = vv
                     else:
-                        metrics[sym][key] = v
+                        fallback_metrics[sym][key] = v
     except Exception as e:
         log.warning("details_csv_read_failed", extra={"date": as_of.isoformat(), "error": str(e)})
 
-    return symbols, metrics
+    return fallback_symbols, fallback_metrics
 
 
 def _make_metric_getter_from_metrics(metrics: Dict[str, Dict[str, Any]]) -> Callable[[str, str], Any]:
@@ -524,17 +664,63 @@ def _run_eod_alerts(trading_day: date) -> None:
             return
 
         now_utc = datetime.now(timezone.utc)
-        created_ids = _alerts_orchestrator.run(
-            conn,
-            alerts_cfg=alerts_cfg,
-            symbols=symbols,
-            mode=_AlertMode.EOD,
-            trading_date=trading_day,
-            now_utc=now_utc,
-            metric_getter=metric_getter,
-            run_ctx={"triggered_by": "STARTUP_CATCHUP"},
-        )
-        # If using a Session with autocommit off, ensure changes are flushed
+        routes_cfg = (alerts_cfg or {}).get("routes") or {}
+        created_ids: list[int] = []
+
+        if routes_cfg:
+            for sym in symbols:
+                row = metrics.get(sym.upper()) or {}
+                if not row:
+                    continue
+                context_payload = _sanitize_for_json({
+                    "symbol": sym,
+                    "profile": row.get("buy_profile"),
+                    "mode": row.get("buy_mode") or _RouteMode.EOD.value,
+                    "run_id": row.get("run_id"),
+                    "as_of": row.get("as_of") or trading_day.isoformat(),
+                    "price": row.get("last"),
+                    "score": row.get("score"),
+                    "adx14": row.get("adx14"),
+                    "relvol20": row.get("relvol20"),
+                    "intraday_relvol": row.get("intraday_relvol"),
+                    "atr_pct": row.get("atr_pct") or row.get("atr10_pct"),
+                    "reasons_inline": row.get("buy_reasons_inline"),
+                    "pass_count": row.get("buy_pass_count"),
+                    "total_count": row.get("buy_total_count"),
+                    "minutes_since_open": row.get("minutes_since_open"),
+                    "above_vwap": row.get("above_vwap"),
+                    "prev_day_high_clear": row.get("prev_day_high_clear"),
+                    "liquidity": row.get("liquidity") or row.get("median_traded_value_20d"),
+                    "buy_checks": row.get("buy_checks"),
+                    "pivot": row.get("pivot_high_20") or row.get("pivot"),
+                    "base_len_bars": row.get("base_len_bars"),
+                })
+                if context_payload.get("reasons_inline") and not context_payload.get("description"):
+                    context_payload["description"] = context_payload["reasons_inline"]
+                event_id = _route_alert_event(
+                    session,
+                    event_code="BUY_SIGNAL_EOD",
+                    symbol=sym.upper(),
+                    mode=_RouteMode.EOD,
+                    trading_date=trading_day,
+                    context=context_payload,
+                    score_at_fire=_safe_float(row.get("score")),
+                    next_action_code=str(row.get("next_action_code") or "").upper() or None,
+                )
+                if event_id:
+                    created_ids.append(event_id)
+        else:
+            created_ids = _alerts_orchestrator.run(
+                conn,
+                alerts_cfg=alerts_cfg,
+                symbols=symbols,
+                mode=_AlertMode.EOD,
+                trading_date=trading_day,
+                now_utc=now_utc,
+                metric_getter=metric_getter,
+                run_ctx={"triggered_by": "STARTUP_CATCHUP"},
+            )
+
         try:
             session.commit()
         except Exception:

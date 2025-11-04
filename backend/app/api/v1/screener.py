@@ -1,4 +1,4 @@
-# backend/app/api/v1/screener.py
+﻿# backend/app/api/v1/screener.py
 from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, Literal
 
@@ -84,6 +84,24 @@ SCREENER_REPO_COLUMNS = [
     "pct_today",
     # Decisioning
     "buy",
+    "buy_flag",
+    "buy_profile",
+    "buy_mode",
+    "buy_pass_count",
+    "buy_total_count",
+    "buy_checks",
+    "buy_failed_codes",
+    "buy_reasons_inline",
+    "buy_eval_ts",
+    "buy_enforced_checks",
+    "buy_reason_parts",
+    "buy_selected",
+    "buy_selection_reason",
+    "buy_stop_price",
+    "buy_target_price",
+    "buy_r_multiple",
+    "buy_selection_run_id",
+    "buy_selection_trading_day",
     "reason",
     # Meta
     "source",
@@ -98,6 +116,17 @@ SCREENER_REPO_COLUMNS = [
     "wk_change",
     "wk_change_pct",
 ]
+
+def _normalize_as_of_string(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Accept ISO strings with time/tz; take the date component.
+    if "T" in text:
+        text = text.split("T", 1)[0]
+    return text[:10]
 
 PERIOD_FIELD_MAP: dict[str, str] = {
     "1d": "change_pct",
@@ -631,6 +660,39 @@ def _normalize_screener_rows(raw_items: List[Dict[str, Any]]) -> Tuple[List[Scre
         if r.get("change_pct") is None:
             r["change_pct"] = 0.0
 
+        flag_raw = r.get("buy_flag")
+        if isinstance(flag_raw, str):
+            norm = flag_raw.strip().lower()
+            if norm in {"1", "true", "yes", "y", "on"}:
+                r["buy_flag"] = True
+            elif norm in {"0", "false", "no", "n", "off"}:
+                r["buy_flag"] = False
+            else:
+                r["buy_flag"] = bool(flag_raw)
+        elif flag_raw is not None:
+            r["buy_flag"] = bool(flag_raw)
+
+        if "buy" in r:
+            r["buy"] = bool(r["buy_flag"]) if r.get("buy_flag") is not None else bool(r["buy"])
+        elif r.get("buy_flag") is not None:
+            r["buy"] = bool(r["buy_flag"])
+
+        for key in ("buy_pass_count", "buy_total_count"):
+            if key in r and r[key] is not None:
+                try:
+                    r[key] = int(r[key])
+                except (TypeError, ValueError):
+                    r[key] = None
+
+        if "buy_failed_codes" in r and r["buy_failed_codes"] is not None:
+            if isinstance(r["buy_failed_codes"], (str, bytes)):
+                r["buy_failed_codes"] = [str(r["buy_failed_codes"])]
+            elif not isinstance(r["buy_failed_codes"], list):
+                r["buy_failed_codes"] = list(r["buy_failed_codes"]) if r["buy_failed_codes"] else []
+
+        if "buy_checks" in r and r["buy_checks"] is not None and not isinstance(r["buy_checks"], list):
+            r["buy_checks"] = list(r["buy_checks"])
+
         norm_items.append(ScreenerRow(**r))
 
     return norm_items, dropped
@@ -640,7 +702,7 @@ def _collect_screener_rows(
     *,
     run_id: Optional[str],
     as_of: Optional[str],
-    sort: str = "score.desc,last.desc",
+    sort: str = "buy_flag.desc,score.desc,last.desc",
     chunk_size: int = 500,
 ) -> Tuple[List[ScreenerRow], Optional[str], Optional[str], int]:
     """
@@ -658,7 +720,7 @@ def _collect_screener_rows(
         try:
             items, total, rid, as_of_val = repo.read(
                 run_id=run_id,
-                as_of_str=as_of,
+                as_of_str=_normalize_as_of_string(as_of),
                 filters={},
                 sort=sort,
                 page=page,
@@ -893,7 +955,7 @@ def list_screener(
     request: Request,
     run_id: Optional[str] = Query(None, description="Exact snapshot run id, e.g. 20250912T093000Z"),
     as_of: Optional[str] = Query(None, description="YYYY-MM-DD; pick last run on/before this date"),
-    sort: str = Query("score.desc,last.desc", description="Comma list e.g. score.desc,last.desc"),
+    sort: str = Query("buy_flag.desc,score.desc,last.desc", description="Comma list e.g. buy_flag.desc,score.desc"),
     page: int = Query(1, ge=1),
     per_page: int = Query(100, ge=1, le=500),
     universe: Optional[str] = Query(None, description="Universe preset (e.g., NIFTY500, NIFTY50, ALL)"),
@@ -941,7 +1003,7 @@ def list_screener(
     try:
         items, total, resolved_run_id, resolved_as_of = repo.read(
             run_id=run_id,
-            as_of_str=as_of,
+            as_of_str=_normalize_as_of_string(as_of),
             filters=filters,
             sort=sort,
             page=page,
@@ -971,9 +1033,10 @@ def list_screener(
 
 @router.get("/screener/export")
 def export_screener(
-    format: str = Query("csv", pattern="^(csv|json)$"),
+    format: str = Query("csv", pattern="^(csv|json|ndjson)$"),
     run_id: str | None = Query(None),
     as_of: str | None = Query(None),
+    symbol: str | None = Query(None),
 ):
     """
     Export the full screener snapshot (no pagination).
@@ -983,26 +1046,29 @@ def export_screener(
     repo = ScoresRepo()
 
     # Read EVERYTHING: per_page is set huge so no slicing occurs inside repo.read()
+    filters: Dict[Tuple[str, str], Any] = {}
+    if symbol:
+        filters[("symbol", "eq")] = symbol.strip().upper()
+
     rows, total, rid_used, resolved_as_of = repo.read(
         run_id=run_id,
-        as_of_str=as_of,
-        filters={},          # export is unfiltered (by design)
+        as_of_str=_normalize_as_of_string(as_of),
+        filters=filters,
         sort="",             # keep on-disk order unless client later wants a specific sort
         page=1,
-        per_page=10**9,      # <— key change: effectively "all rows"
+        per_page=10**9,      # <- key change: effectively "all rows"
         columns=None,        # full projection
     )
+    resolved_as_of_norm = _normalize_as_of_string(resolved_as_of) or _normalize_as_of_string(as_of)
 
     # Filename
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     if run_id:
         fname_base = f"screener_intraday_{run_id}"
     else:
-        fname_base = f"screener_eod_{resolved_as_of or as_of or 'latest'}"
-    if format == "json":
-        fname = f"{fname_base}_{ts}.json"
-    else:
-        fname = f"{fname_base}_{ts}.csv"
+        fname_base = f"screener_eod_{resolved_as_of_norm or 'latest'}"
+    ext_map = {"csv": "csv", "json": "json", "ndjson": "ndjson"}
+    fname = f"{fname_base}_{ts}.{ext_map.get(format, 'csv')}"
 
     # Empty data guard: still return a valid file with header (or empty JSON array)
     if format == "json":
@@ -1010,6 +1076,16 @@ def export_screener(
         return Response(
             content=payload,
             media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    if format == "ndjson":
+        if rows:
+            payload = "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n"
+        else:
+            payload = ""
+        return Response(
+            content=payload,
+            media_type="application/x-ndjson",
             headers={"Content-Disposition": f'attachment; filename="{fname}"'},
         )
 

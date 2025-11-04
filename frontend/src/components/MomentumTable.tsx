@@ -1,4 +1,4 @@
-// src/components/MomentumTable.tsx
+﻿// src/components/MomentumTable.tsx
 import * as React from 'react';
 import {
   DataGrid,
@@ -79,7 +79,7 @@ const PriceDeltaCell = (params: GridRenderCellParams) => {
 };
 
 const BuyCell = (params: GridRenderCellParams) => {
-  const flag = Boolean(params?.row?.buy_flag);
+  const flag = params?.row?.buy_flag === true;
   const passCount =
     Number.isFinite(params?.row?.buy_pass_count) && params.row.buy_pass_count != null
       ? Number(params.row.buy_pass_count)
@@ -88,7 +88,7 @@ const BuyCell = (params: GridRenderCellParams) => {
     Number.isFinite(params?.row?.buy_total_count) && params.row.buy_total_count != null
       ? Number(params.row.buy_total_count)
       : null;
-  const selected = Boolean(params?.row?.buy_selected);
+  const selected = params?.row?.buy_selected === true;
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
@@ -252,9 +252,11 @@ const num = (v: any): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+const DEFAULT_SORT_MODEL: GridSortModel = [{ field: 'buy_flag', sort: 'desc' }];
+
 export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbol, symbolFilter, height, runId, asOf }: MomentumTableProps) {
   const [pagination, setPagination] = React.useState<GridPaginationModel>({ page: 0, pageSize: 25 });
-  const [sortModel, setSortModel] = React.useState<GridSortModel>([]);
+  const [sortModel, setSortModel] = React.useState<GridSortModel>(DEFAULT_SORT_MODEL);
 
   // Drawer
   const [drawerOpen, setDrawerOpen] = React.useState(false);
@@ -288,13 +290,35 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
       // @ts-expect-error
       offset: pagination.page * size,
     };
-    const s0 = sortModel[0];
-    if (s0?.field) {
-      (p as any).sort_by = s0.field;
-      (p as any).sort_dir = s0.sort ?? 'asc';
-      (p as any).sort = s0.field;
-      (p as any).order = s0.sort ?? 'asc';
-      (p as any).ordering = `${s0.sort === 'desc' ? '-' : ''}${s0.field}`;
+    let sortParts = sortModel
+      .map(({ field, sort }) => {
+        if (!field) return null;
+        const dir = sort ?? 'asc';
+        return `${field}.${dir}`;
+      })
+      .filter(Boolean) as string[];
+    if (!sortParts.length) {
+      sortParts = DEFAULT_SORT_MODEL.map(({ field, sort }) => `${field}.${sort ?? 'asc'}`);
+    }
+    const hasBuy = sortParts.some((part) => part.split('.')[0] === 'buy_flag');
+    const hasScore = sortParts.some((part) => part.split('.')[0] === 'score');
+    if (hasBuy && !hasScore) {
+      sortParts = [...sortParts, 'score.desc'];
+    }
+
+    if (sortParts.length) {
+      const combined = sortParts.join(',');
+      (p as any).sort = combined;
+      (p as any).ordering = sortParts
+        .map((part) => {
+          const [field, dir = 'asc'] = part.split('.');
+          return `${dir === 'desc' ? '-' : ''}${field}`;
+        })
+        .join(',');
+      const [primaryField, primaryDir = 'asc'] = sortParts[0].split('.');
+      (p as any).sort_by = primaryField;
+      (p as any).sort_dir = primaryDir;
+      (p as any).order = primaryDir;
     }
     const sym = symbolFilter?.trim();
     if (sym) {
@@ -380,7 +404,17 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
   const getId = (r: any) => r.id ?? r.symbol ?? `${r.ticker ?? ''}-${r.symbol ?? ''}`;
 
   const renderNum = (p: any) => <span>{fmtNum(p?.value)}</span>;
-  const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(p?.value)}</span>;
+const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(p?.value)}</span>;
+
+  const handleSortModelChange = React.useCallback((model: GridSortModel) => {
+    const next = model.length ? model : DEFAULT_SORT_MODEL;
+    setSortModel((prev) => {
+      if (prev.length === next.length && prev.every((item, idx) => item.field === next[idx].field && (item.sort ?? 'asc') === (next[idx].sort ?? 'asc'))) {
+        return prev;
+      }
+      return next;
+    });
+  }, []);
 
   const columns: GridColDef[] = React.useMemo(
     () => [
@@ -406,12 +440,13 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
       
 
       {
-        field: 'buy',
+        field: 'buy_flag',
         headerName: 'Buy',
-        width: 100,
-        sortable: false,
+        width: 110,
+        type: 'boolean',
+        sortable: true,
         filterable: false,
-        valueGetter: (params) => (params?.row?.buy_flag ? 1 : 0),
+        valueGetter: (params) => params?.row?.buy_flag === true,
         renderCell: BuyCell,
       },
 
@@ -498,7 +533,7 @@ export default function MomentumTable({ refetchIntervalMs = false, onSelectSymbo
         pageSizeOptions={[10, 25, 50, 100]} // MIT cap
         sortingMode="server"
         sortModel={sortModel}
-        onSortModelChange={setSortModel}
+        onSortModelChange={handleSortModelChange}
         disableColumnMenu
         density="compact"
         disableRowSelectionOnClick

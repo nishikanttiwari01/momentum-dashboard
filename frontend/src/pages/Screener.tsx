@@ -1,4 +1,4 @@
-import * as React from 'react';
+﻿import * as React from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { OutletCtx } from '../layouts/AppShell';
 import {
@@ -303,7 +303,7 @@ export default function Screener() {
   }, []);
 
   const handleExport = React.useCallback(
-    async (fmt: 'csv' | 'json') => {
+    async (fmt: 'csv' | 'json' | 'ndjson') => {
       const isIntraday = appliedMode === MODE_INTRADAY;
       const hasSelection = isIntraday ? !!appliedRunId : !!appliedAsOf;
       if (!hasSelection) {
@@ -326,6 +326,9 @@ export default function Screener() {
           window.alert('Select an EOD snapshot to export.');
           return;
         }
+      }
+      if (symbolFilter) {
+        params.append('symbol', symbolFilter);
       }
       params.append('format', fmt);
 
@@ -363,7 +366,7 @@ export default function Screener() {
         setExportAnchorEl(null);
       }
     },
-    [appliedMode, appliedRunId, appliedAsOf],
+    [appliedMode, appliedRunId, appliedAsOf, symbolFilter],
   );
 
   const isRunDatesLoading = runDatesQuery.isLoading;

@@ -18,7 +18,7 @@ I have another full time job hence may or may not be running this app everyday. 
 10 % percent gain per month with minimal trade consisting of 3 to 5 stocks ideally.
 
 ### AI prompt
-Analyse attached project zip like an expert python and react developer with 15 years of expereince. No guessing, go through the code before you stop. 
+Analyse attached project zip like an expert python and react developer with 15 years of expereince. No guessing, go through the entire code before you stop. Also think like a trader whether implemented things are practical and worthy to fulfill the goal.
 
 
 
@@ -37,14 +37,16 @@ python run_uvicorn.py
 
 set BACKFILL_ON_START=0  off   set BACKFILL_ON_START=1 on
 
-### Option A: run Alembic once, then start dev
-set APP_DISABLE_ALEMBIC=0
-alembic upgrade head
-set APP_DISABLE_ALEMBIC=1
+### Database changes using Alembic
+cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
+.venv\Scripts\activate
+cd backend
+(.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>alembic upgrade
+
+#### In case DB upgrade fails
 (.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>alembic heads
 20250912_0002 (head)
 20250921_01 (head)
-
 (.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>alembic merge -m "Merge heads 20250921_01 & 20250912_0002" 20250921_01 20250912_0002
 
 
@@ -79,22 +81,22 @@ cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\frontend
 npm run dev
 
 
-# backfill 1y (252 TD) for your default universe
+## backfill 1y (252 TD) for your default universe
 python -m app.cli.backfill
 # or explicitly
 python -m app.cli.backfill --days 252 --universe NIFTY500
 
-# Generate pydantic models. These will be used in front communication.
+## Generate pydantic models. These will be used in front communication.
 
 (.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend> datamodel-codegen --input ..\contracts/openapi.yaml --input-file-type openapi --output app/schemas/generated/models.py --output-model-type pydantic_v2.BaseModel --target-python-version 3.11 --use-double-quotes --use-standard-collections --enum-field-as-literal all --collapse-root-models --encoding utf-8
 
-# This is to auto generate code from open API frontend. 
+## This is to auto generate code from open API frontend. 
 D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\frontend>npx orval --config .\orval.config.ts
 
-# This is to send email for any trading day 
+## This is to send email for any trading day 
 (.venv) D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard\backend>python -m app.notifs.email_digest -d 2025-09-24 --save-html digest.html
 
-# Backend install
+## Backend install
 cd /d D:\WORK\NEW_STOCK_DASHBOARD\momentum-dashboard
 .venv\Scripts\activate
 cd backend
