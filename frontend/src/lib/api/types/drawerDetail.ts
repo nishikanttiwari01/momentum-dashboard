@@ -34,8 +34,6 @@ export interface DrawerDetail {
    */
   channels?: DrawerDetailChannels;
   diagnostics: DrawerDiagnostics;
-  /** @nullable */
-  selection?: DrawerSelection | null;
   /** Semantic version for the drawer contract. */
   drawer_contract_version: string;
   header: DrawerHeader;
@@ -76,6 +74,8 @@ export interface DrawerDetail {
   scoring_rules_version?: string;
   /** @deprecated */
   sector?: string;
+  /** @nullable */
+  selection?: DrawerSelection;
   sparkline: DrawerSparkline;
   symbol: string;
   /** Latest completed trading day used for this view. */

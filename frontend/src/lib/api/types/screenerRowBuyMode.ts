@@ -6,12 +6,15 @@
  * OpenAPI spec version: 0.7.0
  */
 
-export type AlertEventSendType = typeof AlertEventSendType[keyof typeof AlertEventSendType];
+/**
+ * Evaluation mode used for the buy gates.
+ * @nullable
+ */
+export type ScreenerRowBuyMode = typeof ScreenerRowBuyMode[keyof typeof ScreenerRowBuyMode] | null;
 
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
-export const AlertEventSendType = {
-  IMMEDIATE: 'IMMEDIATE',
-  DIGEST: 'DIGEST',
-  REALTIME: 'REALTIME',
+export const ScreenerRowBuyMode = {
+  EOD: 'EOD',
+  INTRADAY: 'INTRADAY',
 } as const;

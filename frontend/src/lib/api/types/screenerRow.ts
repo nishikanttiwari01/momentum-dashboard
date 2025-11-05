@@ -7,6 +7,7 @@
  */
 import type { Badge } from './badge';
 import type { BuyCheck } from './buyCheck';
+import type { ScreenerRowBuyMode } from './screenerRowBuyMode';
 
 export interface ScreenerRow {
   adx?: number;
@@ -14,33 +15,90 @@ export interface ScreenerRow {
   atr_pct?: number;
   badges?: Badge[];
   buy?: boolean;
-  buy_flag?: boolean;
-  buy_profile?: string;
-  buy_mode?: 'EOD' | 'INTRADAY';
-  buy_pass_count?: number;
-  buy_total_count?: number;
+  /** Checklist rows for enforced buy gates. */
   buy_checks?: BuyCheck[];
-  buy_failed_codes?: string[];
-  buy_reasons_inline?: string;
-  buy_eval_ts?: string;
-  /** @nullable */
+  /**
+   * Enforced gate codes considered during evaluation.
+   * @nullable
+   */
   buy_enforced_checks?: string[] | null;
-  /** @nullable */
-  buy_reason_parts?: string[] | null;
-  /** @nullable */
-  buy_selected?: boolean | null;
-  /** @nullable */
-  buy_selection_reason?: string | null;
-  /** @nullable */
-  buy_stop_price?: number | null;
-  /** @nullable */
-  buy_target_price?: number | null;
-  /** @nullable */
+  /**
+   * Timestamp when the buy evaluation occurred.
+   * @nullable
+   */
+  buy_eval_ts?: string | null;
+  /**
+   * Codes of enforced buy gates that failed.
+   * @nullable
+   */
+  buy_failed_codes?: string[] | null;
+  /** True when all enforced buy gates passed. */
+  buy_flag?: boolean;
+  /**
+   * Evaluation mode used for the buy gates.
+   * @nullable
+   */
+  buy_mode?: ScreenerRowBuyMode;
+  /**
+   * Number of enforced buy gates that passed.
+   * @nullable
+   */
+  buy_pass_count?: number | null;
+  /**
+   * Active buy profile key (e.g., swing_eod, intraday_breakout).
+   * @nullable
+   */
+  buy_profile?: string | null;
+  /**
+   * R multiple computed for selection ranking.
+   * @nullable
+   */
   buy_r_multiple?: number | null;
-  /** @nullable */
+  /**
+   * Structured fragments of the buy reasons summary.
+   * @nullable
+   */
+  buy_reason_parts?: string[] | null;
+  /**
+   * Inline summary of buy reasons.
+   * @nullable
+   */
+  buy_reasons_inline?: string | null;
+  /**
+   * True when the row represents the selected candidate for the day.
+   * @nullable
+   */
+  buy_selected?: boolean | null;
+  /**
+   * Short explanation of why this symbol was selected.
+   * @nullable
+   */
+  buy_selection_reason?: string | null;
+  /**
+   * Run identifier that produced the selection.
+   * @nullable
+   */
   buy_selection_run_id?: string | null;
-  /** @nullable */
+  /**
+   * Trading date associated with the selection result.
+   * @nullable
+   */
   buy_selection_trading_day?: string | null;
+  /**
+   * Trailing stop price applied at selection time.
+   * @nullable
+   */
+  buy_stop_price?: number | null;
+  /**
+   * Initial target price used for selection ranking.
+   * @nullable
+   */
+  buy_target_price?: number | null;
+  /**
+   * Total enforced buy gates evaluated.
+   * @nullable
+   */
+  buy_total_count?: number | null;
   change_pct: number;
   last: number;
   last_index?: string;

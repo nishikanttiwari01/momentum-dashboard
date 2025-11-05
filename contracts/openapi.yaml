@@ -2409,6 +2409,7 @@ components:
           enum:
           - IMMEDIATE
           - DIGEST
+          - REALTIME
         digest_id:
           type: string
           nullable: true
