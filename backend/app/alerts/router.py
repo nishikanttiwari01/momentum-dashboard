@@ -77,10 +77,11 @@ def _resolve_topic_deliveries(
 def _render_ntfy_content(alerts_cfg: AlertsRoutingConfig, event_code: str, context: Dict[str, Any]) -> Dict[str, str]:
     template_map = alerts_cfg.templates.ntfy
     tpl = template_map.get(event_code)
-    payload = {"title": tpl or f"{event_code} {{symbol}}", "body": tpl or context.get("description", "")}
+    default_title = f"{event_code} " + "{{symbol}}"
+    payload = {"title": tpl or default_title, "body": tpl or context.get("description", "")}
     title, body = render_template(
         payload,
-        {"title": f"{event_code} {{symbol}}", "body": "{description}"},
+        {"title": default_title, "body": "{{ description }}"},
         context,
     )
     if not body:
@@ -92,7 +93,7 @@ def _render_email_content(alerts_cfg: AlertsRoutingConfig, event_code: str, cont
     template_map = alerts_cfg.templates.email
     tpl = template_map.get(event_code)
     fallback = {
-        "title": f"[{event_code}] {{symbol}}",
+        "title": "[" + event_code + "] {{symbol}}",
         "body": "{{ description }}",
     }
     if tpl:

@@ -381,7 +381,7 @@ function AlertsTable({ alerts, tz, onSelect, selectedId }: AlertsTableProps) {
                   </Stack>
                 </TableCell>
                 <TableCell align='right' sx={{ minWidth: 80 }}>
-                  {item.scoreAtFire !== null ? item.scoreAtFire.toFixed(1) : '--'}
+                  {item.scoreAtFire !== null ? formatNumber(item.scoreAtFire) : '--'}
                 </TableCell>
                 <TableCell align='right' sx={{ minWidth: 100 }}>
                   {item.nextActionCode ? (
@@ -489,6 +489,13 @@ function formatIntradayBucketLabel(label?: string | null): string | null {
     return `${padded.slice(0, 2)}:${padded.slice(2)}`;
   }
   return trimmed;
+}
+
+function formatNumber(value: number, fractionDigits = 2): string {
+  if (!Number.isFinite(value)) {
+    return String(value);
+  }
+  return value.toFixed(fractionDigits);
 }
 
 function formatTimeSubtitle(item: AlertEventListItem): string {
@@ -678,9 +685,13 @@ function KeyValueList({
 }
 
 function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return '—';
+  if (value === null || value === undefined) return '-';
   if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return '-';
+    return Number.isInteger(value) ? value.toString() : formatNumber(value);
+  }
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
   try {
     return JSON.stringify(value, null, 2);
   } catch (err) {

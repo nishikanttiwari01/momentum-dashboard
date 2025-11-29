@@ -41,12 +41,12 @@ routes:
     enabled: true
     topic: low_signal
     # channels: ["ntfy"]          # override example (usually let topic decide)
-    throttle: { per_symbol_cooldown_min: 60 }
+    throttle: { per_symbol_cooldown_min: 60, per_event_cooldown_min: 0 }
 
   BUY_SIGNAL_INTRADAY:
     enabled: true
     topic: low_signal
-    throttle: { per_symbol_cooldown_min: 30 }
+    throttle: { per_symbol_cooldown_min: 30, per_event_cooldown_min: 0 }
 
   BUY_SELECTED:
     enabled: true

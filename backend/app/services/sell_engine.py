@@ -223,6 +223,8 @@ def evaluate_positions(
                 "stop": stop_check_price,
                 "pnl_pct": pnl_pct,
                 "entry_price": entry_price,
+                "stop_method": pos.get("stop_method")
+                or getattr(sell_cfg.stop, "method", None),
             }
         elif failed_condition:
             event_code = "SELL_FAILED_BREAKOUT"

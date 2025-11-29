@@ -395,27 +395,32 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
     }
 
     const checks = legacy.items.map((item, idx) => ({
-      code: item.code ?? item.factor ?? `gate_${idx + 1}`,
-      label: item.factor ?? item.code ?? `Gate ${idx + 1}`,
+      code: (item.code ?? item.factor ?? `gate_${idx + 1}`).toString(),
+      label: (item.factor ?? item.code ?? `Gate ${idx + 1}`).toString(),
       rule: (item.description ?? item.value_vs_rule ?? '').toString(),
       actual: (item.value_display ?? item.value_vs_rule ?? '').toString(),
       pass: Boolean(item.passed),
     }));
 
+    const enforcedChecks = legacy.items
+      .map((item) => (item.code ?? item.factor ?? '').toString())
+      .filter((code) => Boolean(code));
+
+    const mode =
+      legacy.mode === 'EOD' || legacy.mode === 'INTRADAY' ? legacy.mode : null;
+
     return {
       flag: Boolean(legacy.passed),
-      profile: legacy.label ?? undefined,
-      mode: legacy.mode ?? undefined,
+      profile: typeof legacy.label === 'string' ? legacy.label : null,
+      mode,
       pass_count: legacy.passed_items ?? checks.filter((c) => c.pass).length,
       total_count: legacy.total_items ?? checks.length,
       checks,
-      failed_codes: checks.filter((c) => !c.pass).map((c) => c.code ?? ''),
-      enforced_checks: legacy.items
-        .map((item) => item.code ?? item.factor ?? '')
-        .filter((code) => Boolean(code) && typeof code === 'string'),
-      reasons_inline: legacy.summary ?? undefined,
-      eval_ts: undefined,
-    } as BuyEvaluation;
+      failed_codes: checks.filter((c) => !c.pass).map((c) => c.code),
+      enforced_checks: enforcedChecks.length ? enforcedChecks : null,
+      reasons_inline: legacy.summary != null ? legacy.summary.toString() : null,
+      eval_ts: null,
+    } satisfies BuyEvaluation;
   }, [diagnostics]);
   const selection = React.useMemo<SelectionMeta>(() => {
     const raw = (d?.selection ?? {}) as Record<string, unknown>;

@@ -255,7 +255,7 @@ def _count_upper_circuit_hits(df: pd.DataFrame, lookback: int = 60, threshold_pc
         closes = df["close"].astype(float)
     except Exception:
         return 0
-    pct_change = closes.pct_change() * 100.0
+    pct_change = closes.pct_change(fill_method=None) * 100.0
     window = pct_change.dropna().tail(lookback)
     if window.empty:
         return 0

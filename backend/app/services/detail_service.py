@@ -807,6 +807,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
     buy_eval_current: Dict[str, Any] = {
         "flag": bool((row or {}).get("buy_flag")),
         "profile": (row or {}).get("buy_profile"),
+        "mode": (row or {}).get("buy_mode") or ("EOD" if row_is_eod else "INTRADAY"),
         "pass_count": (row or {}).get("buy_pass_count"),
         "total_count": (row or {}).get("buy_total_count"),
         "checks": (row or {}).get("buy_checks") or [],
@@ -827,6 +828,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
             buy_eval_current = {
                 "flag": bool(recomputed.get("flag")),
                 "profile": recomputed.get("profile"),
+                "mode": recomputed.get("mode") or ("EOD" if row_is_eod else "INTRADAY"),
                 "pass_count": recomputed.get("pass_count"),
                 "total_count": recomputed.get("total_count"),
                 "checks": recomputed.get("buy_checks") or [],
@@ -849,6 +851,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
         diagnostics["buy_evaluation"] = {
             "flag": bool(buy_eval_current.get("flag")),
             "profile": buy_eval_current.get("profile"),
+            "mode": buy_eval_current.get("mode") or ("EOD" if row_is_eod else "INTRADAY"),
             "pass_count": int(buy_eval_current.get("pass_count") or 0),
             "total_count": int(buy_eval_current.get("total_count") or 0),
             "checks": checks_for_diag,
