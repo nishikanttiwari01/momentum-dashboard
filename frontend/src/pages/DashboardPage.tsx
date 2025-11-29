@@ -85,13 +85,12 @@ const MoversTable: React.FC<MoversTableProps> = ({ title, rows }) => (
           <TableCell align="right">Price</TableCell>
           <TableCell align="right">Change</TableCell>
           <TableCell align="right">Score</TableCell>
-          <TableCell>Next Action</TableCell>
         </TableRow>
       </TableHead>
       <TableBody>
         {rows.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={5} align="center" sx={{ color: 'text.secondary' }}>
+            <TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>
               No data available
             </TableCell>
           </TableRow>
@@ -113,14 +112,6 @@ const MoversTable: React.FC<MoversTableProps> = ({ title, rows }) => (
                 {formatPercent(row.change_pct)}
               </TableCell>
               <TableCell align="right">{formatScore(row.score)}</TableCell>
-              <TableCell>
-                <Typography variant="body2" fontWeight={500}>
-                  {row.next_action.text}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {row.next_action.code}
-                </Typography>
-              </TableCell>
             </TableRow>
           ))
         )}

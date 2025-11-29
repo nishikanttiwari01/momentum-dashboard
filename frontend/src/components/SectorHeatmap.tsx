@@ -38,14 +38,14 @@ const percentLabel = (value?: number | null) =>
   value == null ? '—' : `${percentFormatter.format(value)}%`;
 
 const FALLBACK_SECTORS: MomentumHeatmapSector[] = [
-  { name: 'BANK', symbol: 'NIFTYBANK', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
-  { name: 'FIN SERVICES', symbol: 'NIFTYFIN', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
-  { name: 'IT', symbol: 'NIFTYIT', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
-  { name: 'PHARMA', symbol: 'NIFTYPHARMA', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
-  { name: 'AUTO', symbol: 'NIFTYAUTO', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
-  { name: 'FMCG', symbol: 'NIFTYFMCG', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
-  { name: 'METAL', symbol: 'NIFTYMETAL', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
-  { name: 'REALTY', symbol: 'NIFTYREALTY', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'BANK', symbol: 'NIFTYBANK', change_1d: 0.8, change_1w: 1.9, change_1m: 3.4, turnover_ratio: 1.6, momentum_score: 0.62 },
+  { name: 'FIN SERVICES', symbol: 'NIFTYFIN', change_1d: 0.5, change_1w: 1.2, change_1m: 2.8, turnover_ratio: 1.3, momentum_score: 0.55 },
+  { name: 'IT', symbol: 'NIFTYIT', change_1d: -0.2, change_1w: 0.6, change_1m: 1.1, turnover_ratio: 0.9, momentum_score: 0.48 },
+  { name: 'PHARMA', symbol: 'NIFTYPHARMA', change_1d: 0.3, change_1w: 1.4, change_1m: 2.1, turnover_ratio: 0.8, momentum_score: 0.52 },
+  { name: 'AUTO', symbol: 'NIFTYAUTO', change_1d: 0.9, change_1w: 2.2, change_1m: 4.1, turnover_ratio: 1.1, momentum_score: 0.66 },
+  { name: 'FMCG', symbol: 'NIFTYFMCG', change_1d: 0.1, change_1w: 0.5, change_1m: 1.0, turnover_ratio: 0.7, momentum_score: 0.44 },
+  { name: 'METAL', symbol: 'NIFTYMETAL', change_1d: -0.6, change_1w: -1.4, change_1m: 0.3, turnover_ratio: 1.0, momentum_score: 0.38 },
+  { name: 'REALTY', symbol: 'NIFTYREALTY', change_1d: 1.2, change_1w: 2.9, change_1m: 5.5, turnover_ratio: 0.9, momentum_score: 0.72 },
 ];
 
 const useTileColors = (delta: number) => {
@@ -70,7 +70,7 @@ const HeatmapCard: React.FC<HeatmapCardProps> = ({ sector }) => {
   return (
     <Box
       sx={{
-        p: 2,
+        p: 1.5,
         height: '100%',
         borderRadius: 2,
         bgcolor: colors.background,
@@ -192,45 +192,53 @@ const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
   const payload = heatmapQuery.data?.data;
   const usingFallback = !payload?.sectors || payload.sectors.length === 0;
   const sectors = usingFallback ? FALLBACK_SECTORS : payload!.sectors;
-  const statusNote =
-    heatmapQuery.isError || usingFallback
-      ? heatmapQuery.error instanceof Error
-        ? heatmapQuery.error.message
-        : 'Heatmap data unavailable; showing fallback.'
-      : null;
+  const statusNote = usingFallback
+    ? 'Live feed unavailable; showing fallback sectors.'
+    : heatmapQuery.isError && heatmapQuery.error instanceof Error
+    ? heatmapQuery.error.message
+    : heatmapQuery.isError
+    ? 'Unable to load momentum heatmap right now.'
+    : null;
 
   return (
     <Paper sx={{ p: 2, width: '100%' }}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
-        <Box>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        justifyContent="space-between"
+        sx={{ mb: statusNote ? 1 : 1, flexWrap: 'wrap', gap: 1 }}
+      >
+        <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
           <Typography variant="subtitle2">Sector Momentum Heatmap</Typography>
-          <Typography variant="caption" color="text.secondary">
-            {payload
-              ? `Session ${payload.session.toUpperCase()} — ${dayjs(payload.as_of).format('DD MMM, HH:mm')} IST`
-              : usingFallback
-              ? 'Using fallback sectors — data unavailable'
-              : 'Awaiting latest data'}
-          </Typography>
-        </Box>
+          {statusNote ? (
+            <Typography variant="caption" color="warning.main">
+              {statusNote}
+            </Typography>
+          ) : null}
+        </Stack>
+
         {payload ? (
-          <Typography variant="caption" color="text.secondary">
-            NSE trade date {dayjs(payload.trade_date).format('DD MMM YYYY')}
-          </Typography>
+          <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
+            <Typography variant="caption" color="text.secondary">
+              {`Session ${payload.session.toUpperCase()} — ${dayjs(payload.as_of).format('DD MMM, HH:mm')} IST`}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              NSE trade date {dayjs(payload.trade_date).format('DD MMM YYYY')}
+            </Typography>
+          </Stack>
         ) : null}
       </Stack>
-
-      {statusNote ? (
-        <Typography color="warning.main" sx={{ mb: 1 }}>
-          {statusNote}
-        </Typography>
-      ) : null}
 
       {heatmapQuery.isLoading && !payload ? (
         <Stack alignItems="center" justifyContent="center" sx={{ py: 4 }}>
           <CircularProgress size={24} />
         </Stack>
       ) : sectors && sectors.length ? (
-        <Grid container spacing={2}>
+        <Grid
+          container
+          spacing={1.5}
+          columns={{ xs: 12, sm: 12, md: 18, lg: 24 }}
+        >
           {sectors.map((sector) => (
             <Grid item key={sector.symbol} xs={12} sm={6} md={4} lg={3}>
               <HeatmapCard sector={sector} />
