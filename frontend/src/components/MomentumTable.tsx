@@ -40,8 +40,13 @@ const fmtNum = (v: unknown): string => {
 };
 const fmtPct = (v: unknown): string => {
   const n0 = normalizeNumber(v);
-  if (n0 === null) return '—';
+  if (n0 === null) return '-';
   const n = Math.abs(n0) <= 1 ? n0 * 100 : n0;
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(n)}%`;
+};
+const fmtPctExact = (v: unknown): string => {
+  const n = normalizeNumber(v);
+  if (n === null) return '-';
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(n)}%`;
 };
 const signClass = (v: unknown) => {
@@ -418,31 +423,45 @@ const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(
 
   const columns: GridColDef[] = React.useMemo(
     () => [
-      { field: 'symbol', headerName: 'Ticker', minWidth: 145 },
+      { field: 'symbol', headerName: 'Ticker', minWidth: 145, flex: 1.1 },
 
-      { field: 'score', headerName: 'Score', width: 70, type: 'number', renderCell: renderNum, cellClassName: (p) => signClass(p?.value) },
+      { field: 'score', headerName: 'Score', width: 70, flex: 0.7, type: 'number', renderCell: renderNum, cellClassName: (p) => signClass(p?.value) },
 
-      { field: 'last', headerName: 'Price', minWidth: 130, sortable: true, renderCell: PriceDeltaCell },
+      { field: 'last', headerName: 'Price', minWidth: 130, flex: 1, sortable: true, renderCell: PriceDeltaCell },
 
       {
         field: 'wk_change',
         headerName: '1W',
         minWidth: 110,
+        flex: 0.9,
         sortable: true,
         renderCell: makePeriodCell('wk_change', 'wk_change_pct'),
       },
 
-      { field: 'ret_1m', headerName: '% 1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
-      { field: 'ret_3m', headerName: '% 3M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      { field: 'ret_1m', headerName: '% 1M', width: 80, flex: 0.85, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      { field: 'ret_3m', headerName: '% 3M', width: 80, flex: 0.85, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
       //{ field: 'ret_6m', headerName: '% 6M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
-      //{ field: 'ret_12_1m', headerName: '% 12–1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
-      { field: 'pct_from_52w_high', headerName: '% 52W H', width: 90, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      //{ field: 'ret_12_1m', headerName: '% 12-1M', width: 80, type: 'number', renderCell: renderPctCell, cellClassName: (p) => signClass(p?.value) },
+      {
+        field: 'pct_from_52w_high',
+        headerName: '% 52W H',
+        width: 90,
+        flex: 0.9,
+        type: 'number',
+        renderCell: (p) => (
+          <span className={signClass(p?.value)} style={{ fontVariantNumeric: 'tabular-nums' }}>
+            {fmtPctExact(p?.value)}
+          </span>
+        ),
+        cellClassName: (p) => signClass(p?.value),
+      },
       
 
       {
         field: 'buy_flag',
         headerName: 'Buy',
         width: 110,
+        flex: 0.9,
         type: 'boolean',
         sortable: true,
         filterable: false,
@@ -450,39 +469,39 @@ const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(
         renderCell: BuyCell,
       },
 
-      {
-        field: 'badges',
-        headerName: 'Momentum',
-        minWidth: 300,
-        sortable: false,
-        filterable: false,
-        renderCell: BadgesCell,
-      },
+      // {
+      //   field: 'badges',
+      //   headerName: 'Momentum',
+      //   minWidth: 300,
+      //   sortable: false,
+      //   filterable: false,
+      //   renderCell: BadgesCell,
+      // },
 
-      {
-        field: 'reason',
-        headerName: 'Reason',
-        flex: 1.2,
-        minWidth: 10,
-        sortable: false,
-        renderCell: (p) => (
-          <span
-            style={{
-              fontSize: 12,
-              color: 'var(--mui-palette-text-secondary, #6b7280)',
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-              whiteSpace: 'normal',
-              lineHeight: 1.25,
-            }}
-            title={String(p?.value ?? '')}
-          >
-            {String(p?.value ?? '')}
-          </span>
-        ),
-      },
+      // {
+      //   field: 'reason',
+      //   headerName: 'Reason',
+      //   flex: 1.2,
+      //   minWidth: 10,
+      //   sortable: false,
+      //   renderCell: (p) => (
+      //     <span
+      //       style={{
+      //         fontSize: 12,
+      //         color: 'var(--mui-palette-text-secondary, #6b7280)',
+      //         display: '-webkit-box',
+      //         WebkitLineClamp: 2,
+      //         WebkitBoxOrient: 'vertical',
+      //         overflow: 'hidden',
+      //         whiteSpace: 'normal',
+      //         lineHeight: 1.25,
+      //       }}
+      //       title={String(p?.value ?? '')}
+      //     >
+      //       {String(p?.value ?? '')}
+      //     </span>
+      //   ),
+      // },
 
       //{ field: 'rsi', headerName: 'RSI', width: 80, type: 'number', renderCell: renderNum },
       //{ field: 'adx', headerName: 'ADX', width: 80, type: 'number', renderCell: renderNum },

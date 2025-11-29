@@ -5,6 +5,7 @@ import {
   Box,
   Typography,
   Divider,
+  Tooltip,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -21,6 +22,7 @@ import {
 } from '@mui/material';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import CancelRoundedIcon from '@mui/icons-material/CancelRounded';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import type {
   DrawerDetail,
   DrawerDiagnosticsBuyChecklist,
@@ -186,6 +188,24 @@ function BuyChecklistSection({
     [],
   );
 
+  const checklistHelp: Record<string, string> = React.useMemo(
+    () => ({
+      min_score: 'Composite quality score (0-100) that blends fundamentals and momentum.',
+      starter_score_min_intraday: 'Intraday starter score threshold; must clear before sizing up.',
+      pivot_clear_pct: 'Distance from breakout pivot/resistance. Positive means price has cleared it.',
+      base_len_min_bars: 'Length of the recent consolidation/base in bars. Longer bases are stronger.',
+      prox52w_min_pct: 'How close price is to the 52-week high zone; nearer is better for breakouts.',
+      relvol20_min: 'Relative volume vs 20-day average. >1.0 means stronger than usual demand.',
+      intraday_relvol_min: 'Intraday relative volume compared to typical intraday trading.',
+      adx14_min: 'ADX(14) trend strength; higher values signal a stronger trend.',
+      atr_pct: 'Average True Range as % of price; gauges volatility for risk sizing.',
+      day_change_max_pct: 'Today’s move vs allowed extension so the trade is not too stretched.',
+      liquidity_min_traded_value_20d: 'Median traded value over 20 days to ensure sufficient liquidity.',
+      persistence: 'Measures persistence/consistency of price action over time.',
+    }),
+    [],
+  );
+
   const resolveStatusLine = (code: string | undefined, passed: boolean): string => {
     if (code && statusLookup[code]) {
       return passed ? statusLookup[code].pass : statusLookup[code].fail;
@@ -285,6 +305,11 @@ function BuyChecklistSection({
           );
           const comparison = composeComparison(actual, rule);
           const statusLine = resolveStatusLine(check.code, Boolean(check.pass));
+          const label = check.label || check.code || `Gate ${idx + 1}`;
+          const helpText =
+            (check.code && checklistHelp[check.code]) ||
+            (typeof (check as any).description === 'string' ? (check as any).description : '') ||
+            '';
 
           return (
             <Box
@@ -299,9 +324,19 @@ function BuyChecklistSection({
                 borderColor: 'divider',
               }}
             >
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {check.label || check.code || `Gate ${idx + 1}`}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {label}
+                </Typography>
+                {helpText ? (
+                  <Tooltip title={helpText}>
+                    <InfoOutlinedIcon
+                      fontSize="small"
+                      sx={{ color: 'text.secondary', cursor: 'help' }}
+                    />
+                  </Tooltip>
+                ) : null}
+              </Box>
               <Box
                 sx={{
                   display: 'flex',
