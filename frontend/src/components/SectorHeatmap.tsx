@@ -37,6 +37,17 @@ const turnoverLabel = (value?: number | null) =>
 const percentLabel = (value?: number | null) =>
   value == null ? '—' : `${percentFormatter.format(value)}%`;
 
+const FALLBACK_SECTORS: MomentumHeatmapSector[] = [
+  { name: 'BANK', symbol: 'NIFTYBANK', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'FIN SERVICES', symbol: 'NIFTYFIN', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'IT', symbol: 'NIFTYIT', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'PHARMA', symbol: 'NIFTYPHARMA', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'AUTO', symbol: 'NIFTYAUTO', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'FMCG', symbol: 'NIFTYFMCG', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'METAL', symbol: 'NIFTYMETAL', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+  { name: 'REALTY', symbol: 'NIFTYREALTY', change_1d: 0, change_1w: 0, change_1m: 0, turnover_ratio: null, momentum_score: 0 },
+];
+
 const useTileColors = (delta: number) => {
   const theme = useTheme();
   const abs = Math.abs(delta);
@@ -179,6 +190,14 @@ const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
   );
 
   const payload = heatmapQuery.data?.data;
+  const usingFallback = !payload?.sectors || payload.sectors.length === 0;
+  const sectors = usingFallback ? FALLBACK_SECTORS : payload!.sectors;
+  const statusNote =
+    heatmapQuery.isError || usingFallback
+      ? heatmapQuery.error instanceof Error
+        ? heatmapQuery.error.message
+        : 'Heatmap data unavailable; showing fallback.'
+      : null;
 
   return (
     <Paper sx={{ p: 2, width: '100%' }}>
@@ -187,7 +206,9 @@ const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
           <Typography variant="subtitle2">Sector Momentum Heatmap</Typography>
           <Typography variant="caption" color="text.secondary">
             {payload
-              ? `Session ${payload.session.toUpperCase()} • ${dayjs(payload.as_of).format('DD MMM, HH:mm')} IST`
+              ? `Session ${payload.session.toUpperCase()} — ${dayjs(payload.as_of).format('DD MMM, HH:mm')} IST`
+              : usingFallback
+              ? 'Using fallback sectors — data unavailable'
               : 'Awaiting latest data'}
           </Typography>
         </Box>
@@ -198,15 +219,19 @@ const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
         ) : null}
       </Stack>
 
-      {heatmapQuery.isError ? (
-        <Typography color="error">Unable to load momentum heatmap right now.</Typography>
-      ) : heatmapQuery.isLoading && !payload ? (
+      {statusNote ? (
+        <Typography color="warning.main" sx={{ mb: 1 }}>
+          {statusNote}
+        </Typography>
+      ) : null}
+
+      {heatmapQuery.isLoading && !payload ? (
         <Stack alignItems="center" justifyContent="center" sx={{ py: 4 }}>
           <CircularProgress size={24} />
         </Stack>
-      ) : payload ? (
+      ) : sectors && sectors.length ? (
         <Grid container spacing={2}>
-          {payload.sectors.map((sector) => (
+          {sectors.map((sector) => (
             <Grid item key={sector.symbol} xs={12} sm={6} md={4} lg={3}>
               <HeatmapCard sector={sector} />
             </Grid>
