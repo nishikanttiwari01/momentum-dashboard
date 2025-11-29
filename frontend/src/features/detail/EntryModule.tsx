@@ -13,6 +13,7 @@ type Props = {
   locked?: boolean;
   trade_on?: boolean;
   qty?: number;
+  qtyError?: string | null;
 
   onTradeChange?: (on: boolean) => void;
   onEntryChange?: (v: string) => void;
@@ -25,6 +26,7 @@ export default function EntryModule({
   locked,
   trade_on,
   qty,
+  qtyError,
   onTradeChange,
   onEntryChange,
   onQtyChange,
@@ -170,6 +172,8 @@ export default function EntryModule({
             sx={{ width: 140 }}
             inputProps={{ inputMode: 'numeric' }}
             disabled={!!locked}
+            error={Boolean(qtyError)}
+            helperText={qtyError || ' '}
           />
         </Stack>
       )}

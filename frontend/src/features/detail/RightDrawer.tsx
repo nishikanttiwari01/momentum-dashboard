@@ -519,6 +519,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
   const [qtyLocal, setQtyLocal] = React.useState<string>(
     typeof qtyServer === 'number' ? String(qtyServer) : ''
   );
+  const [qtyError, setQtyError] = React.useState<string | null>(null);
   const activePosition = tradeOn ? (position ?? posFromDetail ?? null) : null;
 
   // Tabs state (0 = Overview, 1 = News)
@@ -657,6 +658,13 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
   const alertTemplates = Array.isArray(d?.alert_templates) ? (d.alert_templates as AlertTemplate[]) : undefined;
 
   async function lockNow() {
+    const parsedQty = Number.parseFloat(qtyLocal || '');
+    if (!qtyLocal || !Number.isFinite(parsedQty) || parsedQty <= 0) {
+      setQtyError('Enter a quantity greater than 0');
+      return;
+    }
+    setQtyError(null);
+
     const px =
       entryPrice && !Number.isNaN(+entryPrice) && +entryPrice > 0
         ? Number(parseFloat(entryPrice).toFixed(2))
@@ -669,7 +677,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
         symbol: sym,
         price: px,
         as_of: new Date().toISOString(),
-        qty: qtyLocal ? Number(qtyLocal) : undefined,
+        qty: parsedQty,
       },
     });
 
@@ -838,6 +846,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
                   setTradeOn(true);
                   if (!entryPrice) setEntryPrice(computeSuggestedPriceStr());
                 } else {
+                  setQtyError(null);
                   if (locked) setAskConfirm(true);
                   else setTradeOn(false);
                 }
@@ -847,13 +856,17 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
                   v && !Number.isNaN(+v) ? Number(parseFloat(v).toFixed(2)).toString() : v;
                 setEntryPrice(cleaned);
               }}
-              onQtyChange={(v) => setQtyLocal(v)}
+              onQtyChange={(v) => {
+                setQtyLocal(v);
+                if (qtyError) setQtyError(null);
+              }}
+              qtyError={qtyError}
               showLockEntryButton={false}
             />
 
             {tradeOn && !locked && (
               <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                <Button variant="contained" onClick={lockNow}>
+                <Button variant="contained" onClick={lockNow} disabled={lockMut.isPending}>
                   Lock trade
                 </Button>
                 <Button
@@ -861,6 +874,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
                   onClick={() => {
                     setTradeOn(false);
                   }}
+                  disabled={lockMut.isPending}
                 >
                   Cancel
                 </Button>
