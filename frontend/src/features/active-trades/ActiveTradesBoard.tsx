@@ -77,7 +77,12 @@ const num2 = (v: number | undefined | null) =>
 const dt = (v: string | null | undefined) => {
   if (!v) return '?';
   const date = new Date(v);
-  return Number.isNaN(date.getTime()) ? '?' : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return '?';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const time = date.toLocaleTimeString();
+  return `${day}/${month}/${year} ${time}`;
 };
 
 /** Row computed from position + detail */
@@ -96,6 +101,7 @@ type Row = {
   nextAction?: string;
   reason?: string;
   status: 'ACTIVE' | 'CLOSED';
+  buyAt?: string | null;
   sellPrice?: number | null;
   soldAt?: string | null;
   realizedPl?: number | null;
@@ -174,6 +180,7 @@ export default function ActiveTradesBoard() {
 
       const entry = typeof p.entry_price_locked === 'number' ? p.entry_price_locked : undefined;
       const qty = typeof p.qty === 'number' ? p.qty : undefined;
+      const buyAt = p.created_at ?? null;
 
       const priceActive = detail ? (detail.header?.price ?? detail.price) : undefined;
       const sellPriceValue = typeof p.sell_price === 'number' ? p.sell_price : undefined;
@@ -244,6 +251,7 @@ export default function ActiveTradesBoard() {
         nextAction,
         reason,
         status: isActive ? 'ACTIVE' : 'CLOSED',
+        buyAt,
         sellPrice: sellPriceValue ?? null,
         soldAt,
         realizedPl,
@@ -342,6 +350,7 @@ export default function ActiveTradesBoard() {
             <TableRow>
               <TableCell>Symbol</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell align="right">Buy Date</TableCell>
               <TableCell align="right">Entry Price</TableCell>
               <TableCell align="right">Qty</TableCell>
               <TableCell align="right">Book Value</TableCell>
@@ -357,7 +366,7 @@ export default function ActiveTradesBoard() {
           <TableBody>
             {rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={12} sx={{ color: 'text.secondary' }}>
+                <TableCell colSpan={13} sx={{ color: 'text.secondary' }}>
                   No trades recorded yet.
                 </TableCell>
               </TableRow>
@@ -393,6 +402,7 @@ export default function ActiveTradesBoard() {
                         variant={r.status === 'ACTIVE' ? 'filled' : 'outlined'}
                       />
                     </TableCell>
+                    <TableCell align="right">{dt(r.buyAt ?? null)}</TableCell>
                     <TableCell align="right">{num2(r.lockedEntry ?? null)}</TableCell>
                     <TableCell align="right">{r.qty ?? '--'}</TableCell>
                     <TableCell align="right">{inr(r.bookValue)}</TableCell>
