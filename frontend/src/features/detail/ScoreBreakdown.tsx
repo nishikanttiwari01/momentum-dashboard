@@ -1,7 +1,7 @@
 // detail/ScoreBreakdown.tsx
 import * as React from 'react';
-import { Box, Divider, Grid, Stack, Tooltip, Typography } from '@mui/material';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { Box, Divider, Grid, Stack, Typography } from '@mui/material';
+import InfoTooltip from '@/components/InfoTooltip';
 
 type Props = {
   score?: number | null;
@@ -67,9 +67,7 @@ const InlineRow: React.FC<{ label: string; value?: number | null; den?: 100 | 10
       <Stack direction="row" spacing={0.5} alignItems="center" sx={{ color: 'text.secondary' }}>
         <Typography variant="body2">{label}</Typography>
         {hint ? (
-          <Tooltip title={hint}>
-            <InfoOutlinedIcon sx={{ fontSize: 14, opacity: 0.7 }} />
-          </Tooltip>
+          <InfoTooltip body={hint} iconSize={14} placement="right" />
         ) : null}
       </Stack>
 

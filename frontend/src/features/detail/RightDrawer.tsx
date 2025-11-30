@@ -24,7 +24,6 @@ import {
 } from '@mui/material';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import CancelRoundedIcon from '@mui/icons-material/CancelRounded';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import dayjs from 'dayjs';
 import type {
   DrawerDetail,
@@ -36,6 +35,8 @@ import type {
 } from '@/lib/api/types';
 import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks';
 import { drawerPaperSx } from './styles';
+import { displaySymbol, displayDate } from '@/lib/formatters';
+import InfoTooltip from '@/components/InfoTooltip';
 
 import DrawerHeader from './DrawerHeader';
 import Sparkline from './SparklineRe';
@@ -339,14 +340,7 @@ function BuyChecklistSection({
                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
                   {label}
                 </Typography>
-                {helpText ? (
-                  <Tooltip title={helpText}>
-                    <InfoOutlinedIcon
-                      fontSize="small"
-                      sx={{ color: 'text.secondary', cursor: 'help' }}
-                    />
-                  </Tooltip>
-                ) : null}
+                {helpText ? <InfoTooltip body={helpText} iconSize={16} placement="right" /> : null}
               </Box>
               <Box
                 sx={{
@@ -799,7 +793,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
         }}
       >
         <DrawerHeader
-          name={header?.name ?? d?.name ?? symbol ?? '--'}
+          name={header?.name ?? d?.name ?? displaySymbol(symbol) ?? '--'}
           sector={header?.sector ?? d?.sector}
           price={header?.price ?? d?.price}
           pctToday={pctToday}
@@ -862,7 +856,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
                   Rank #{candidatePool.rank ?? '—'} {candidatePool.is_top_candidate ? '• Top pick' : ''}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Added {candidatePool.added_on ? dayjs(candidatePool.added_on).format('DD MMM YYYY') : '—'}
+                  Added {candidatePool.added_on ? displayDate(candidatePool.added_on) : '—'}
                   {candidatePool.added_as_of ? ` • as of ${candidatePool.added_as_of}` : ''}
                   {candidatePool.last_seen_as_of ? ` • last seen ${candidatePool.last_seen_as_of}` : ''}
                 </Typography>

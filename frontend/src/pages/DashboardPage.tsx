@@ -39,6 +39,8 @@ import type {
 } from '@/lib/api/types';
 import RightDrawer from '@/features/detail/RightDrawer';
 import SectorHeatmap from '../components/SectorHeatmap';
+import { displaySymbol, displayDate, displayDateTime } from '@/lib/formatters';
+import InfoTooltip from '@/components/InfoTooltip';
 
 const PERIOD_OPTIONS: { label: string; value: TopMoversPeriodValue }[] = [
   { label: '1 Day', value: TopMoversPeriod['1d'] },
@@ -69,11 +71,7 @@ const poolStatusMeta: Record<string, { label: string; color: 'default' | 'succes
   exit_soon: { label: 'Exit soon', color: 'error' },
   removed: { label: 'Removed', color: 'default' },
 };
-const formatDateLabel = (value?: string | null) => {
-  if (!value) return '—';
-  const d = dayjs(value);
-  return d.isValid() ? d.format('DD MMM YYYY') : value;
-};
+const formatDateLabel = (value?: string | null) => displayDate(value);
 const formatPercentCompact = (value?: number | null) => {
   if (value == null) return '—';
   return `${percentFormatter.format(value)}%`;
@@ -93,9 +91,10 @@ const rangeSinceTrade = (createdAt?: string) => {
 interface MoversTableProps {
   title: string;
   rows: TopMoverEntry[];
+  onSelect?: (symbol: string) => void;
 }
 
-const MoversTable: React.FC<MoversTableProps> = ({ title, rows }) => (
+const MoversTable: React.FC<MoversTableProps> = ({ title, rows, onSelect }) => (
   <Stack spacing={1} sx={{ height: '100%' }}>
     <Typography variant="subtitle2">{title}</Typography>
     <Table size="small">
@@ -116,10 +115,15 @@ const MoversTable: React.FC<MoversTableProps> = ({ title, rows }) => (
           </TableRow>
         ) : (
           rows.map((row) => (
-            <TableRow key={row.symbol}>
+            <TableRow
+              key={row.symbol}
+              hover
+              sx={{ cursor: onSelect ? 'pointer' : 'default' }}
+              onClick={() => onSelect?.(row.symbol)}
+            >
               <TableCell>
                 <Typography variant="body2" fontWeight={600}>
-                  {row.symbol}
+                  {displaySymbol(row.symbol)}
                 </Typography>
                 {row.name ? (
                   <Typography variant="caption" color="text.secondary">
@@ -185,9 +189,9 @@ export default function Dashboard() {
   };
 
   const handleOpenDrawer = React.useCallback(
-    (symbol: string) => {
+    (symbol: string, asOfHint?: string | null) => {
       setDrawerSymbol(symbol);
-      setDrawerAsOf(candidatePool?.as_of ?? undefined);
+      setDrawerAsOf(asOfHint ?? candidatePool?.as_of ?? undefined);
       setDrawerOpen(true);
     },
     [candidatePool]
@@ -246,7 +250,7 @@ export default function Dashboard() {
             {candidatePool
               ? `Max ${candidatePool.max_size} • Updated ${
                   candidatePool.generated_at
-                    ? dayjs(candidatePool.generated_at as string).format('HH:mm:ss')
+                    ? displayDateTime(candidatePool.generated_at as string)
                     : candidatePool.as_of ?? 'latest'
                 }`
               : 'Relaxed intraday rules apply only to these symbols'}
@@ -272,7 +276,15 @@ export default function Dashboard() {
                 <TableCell>Added</TableCell>
                 <TableCell align="right">Score</TableCell>
                 <TableCell align="right">ADX</TableCell>
-                <TableCell align="right">R</TableCell>
+                <TableCell align="right">
+                  <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end">
+                    <span>R</span>
+                    <InfoTooltip
+                      title="Reward-to-risk (R)"
+                      body="Uses current price, an ATR-based stop, and the T1 target to estimate potential reward per unit of risk. Higher R means a better cushion between stop and target."
+                    />
+                  </Stack>
+                </TableCell>
                 <TableCell align="right">52W</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Notes</TableCell>
@@ -284,21 +296,21 @@ export default function Dashboard() {
                 const reasons = item.reasons?.filter(Boolean) ?? [];
                 return (
                   <TableRow
-                    hover
-                    key={item.symbol}
-                    sx={{ cursor: 'pointer' }}
-                    onClick={() => handleOpenDrawer(item.symbol)}
-                  >
+                  hover
+                  key={item.symbol}
+                  sx={{ cursor: 'pointer' }}
+                  onClick={() => handleOpenDrawer(item.symbol)}
+                >
                     <TableCell>
                       <Stack direction="row" alignItems="center" spacing={1}>
                         <Typography fontWeight={700}>#{item.rank ?? '—'}</Typography>
                         {item.is_top_candidate ? <Chip size="small" color="warning" label="Top pick" /> : null}
                       </Stack>
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight={700}>
-                        {item.symbol}
-                      </Typography>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={700}>
+                      {displaySymbol(item.symbol)}
+                    </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {item.added_as_of ? `EOD ${item.added_as_of}` : ''}
                       </Typography>
@@ -316,15 +328,21 @@ export default function Dashboard() {
                         {(reasons.length ? reasons : ['Relaxed exit rules intact']).map((r, idx) => (
                           <Chip key={idx} size="small" variant="outlined" color="info" label={r} />
                         ))}
-                        {item.exit_checks?.map((check) => (
-                          <Chip
-                            key={check.code}
-                            size="small"
-                            variant={check.pass ? 'outlined' : 'filled'}
-                            color={check.pass ? 'success' : 'error'}
-                            label={check.label}
-                          />
-                        ))}
+                        {item.exit_checks?.map((check) => {
+                          const label =
+                            check.code === 'age' && typeof check.value === 'number'
+                              ? `Age: ${Math.round(check.value)}d`
+                              : check.label;
+                          return (
+                            <Chip
+                              key={check.code}
+                              size="small"
+                              variant={check.pass ? 'outlined' : 'filled'}
+                              color={check.pass ? 'success' : 'error'}
+                              label={label}
+                            />
+                          );
+                        })}
                       </Stack>
                     </TableCell>
                   </TableRow>
@@ -340,7 +358,18 @@ export default function Dashboard() {
 
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
-          <Typography variant="subtitle2">Top Movers</Typography>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
+            <Typography variant="subtitle2">Top Movers</Typography>
+            {moversData ? (
+              <Typography variant="caption" color="text.secondary">
+                {`Snapshot ${displayDate(moversData.as_of ?? 'latest')} • Updated ${displayDateTime(moversData.generated_at)}`}
+              </Typography>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                Snapshot pending
+              </Typography>
+            )}
+          </Stack>
           <ToggleButtonGroup exclusive value={period} onChange={handlePeriodChange} size="small">
             {PERIOD_OPTIONS.map((option) => (
               <ToggleButton key={option.value} value={option.value} sx={{ textTransform: 'none' }}>
@@ -349,11 +378,6 @@ export default function Dashboard() {
             ))}
           </ToggleButtonGroup>
         </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-          {moversData
-            ? `Snapshot ${moversData.as_of ?? 'latest'} • Updated ${dayjs(moversData.generated_at).format('HH:mm:ss')}`
-            : 'Snapshot pending'}
-        </Typography>
         <Divider sx={{ mb: 2 }} />
         {moversQuery.isError ? (
           <Typography color="error">Unable to load top movers right now.</Typography>
@@ -364,10 +388,18 @@ export default function Dashboard() {
         ) : (
           <Grid container spacing={2}>
             <Grid item xs={12} md={6}>
-              <MoversTable title="Top Gainers" rows={moversData?.gainers ?? []} />
+              <MoversTable
+                title="Top Gainers"
+                rows={moversData?.gainers ?? []}
+                onSelect={(sym) => handleOpenDrawer(sym, moversData?.as_of)}
+              />
             </Grid>
             <Grid item xs={12} md={6}>
-              <MoversTable title="Top Losers" rows={moversData?.losers ?? []} />
+              <MoversTable
+                title="Top Losers"
+                rows={moversData?.losers ?? []}
+                onSelect={(sym) => handleOpenDrawer(sym, moversData?.as_of)}
+              />
             </Grid>
           </Grid>
         )}
@@ -395,9 +427,9 @@ export default function Dashboard() {
           <Grid container spacing={2}>
             {activeTrades.map((p, idx) => {
               const detail = detailBySymbol.get(p.symbol);
-              const sparkData = detail?.sparkline as DrawerSparkline | undefined;
-              const detailQuery = detailQueries[idx];
-              const rangeLabel = rangeSinceTrade(p.created_at);
+                const sparkData = detail?.sparkline as DrawerSparkline | undefined;
+                const detailQuery = detailQueries[idx];
+                const rangeLabel = rangeSinceTrade(p.created_at);
               const ltp =
                 typeof detail?.header?.price === 'number'
                   ? detail.header.price
@@ -417,15 +449,18 @@ export default function Dashboard() {
               const plColor =
                 typeof pl === 'number' ? (pl > 0 ? 'success.main' : pl < 0 ? 'error.main' : 'text.secondary') : 'text.secondary';
               const startedOn = dayjs(p.created_at).isValid()
-                ? dayjs(p.created_at).format('DD/MM/YYYY HH:mm')
+                ? displayDateTime(p.created_at)
                 : 'Unknown';
               return (
                 <Grid item xs={12} md={6} lg={4} key={p.id}>
                   <Paper variant="outlined" sx={{ p: 1.5, height: '100%' }}>
                     <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>
-                      <Box>
+                      <Box
+                        sx={{ cursor: 'pointer' }}
+                        onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? candidatePool?.as_of)}
+                      >
                         <Typography variant="subtitle1" fontWeight={700}>
-                          {p.symbol}
+                          {displaySymbol(p.symbol)}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
                           Qty: {p.qty ?? '--'} | Entry: {formatPrice(p.entry_price_locked)}
@@ -435,7 +470,9 @@ export default function Dashboard() {
                         Range: {rangeLabel}
                       </Typography>
                     </Stack>
-                    <SparklineRe data={sparkData as any} height={180} showHeader={false} />
+                    <Box sx={{ cursor: 'pointer' }} onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? candidatePool?.as_of)}>
+                      <SparklineRe data={sparkData as any} height={180} showHeader={false} />
+                    </Box>
                     <Stack direction="row" spacing={2} sx={{ mt: 0.5, mb: 0.5, flexWrap: 'wrap' }}>
                       <Stack spacing={0} minWidth={120}>
                         <Typography variant="caption" color="text.secondary">

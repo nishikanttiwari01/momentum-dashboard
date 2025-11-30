@@ -1,7 +1,7 @@
 // detail/EntryModule.tsx
 import * as React from 'react';
-import { Box, Divider, Stack, Switch, TextField, Tooltip, Typography } from '@mui/material';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { Box, Divider, Stack, Switch, TextField, Typography } from '@mui/material';
+import InfoTooltip from '@/components/InfoTooltip';
 import { rup } from './utils';
 
 type Props = {
@@ -133,9 +133,7 @@ export default function EntryModule({
         <Switch checked={!!trade_on} onChange={(e) => onTradeChange?.(e.target.checked)} />
         <Typography variant="body2">Trade</Typography>
         {locked && (
-          <Tooltip title="Entry is locked; adjust via dedicated flow">
-            <InfoOutlinedIcon fontSize="small" />
-          </Tooltip>
+          <InfoTooltip body="Entry is locked; adjust via dedicated flow" iconSize={16} placement="right" />
         )}
       </Stack>
 

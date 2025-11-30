@@ -1,6 +1,7 @@
 // detail/NextAction.tsx
 import * as React from 'react';
 import { Box, Stack, Typography, Divider, Tooltip } from '@mui/material';
+import InfoTooltip from '@/components/InfoTooltip';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { num, rup } from './utils';
 
@@ -108,11 +109,11 @@ export default function NextAction({ text, refs = {}, method_pill, method_toolti
             </Typography>
             <Tooltip title={method_tooltip || ''} disableHoverListener={!method_tooltip}>
               <Box
-                sx={{
-                  px: 1,
-                  py: 0.25,
-                  borderRadius: 1,
-                  bgcolor: 'info.main',
+              sx={{
+                px: 1,
+                py: 0.25,
+                borderRadius: 1,
+                bgcolor: 'info.main',
                   color: 'info.contrastText',
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -122,7 +123,7 @@ export default function NextAction({ text, refs = {}, method_pill, method_toolti
                 }}
               >
                 <span>{method_pill}</span>
-                <InfoOutlinedIcon sx={{ fontSize: 14, opacity: method_tooltip ? 0.85 : 0.35 }} />
+                <InfoTooltip body={method_tooltip} iconSize={14} placement="right" />
               </Box>
             </Tooltip>
           </Stack>

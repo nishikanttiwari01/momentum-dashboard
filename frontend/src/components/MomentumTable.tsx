@@ -11,6 +11,7 @@ import {
 } from '@mui/x-data-grid';
 import { Box, Alert, LinearProgress, Tooltip, Chip, Typography, alpha } from '@mui/material';
 import { useGetApiV1Screener } from '@/lib/api/client';
+import { displaySymbol } from '@/lib/formatters';
 import type { GetApiV1ScreenerParams } from '@/lib/api/types';
 import RightDrawer from '@/features/detail/RightDrawer';
 
@@ -423,7 +424,13 @@ const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(
 
   const columns: GridColDef[] = React.useMemo(
     () => [
-      { field: 'symbol', headerName: 'Ticker', minWidth: 145, flex: 1.1 },
+      {
+        field: 'symbol',
+        headerName: 'Ticker',
+        minWidth: 145,
+        flex: 1.1,
+        renderCell: (p) => displaySymbol(p?.value as string),
+      },
 
       { field: 'score', headerName: 'Score', width: 70, flex: 0.7, type: 'number', renderCell: renderNum, cellClassName: (p) => signClass(p?.value) },
 
@@ -533,7 +540,7 @@ const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(
   return (
     <Box className="datagrid-elevated" sx={boxSx}>
       <DataGrid
-        autoHeight                
+        autoHeight
         sx={{ flex: 1, width: '100%', minWidth: 0 }}
         rows={rows}
         getRowId={getId}

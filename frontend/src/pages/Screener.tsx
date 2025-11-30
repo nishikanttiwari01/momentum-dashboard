@@ -21,6 +21,7 @@ import {
 import type { SelectChangeEvent } from '@mui/material/Select';
 import DownloadIcon from '@mui/icons-material/Download';
 import MomentumTable from '../components/MomentumTable';
+import { withDefaultNSExtension } from '@/lib/formatters';
 import { useGetScreenerRunDates, useGetScreenerRuns } from '@/lib/api/client';
 import type { ScreenerRunSummary } from '@/lib/api/types';
 
@@ -119,7 +120,8 @@ export default function Screener() {
       return;
     }
     const normalized = value.toUpperCase();
-    setSymbolFilter(normalized);
+    const canonical = withDefaultNSExtension(normalized);
+    setSymbolFilter(canonical);
     setTickerInput(normalized);
   }, [tickerInput]);
 
@@ -447,7 +449,7 @@ export default function Screener() {
             <TextField
               size="small"
               label="Ticker"
-              placeholder="e.g. SUMEETINDS.NS"
+          placeholder="e.g. SUMEETINDS"
               value={tickerInput}
               onChange={(event) => setTickerInput(event.target.value)}
               autoComplete="off"

@@ -110,6 +110,8 @@ def evaluate_positions(
         if price_now is None or entry_price is None or entry_price <= 0:
             continue
 
+        is_candidate_pool_member = bool(row.get("candidate_pool_member"))
+
         note_data = _parse_note(pos.get("note"))
         breakeven_active = bool(pos.get("breakeven_active"))
         prev_stop = _safe_float(pos.get("stop_now"))
@@ -169,6 +171,7 @@ def evaluate_positions(
             and price_now < pivot_price
             and (relvol_down or 0) >= (failed_cfg.relvol_down_min or 0)
             and (not failed_cfg.eod_only or mode == Mode.EOD)
+            and not is_candidate_pool_member  # don't alert failed breakout for pool members
         )
 
         breakeven_cfg = sell_cfg.breakeven

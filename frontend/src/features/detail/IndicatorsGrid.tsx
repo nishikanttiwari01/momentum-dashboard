@@ -1,7 +1,7 @@
 // detail/IndicatorsGrid.tsx
 import * as React from 'react';
-import { Grid, Stack, Typography, Divider, Tooltip } from '@mui/material';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { Grid, Stack, Typography, Divider } from '@mui/material';
+import InfoTooltip from '@/components/InfoTooltip';
 import { num, pct, relvol, prox52w } from './utils';
 
 type Indicators = {
@@ -28,9 +28,7 @@ const Field: React.FC<{ label: string; value: React.ReactNode; hint?: string }> 
     <Stack direction="row" spacing={0.5} alignItems="center" sx={{ width: 100, color: 'text.secondary', flexShrink: 0 }}>
       <Typography variant="body2">{label}:</Typography>
       {hint ? (
-        <Tooltip title={hint}>
-          <InfoOutlinedIcon sx={{ fontSize: 14, opacity: 0.7 }} />
-        </Tooltip>
+        <InfoTooltip body={hint} iconSize={14} placement="right" />
       ) : null}
     </Stack>
     <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
