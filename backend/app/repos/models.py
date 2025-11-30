@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     Integer,
@@ -159,3 +160,42 @@ class SnapshotPin(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     run_id: Mapped[str] = mapped_column(String(20), index=True)
+
+
+class CandidatePool(Base):
+    __tablename__ = "candidate_pool"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp()
+    )
+    added_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    added_run_id: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    added_as_of: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_seen_run_id: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    last_seen_as_of: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    last_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_adx14: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_atr_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_r_multiple: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_prox_52w_high_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_liquidity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    last_ema20: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    rank_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rank_ord: Mapped[Optional[int]] = mapped_column(Integer, index=True, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(16), index=True, default="ACTIVE")
+    exit_reason: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    removed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    removed_run_id: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    reasons_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_candidate_pool_status_rank", "status", "rank_ord"),
+    )

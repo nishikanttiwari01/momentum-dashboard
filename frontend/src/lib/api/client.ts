@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Momentum Dashboard API
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
- * OpenAPI spec version: 0.7.0
+ * OpenAPI spec version: 0.8.0
  */
 import {
   useMutation,
@@ -27,6 +27,7 @@ import type {
 import type {
   AddToWatchlistBody,
   AlertEvent,
+  CandidatePoolList,
   DrawerDetail,
   ExportScreenerSnapshotParams,
   GetApiV1InstrumentsSymbolDetailParams,
@@ -619,6 +620,67 @@ export const useExportScreenerSnapshot = <TData = Awaited<ReturnType<typeof expo
   ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
 
   const queryOptions = getExportScreenerSnapshotQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  query.queryKey = queryOptions.queryKey ;
+
+  return query;
+}
+
+
+
+
+/**
+ * Returns the ranked candidate pool (max 10) built from strict EOD buy signals and maintained with relaxed exit rules. Ranking is based on score, R-multiple, ADX, and proximity to 52W high.
+
+ * @summary List active buy candidates (pool)
+ */
+export const getCandidatePool = (
+     options?: AxiosRequestConfig
+ ): Promise<AxiosResponse<CandidatePoolList>> => {
+    
+    return axios.default.get(
+      `/api/v1/candidate-pool`,options
+    );
+  }
+
+
+export const getGetCandidatePoolQueryKey = () => {
+    return [`/api/v1/candidate-pool`] as const;
+    }
+
+    
+export const getGetCandidatePoolQueryOptions = <TData = Awaited<ReturnType<typeof getCandidatePool>>, TError = AxiosError<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCandidatePool>>, TError, TData>>, axios?: AxiosRequestConfig}
+) => {
+
+const {query: queryOptions, axios: axiosOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCandidatePoolQueryKey();
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCandidatePool>>> = ({ signal }) => getCandidatePool({ signal, ...axiosOptions });
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCandidatePool>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCandidatePoolQueryResult = NonNullable<Awaited<ReturnType<typeof getCandidatePool>>>
+export type GetCandidatePoolQueryError = AxiosError<unknown>
+
+/**
+ * @summary List active buy candidates (pool)
+ */
+export const useGetCandidatePool = <TData = Awaited<ReturnType<typeof getCandidatePool>>, TError = AxiosError<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getCandidatePool>>, TError, TData>>, axios?: AxiosRequestConfig}
+
+  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } => {
+
+  const queryOptions = getGetCandidatePoolQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

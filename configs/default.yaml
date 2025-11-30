@@ -257,6 +257,28 @@ selection_policy:
     stop_from: "profiles.sell.common.stop"
     target_from: "profiles.sell.common.targets.t1_gain_pct"
 
+candidate_pool:
+  max_size: 10
+  ranking:
+    score_weight: 0.4
+    r_multiple_weight: 0.3
+    adx14_weight: 0.2
+    prox52w_weight: 0.1
+  exit_rules:
+    max_age_days: 7
+    min_adx14: 18
+    min_prox52w_pct: -15.0
+    require_above_ema20: true
+  intraday_overrides:
+    enabled: true
+    intraday_relvol_min: 1.2
+    starter_score_min_intraday: null
+    persistence:
+      require_above_vwap: true
+      require_prev_day_high_clear: false
+      min_minutes_since_open: 0
+      avoid_lunch_window: false
+
 # ------------------------------------------------------------
 # SCORING COSMETICS (safe to keep; no UI logic in decisions)
 # ------------------------------------------------------------

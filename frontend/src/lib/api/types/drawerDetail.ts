@@ -3,11 +3,12 @@
  * Do not edit manually.
  * Momentum Dashboard API
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
- * OpenAPI spec version: 0.7.0
+ * OpenAPI spec version: 0.8.0
  */
 import type { DrawerActionBlock } from './drawerActionBlock';
 import type { DrawerAlerts } from './drawerAlerts';
 import type { LegacyBadge } from './legacyBadge';
+import type { CandidatePoolEntry } from './candidatePoolEntry';
 import type { DrawerDetailChannels } from './drawerDetailChannels';
 import type { DrawerDiagnostics } from './drawerDiagnostics';
 import type { DrawerHeader } from './drawerHeader';
@@ -28,6 +29,11 @@ export interface DrawerDetail {
   as_of?: string;
   /** @deprecated */
   badges?: LegacyBadge[];
+  /**
+   * Snapshot of this symbol inside the buy candidate pool (rank, health, reasons).
+   * @nullable
+   */
+  candidate_pool?: CandidatePoolEntry;
   /**
    * @deprecated
    * @nullable

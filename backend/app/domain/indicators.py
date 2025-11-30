@@ -250,6 +250,7 @@ def compute_indicator_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     ind = pd.DataFrame(index=df.index)
     ind["ema10"] = ema(close, 10)
+    ind["ema20"] = ema(close, 20)
     ind["ema50"] = ema(close, 50)
     ind["ema200"] = ema(close, 200)
     ind["rsi14"] = rsi(close, 14)

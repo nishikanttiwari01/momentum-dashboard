@@ -89,6 +89,15 @@ def _strategy() -> "StrategyConfig":
 
 
 @lru_cache(maxsize=1)
+def _pool_overrides():
+    try:
+        cfg = app_config.get_settings().candidate_pool
+        return getattr(cfg, "intraday_overrides", None)
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
 def _trading_window() -> Tuple[ZoneInfo, time, time]:
     settings = app_config.get_settings()
     tw = getattr(settings.scheduler, "trading_window", None)
@@ -241,6 +250,46 @@ def _resolve_profile(is_eod: bool) -> Tuple[str, Optional["StrategyBuyProfileCon
     code = "swing_eod" if is_eod else "intraday_breakout"
     profile = profiles.get(code)
     return code, profile
+
+
+def _apply_pool_overrides(
+    profile: "StrategyBuyProfileConfig",
+    overrides: Any,
+) -> "StrategyBuyProfileConfig":
+    try:
+        clone = profile.model_copy(deep=True)
+    except Exception:
+        return profile
+
+    if overrides is None or not getattr(overrides, "enabled", False):
+        return clone
+
+    if getattr(overrides, "intraday_relvol_min", None) is not None:
+        clone.intraday_relvol_min = overrides.intraday_relvol_min
+    if getattr(overrides, "starter_score_min_intraday", None) is not None:
+        clone.starter_score_min_intraday = overrides.starter_score_min_intraday
+
+    persistence_override = getattr(overrides, "persistence", None)
+    if persistence_override is not None:
+        try:
+            persistence = clone.persistence.model_copy(deep=True)
+        except Exception:
+            persistence = clone.persistence
+
+        if getattr(persistence_override, "require_above_vwap", None) is not None:
+            persistence.require_above_vwap = bool(persistence_override.require_above_vwap)
+        if getattr(persistence_override, "require_prev_day_high_clear", None) is not None:
+            persistence.require_prev_day_high_clear = bool(persistence_override.require_prev_day_high_clear)
+        if getattr(persistence_override, "min_minutes_since_open", None) is not None:
+            try:
+                persistence.min_minutes_since_open = int(persistence_override.min_minutes_since_open)
+            except Exception:
+                pass
+        if getattr(persistence_override, "avoid_lunch_window", None) is not None:
+            persistence.avoid_lunch_window = bool(persistence_override.avoid_lunch_window)
+        clone.persistence = persistence
+
+    return clone
 
 
 def _build_min_score(row: Dict[str, Any], profile: "StrategyBuyProfileConfig", **_: Any) -> CheckResult:
@@ -548,10 +597,17 @@ def evaluate_buy_gate(row: Dict[str, Any], *, eval_time: Optional[datetime] = No
             "enforced_checks": [],
         }
 
-    codes = EOD_CHECK_ORDER if is_eod else INTRADAY_CHECK_ORDER
-    checks_map, meta = _evaluate_checks(row, profile, codes, eval_dt=eval_dt)
+    pool_member = bool(row.get("candidate_pool_member"))
+    profile_effective = profile
+    if pool_member and not is_eod:
+        overrides = _pool_overrides()
+        if overrides:
+            profile_effective = _apply_pool_overrides(profile, overrides)
 
-    enforced = list(getattr(profile, "enforced_checks", []) or [])
+    codes = EOD_CHECK_ORDER if is_eod else INTRADAY_CHECK_ORDER
+    checks_map, meta = _evaluate_checks(row, profile_effective, codes, eval_dt=eval_dt)
+
+    enforced = list(getattr(profile_effective, "enforced_checks", []) or [])
     if not enforced:
         enforced = EOD_CHECK_ORDER[:] if is_eod else INTRADAY_CHECK_ORDER[:]
     else:

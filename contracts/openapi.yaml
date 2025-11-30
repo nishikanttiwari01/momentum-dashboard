@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momentum Dashboard API
-  version: 0.7.0
+  version: 0.8.0
   summary: OpenAPI-first contracts for React + FastAPI app (Parquet+SQLite).
   description: Contract-first spec. Clients must be generated from this file. All
     endpoints are local-only and authenticated as N/A for now.
@@ -437,6 +437,23 @@ paths:
         '404':
           description: Snapshot not found for the requested selection
 
+
+  /api/v1/candidate-pool:
+    get:
+      tags:
+      - Screener
+      summary: List active buy candidates (pool)
+      operationId: getCandidatePool
+      description: >
+        Returns the ranked candidate pool (max 10) built from strict EOD buy signals and maintained
+        with relaxed exit rules. Ranking is based on score, R-multiple, ADX, and proximity to 52W high.
+      responses:
+        '200':
+          description: Active candidate pool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidatePoolList'
 
   /api/v1/scan:
     post:
@@ -2718,6 +2735,10 @@ components:
         selection:
           $ref: '#/components/schemas/DrawerSelection'
           nullable: true
+        candidate_pool:
+          $ref: '#/components/schemas/CandidatePoolEntry'
+          nullable: true
+          description: Snapshot of this symbol inside the buy candidate pool (rank, health, reasons).
         news_recent_hours:
           type: integer
           description: Default lookback window (hours) for the right-drawer news tab.
@@ -3507,3 +3528,139 @@ components:
         trading_day:
           type: string
           nullable: true
+
+    CandidatePoolExitCheck:
+      type: object
+      required: [code, label, pass]
+      properties:
+        code:
+          type: string
+          description: Exit rule identifier.
+          enum: [ema20, adx14, prox52w, age]
+        label:
+          type: string
+          example: ADX14
+        pass:
+          type: boolean
+          description: True when the relaxed exit rule is satisfied.
+        value:
+          type: number
+          format: double
+          nullable: true
+        threshold:
+          type: number
+          format: double
+          nullable: true
+        note:
+          type: string
+          nullable: true
+
+    CandidatePoolEntry:
+      type: object
+      required: [symbol, rank, added_on, status, exit_checks]
+      properties:
+        symbol:
+          type: string
+          example: RELIANCE.NS
+        rank:
+          type: integer
+          format: int32
+          example: 1
+        rank_score:
+          type: number
+          format: double
+          nullable: true
+          description: Weighted score used for ordering the pool (0..1 normalized).
+        added_on:
+          type: string
+          format: date
+          description: Trading date when the symbol first entered the pool.
+        added_at:
+          type: string
+          format: date-time
+          nullable: true
+        added_run_id:
+          type: string
+          nullable: true
+        added_as_of:
+          type: string
+          nullable: true
+          description: EOD as-of label used when the symbol was added.
+        last_seen_run_id:
+          type: string
+          nullable: true
+        last_seen_as_of:
+          type: string
+          nullable: true
+        last_price:
+          type: number
+          format: double
+          nullable: true
+        score:
+          type: number
+          format: double
+          nullable: true
+        adx14:
+          type: number
+          format: double
+          nullable: true
+        atr_pct:
+          type: number
+          format: double
+          nullable: true
+        r_multiple:
+          type: number
+          format: double
+          nullable: true
+        prox_52w_high_pct:
+          type: number
+          format: double
+          nullable: true
+        liquidity:
+          type: number
+          format: double
+          nullable: true
+        ema20:
+          type: number
+          format: double
+          nullable: true
+        status:
+          type: string
+          enum: [strong, weakening, exit_soon, removed]
+        exit_checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/CandidatePoolExitCheck'
+        reasons:
+          type: array
+          items: { type: string }
+        stale:
+          type: boolean
+          description: True when no fresh snapshot updated this member on the latest run.
+        is_top_candidate:
+          type: boolean
+          description: True when this is the current BUY_SELECTED candidate (rank #1).
+
+    CandidatePoolList:
+      type: object
+      required: [max_size, items]
+      properties:
+        max_size:
+          type: integer
+          format: int32
+          example: 10
+        run_id:
+          type: string
+          nullable: true
+        as_of:
+          type: string
+          nullable: true
+          description: Snapshot label (as_of for EOD) associated with the latest pool update.
+        generated_at:
+          type: string
+          format: date-time
+          nullable: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CandidatePoolEntry'

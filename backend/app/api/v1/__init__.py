@@ -14,6 +14,7 @@ from . import runs
 from . import scan
 from . import positions
 from . import momentum
+from . import candidate_pool
 
 __all__: list[str] = [
     "health",
@@ -26,4 +27,5 @@ __all__: list[str] = [
     "scan",
     "positions",
     "momentum",
+    "candidate_pool",
 ]

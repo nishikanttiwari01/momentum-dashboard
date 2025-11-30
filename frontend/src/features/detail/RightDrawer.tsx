@@ -19,16 +19,20 @@ import {
   ListItemText,
   Link,
   CircularProgress,
+  Chip,
+  Stack,
 } from '@mui/material';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import CancelRoundedIcon from '@mui/icons-material/CancelRounded';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import dayjs from 'dayjs';
 import type {
   DrawerDetail,
   DrawerDiagnosticsBuyChecklist,
   BuyEvaluation,
   NewsCard,
   AlertTemplate,
+  CandidatePoolEntry,
 } from '@/lib/api/types';
 import { useInstrumentDetail, usePosition, useLockPosition, useUnlockPosition, useAllNewsInfinite } from '@/lib/hooks';
 import { drawerPaperSx } from './styles';
@@ -96,6 +100,13 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
     </Box>
   );
 }
+
+const poolStatusMeta: Record<string, { label: string; color: 'default' | 'success' | 'warning' | 'error' }> = {
+  strong: { label: 'Strong', color: 'success' },
+  weakening: { label: 'Weakening', color: 'warning' },
+  exit_soon: { label: 'Exit soon', color: 'error' },
+  removed: { label: 'Removed', color: 'default' },
+};
 
 function BuyChecklistSection({
   evaluation,
@@ -407,6 +418,9 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
   const meters = d?.meters || {};
   const posFromDetail = d?.position || {};
   const sb = d?.score_breakdown || {};
+  const candidatePool = (d?.candidate_pool as CandidatePoolEntry | undefined) ?? undefined;
+  const candidatePoolMeta = candidatePool ? poolStatusMeta[candidatePool.status] || poolStatusMeta.strong : null;
+  const candidatePoolReasons = React.useMemo(() => candidatePool?.reasons?.filter(Boolean) ?? [], [candidatePool]);
   const ab = d?.action_block || {};
   const na = d?.next_action || {};
   const refs = na?.refs || {};
@@ -821,6 +835,55 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
             <IndicatorsGrid ind={ind} />
 
             <BuyChecklistSection evaluation={buyEvaluation} />
+
+            {candidatePool ? (
+              <Box
+                sx={{
+                  mt: 1.5,
+                  p: 1.5,
+                  borderRadius: 2,
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  background: 'linear-gradient(145deg, #f7f9fb 0%, #eef3ff 100%)',
+                }}
+              >
+                <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+                  <Typography variant="subtitle2">Candidate Pool</Typography>
+                  {candidatePoolMeta ? (
+                    <Chip
+                      size="small"
+                      color={candidatePoolMeta.color}
+                      label={candidatePoolMeta.label}
+                      variant={candidatePool.status === 'strong' ? 'filled' : 'outlined'}
+                    />
+                  ) : null}
+                </Stack>
+                <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 700 }}>
+                  Rank #{candidatePool.rank ?? '—'} {candidatePool.is_top_candidate ? '• Top pick' : ''}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Added {candidatePool.added_on ? dayjs(candidatePool.added_on).format('DD MMM YYYY') : '—'}
+                  {candidatePool.added_as_of ? ` • as of ${candidatePool.added_as_of}` : ''}
+                  {candidatePool.last_seen_as_of ? ` • last seen ${candidatePool.last_seen_as_of}` : ''}
+                </Typography>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 1 }}>
+                  {(candidatePoolReasons.length ? candidatePoolReasons : ['Relaxed rules intact']).map((r, idx) => (
+                    <Chip key={idx} size="small" variant="outlined" color="info" label={r} />
+                  ))}
+                </Stack>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 1 }}>
+                  {candidatePool.exit_checks?.map((check) => (
+                    <Chip
+                      key={check.code}
+                      size="small"
+                      color={check.pass ? 'success' : 'error'}
+                      variant={check.pass ? 'outlined' : 'filled'}
+                      label={check.label}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            ) : null}
 
             {tradeOn && activePosition ? (
               <React.Fragment>

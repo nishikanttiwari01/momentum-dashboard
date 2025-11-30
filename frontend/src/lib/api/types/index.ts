@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Momentum Dashboard API
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
- * OpenAPI spec version: 0.7.0
+ * OpenAPI spec version: 0.8.0
  */
 
 export * from './addToWatchlistBody';
@@ -31,6 +31,11 @@ export * from './badgeCategory';
 export * from './buyCheck';
 export * from './buyEvaluation';
 export * from './buyEvaluationMode';
+export * from './candidatePoolEntry';
+export * from './candidatePoolEntryStatus';
+export * from './candidatePoolExitCheck';
+export * from './candidatePoolExitCheckCode';
+export * from './candidatePoolList';
 export * from './counts';
 export * from './cursorParameter';
 export * from './drawerActionBlock';

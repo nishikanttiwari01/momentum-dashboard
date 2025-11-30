@@ -18,6 +18,8 @@ from sqlalchemy import text
 
 from app.domain.rules.next_action import euphoria_thresholds
 from app.services.buy_logic import evaluate_buy_gate
+from app.repos.sql.candidate_pool_repo import CandidatePoolRepo
+from app.services.candidate_pool_service import CandidatePoolService
 
 log = logging.getLogger("app.services.detail")
 
@@ -928,11 +930,14 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
     if not isinstance(alerts_recent, list):
         alerts_recent = _load_recent_alert_events(sym_in, getattr(deps, "sessionmaker", None))
 
+    trading_day_val = _derive_trading_day(as_of_val)
+    candidate_pool_block = _candidate_pool_snapshot(sym_in, row or {}, deps, trading_day_val)
+
     payload = {
         "drawer_contract_version": "1.0.0",
         "scoring_rules_version": (row or {}).get("rules_version") or "scores_v2",
         "symbol": sym_in,
-        "trading_day": _derive_trading_day(as_of_val),
+        "trading_day": trading_day_val,
         "intraday_numerator_used": bool(rid_used),  # mark if we used an intraday snapshot
         "header": header,
         "sparkline": sparkline,
@@ -955,6 +960,7 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
             "run_id": (row or {}).get("buy_selection_run_id") or None,
             "trading_day": (row or {}).get("buy_selection_trading_day") or None,
         },
+        "candidate_pool": candidate_pool_block,
         "news_recent_hours": _right_drawer_news_hours(),
 
         # FE compatibility fields (kept)
@@ -1337,6 +1343,50 @@ def _is_number(x) -> bool:
         return False
 def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
+
+
+def _candidate_pool_snapshot(symbol: str, row: Dict[str, Any], deps: DetailDeps, trading_day: date) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort snapshot of candidate pool state for the drawer.
+    """
+    try:
+        if not getattr(deps, "sessionmaker", None):
+            return None
+        settings = _settings()
+        if settings is None:
+            return None
+        cfg = getattr(settings, "candidate_pool", None)
+        strategy = getattr(settings, "strategy", None)
+        if cfg is None or strategy is None:
+            return None
+        with deps.sessionmaker() as session:
+            repo = CandidatePoolRepo(session=session)
+            existing = repo.get(symbol)
+            if not existing or str(existing.get("status") or "").upper() == "REMOVED":
+                return None
+            service = CandidatePoolService(repo=repo, cfg=cfg, strategy=strategy)
+            now = datetime.now(timezone.utc)
+            entry = service._entry_from_repo(existing, now)  # type: ignore[attr-defined]
+            if row:
+                try:
+                    service._update_entry_from_row(
+                        entry=entry,
+                        row=row,
+                        now_utc=now,
+                        run_id=existing.get("last_seen_run_id") or existing.get("added_run_id"),
+                        as_of=row.get("as_of"),
+                    )  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            checks, notes = service._exit_checks(entry, trading_day)  # type: ignore[attr-defined]
+            entry.exit_checks = checks
+            entry.reasons = notes
+            entry.stale = False
+            return service.serialize_entry(entry, is_top=bool((entry.rank_ord or 0) == 1))
+    except Exception:
+        log.exception("detail.candidate_pool_snapshot_failed", extra={"symbol": symbol})
+        return None
+
 def _load_recent_alert_events(symbol: str, sessionmaker: Any | None, *, days: int = 7, limit: int = 15) -> List[Dict[str, Any]]:
     if not symbol or sessionmaker is None:
         return []

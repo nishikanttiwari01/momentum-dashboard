@@ -359,6 +359,73 @@ class StrategySelectionPolicyConfig(BaseModel):
     r_multiple: StrategySelectionRMultipleConfig = StrategySelectionRMultipleConfig()
 
 
+class CandidatePoolRankingConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    score_weight: float = 0.4
+    r_multiple_weight: float = 0.3
+    adx14_weight: float = 0.2
+    prox52w_weight: float = 0.1
+
+
+class CandidatePoolExitRulesConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    max_age_days: int = 7
+    min_adx14: float = 18.0
+    min_prox52w_pct: float = -15.0
+    require_above_ema20: bool = True
+
+    @field_validator("max_age_days", mode="before")
+    def _coerce_int(cls, value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 7
+
+
+class CandidatePoolPersistenceOverrides(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    require_above_vwap: bool = True
+    require_prev_day_high_clear: bool = False
+    min_minutes_since_open: int = 0
+    avoid_lunch_window: bool = False
+
+    @field_validator("min_minutes_since_open", mode="before")
+    def _coerce_int(cls, value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+
+class CandidatePoolIntradayOverridesConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    intraday_relvol_min: float | None = 1.2
+    starter_score_min_intraday: float | None = None
+    persistence: CandidatePoolPersistenceOverrides = CandidatePoolPersistenceOverrides()
+
+
+class CandidatePoolConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    max_size: int = 10
+    ranking: CandidatePoolRankingConfig = CandidatePoolRankingConfig()
+    exit_rules: CandidatePoolExitRulesConfig = CandidatePoolExitRulesConfig()
+    intraday_overrides: CandidatePoolIntradayOverridesConfig = CandidatePoolIntradayOverridesConfig()
+
+    @field_validator("max_size", mode="before")
+    def _coerce_max_size(cls, value: Any) -> int:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return 10
+        return max(1, min(n, 50))
+
+
 class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -562,6 +629,7 @@ class Settings(BaseModel):
     scheduler: SchedulerCfg = SchedulerCfg()
     data: DataCfg = DataCfg()
     strategy: StrategyConfig = StrategyConfig()
+    candidate_pool: CandidatePoolConfig = CandidatePoolConfig()
     alerts: AlertsRoutingConfig = AlertsRoutingConfig()
     features: Dict[str, Any] = Field(default_factory=dict)
     news: NewsCfg = NewsCfg()

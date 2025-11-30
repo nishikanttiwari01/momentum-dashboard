@@ -16,6 +16,7 @@ import {
   TableRow,
   ToggleButton,
   ToggleButtonGroup,
+  Chip,
   Typography,
 } from '@mui/material';
 import dayjs from 'dayjs';
@@ -25,6 +26,7 @@ import {
   getGetApiV1InstrumentsSymbolDetailQueryOptions,
   useGetApiV1Positions,
   useGetTopMovers,
+  useGetCandidatePool,
 } from '@/lib/api/client';
 import { TopMoversPeriod } from '@/lib/api/types';
 import type {
@@ -33,7 +35,9 @@ import type {
   TopMoverEntry,
   TopMoversPeriod as TopMoversPeriodValue,
   PositionOut,
+  CandidatePoolList,
 } from '@/lib/api/types';
+import RightDrawer from '@/features/detail/RightDrawer';
 import SectorHeatmap from '../components/SectorHeatmap';
 
 const PERIOD_OPTIONS: { label: string; value: TopMoversPeriodValue }[] = [
@@ -57,7 +61,23 @@ const percentFormatter = new Intl.NumberFormat('en-US', {
 const formatPrice = (value?: number | null) => (value == null ? '—' : currencyFormatter.format(value));
 const formatPercent = (value?: number | null) => (value == null ? '—' : `${percentFormatter.format(value)}%`);
 const formatScore = (value?: number | null) => (value == null ? '—' : value.toFixed(0));
+const formatNumber = (value?: number | null, decimals = 1) => (value == null ? '—' : value.toFixed(decimals));
 const changeColor = (value?: number | null) => (value == null ? 'inherit' : value > 0 ? 'success.main' : value < 0 ? 'error.main' : 'text.secondary');
+const poolStatusMeta: Record<string, { label: string; color: 'default' | 'success' | 'warning' | 'error' }> = {
+  strong: { label: 'Strong', color: 'success' },
+  weakening: { label: 'Weakening', color: 'warning' },
+  exit_soon: { label: 'Exit soon', color: 'error' },
+  removed: { label: 'Removed', color: 'default' },
+};
+const formatDateLabel = (value?: string | null) => {
+  if (!value) return '—';
+  const d = dayjs(value);
+  return d.isValid() ? d.format('DD MMM YYYY') : value;
+};
+const formatPercentCompact = (value?: number | null) => {
+  if (value == null) return '—';
+  return `${percentFormatter.format(value)}%`;
+};
 
 const rangeSinceTrade = (createdAt?: string) => {
   // Bucket to API-friendly ranges instead of arbitrary days to ensure data returns.
@@ -123,6 +143,9 @@ const MoversTable: React.FC<MoversTableProps> = ({ title, rows }) => (
 export default function Dashboard() {
   const { refetchIntervalMs } = useOutletContext<OutletCtx>();
   const [period, setPeriod] = React.useState<TopMoversPeriodValue>(TopMoversPeriod['1d']);
+  const [drawerSymbol, setDrawerSymbol] = React.useState<string | null>(null);
+  const [drawerAsOf, setDrawerAsOf] = React.useState<string | undefined>(undefined);
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
 
   const moversQuery = useGetTopMovers(
     { period },
@@ -140,11 +163,41 @@ export default function Dashboard() {
 
   const moversData = moversQuery.data?.data;
 
+  const candidatePoolQuery = useGetCandidatePool(undefined, {
+    axios: { baseURL: '' },
+    query: {
+      refetchInterval: refetchIntervalMs || false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      retry: 0,
+    },
+  });
+  const candidatePool = (candidatePoolQuery.data?.data as CandidatePoolList | undefined) ?? undefined;
+  const poolItems = React.useMemo(
+    () => (candidatePool?.items ? [...candidatePool.items].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)) : []),
+    [candidatePool]
+  );
+
   const handlePeriodChange = (_event: React.SyntheticEvent<Element, Event>, value: TopMoversPeriodValue | null) => {
     if (value) {
       setPeriod(value);
     }
   };
+
+  const handleOpenDrawer = React.useCallback(
+    (symbol: string) => {
+      setDrawerSymbol(symbol);
+      setDrawerAsOf(candidatePool?.as_of ?? undefined);
+      setDrawerOpen(true);
+    },
+    [candidatePool]
+  );
+
+  const handleCloseDrawer = React.useCallback(() => {
+    setDrawerOpen(false);
+    setDrawerSymbol(null);
+    setDrawerAsOf(undefined);
+  }, []);
 
   const positionsQuery = useGetApiV1Positions(undefined, {
     axios: { baseURL: '' },
@@ -185,6 +238,105 @@ export default function Dashboard() {
   return (
     <Stack spacing={3}>
       <SectorHeatmap refetchIntervalMs={refetchIntervalMs} />
+
+      <Paper sx={{ p: 2, width: '100%' }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
+          <Typography variant="subtitle2">Active Buy Candidates (Pool)</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {candidatePool
+              ? `Max ${candidatePool.max_size} • Updated ${
+                  candidatePool.generated_at
+                    ? dayjs(candidatePool.generated_at as string).format('HH:mm:ss')
+                    : candidatePool.as_of ?? 'latest'
+                }`
+              : 'Relaxed intraday rules apply only to these symbols'}
+          </Typography>
+        </Stack>
+        <Divider sx={{ mb: 1.5 }} />
+        {candidatePoolQuery.isError ? (
+          <Typography color="error">Unable to load candidate pool right now.</Typography>
+        ) : candidatePoolQuery.isLoading && poolItems.length === 0 ? (
+          <Stack alignItems="center" justifyContent="center" sx={{ py: 4 }}>
+            <CircularProgress size={24} />
+          </Stack>
+        ) : poolItems.length === 0 ? (
+          <Typography color="text.secondary" sx={{ py: 2 }}>
+            Pool is empty. EOD buy candidates will accumulate here until relaxed exits trigger.
+          </Typography>
+        ) : (
+          <Table size="small" sx={{ '& td, & th': { whiteSpace: 'nowrap' } }}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Rank</TableCell>
+                <TableCell>Symbol</TableCell>
+                <TableCell>Added</TableCell>
+                <TableCell align="right">Score</TableCell>
+                <TableCell align="right">ADX</TableCell>
+                <TableCell align="right">R</TableCell>
+                <TableCell align="right">52W</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Notes</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {poolItems.map((item) => {
+                const statusMeta = poolStatusMeta[item.status] || poolStatusMeta.strong;
+                const reasons = item.reasons?.filter(Boolean) ?? [];
+                return (
+                  <TableRow
+                    hover
+                    key={item.symbol}
+                    sx={{ cursor: 'pointer' }}
+                    onClick={() => handleOpenDrawer(item.symbol)}
+                  >
+                    <TableCell>
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Typography fontWeight={700}>#{item.rank ?? '—'}</Typography>
+                        {item.is_top_candidate ? <Chip size="small" color="warning" label="Top pick" /> : null}
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight={700}>
+                        {item.symbol}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {item.added_as_of ? `EOD ${item.added_as_of}` : ''}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>{formatDateLabel(item.added_on)}</TableCell>
+                    <TableCell align="right">{formatScore(item.score)}</TableCell>
+                    <TableCell align="right">{formatNumber(item.adx14, 0)}</TableCell>
+                    <TableCell align="right">{formatNumber(item.r_multiple, 2)}</TableCell>
+                    <TableCell align="right">{formatPercentCompact(item.prox_52w_high_pct)}</TableCell>
+                    <TableCell>
+                      <Chip size="small" color={statusMeta.color} label={statusMeta.label} variant={item.status === 'strong' ? 'filled' : 'outlined'} />
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        {(reasons.length ? reasons : ['Relaxed exit rules intact']).map((r, idx) => (
+                          <Chip key={idx} size="small" variant="outlined" color="info" label={r} />
+                        ))}
+                        {item.exit_checks?.map((check) => (
+                          <Chip
+                            key={check.code}
+                            size="small"
+                            variant={check.pass ? 'outlined' : 'filled'}
+                            color={check.pass ? 'success' : 'error'}
+                            label={check.label}
+                          />
+                        ))}
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+          Relaxed intraday checks apply only to pool members; ranking blends score, R-multiple, ADX, and 52W proximity.
+        </Typography>
+      </Paper>
 
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
@@ -326,6 +478,8 @@ export default function Dashboard() {
           </Grid>
         )}
       </Paper>
+
+      <RightDrawer symbol={drawerSymbol} open={drawerOpen} onClose={handleCloseDrawer} asOf={drawerAsOf} />
     </Stack>
   );
 }

@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Momentum Dashboard API
  * Contract-first spec. Clients must be generated from this file. All endpoints are local-only and authenticated as N/A for now.
- * OpenAPI spec version: 0.7.0
+ * OpenAPI spec version: 0.8.0
  */
 import type { LegacyBadgeColor } from './legacyBadgeColor';
 import type { LegacyBadgeKey } from './legacyBadgeKey';

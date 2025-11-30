@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from app.repos.sql.jobs_repo import SqlJobsRepo
 from app.repos.sql.history_repo import SqlHistoryRepo
 from app.repos.parquet import datasets
+from app.repos.sql.candidate_pool_repo import CandidatePoolRepo
 
 # Contract-first models (generated)
 from app.schemas.runs import RunDetail, Counts
@@ -35,6 +36,7 @@ from app.services.alerts import route_event as route_alert_event
 from app.services.buy_logic import evaluate_buy_gate
 from app.services.sell_engine import evaluate_positions as evaluate_sell_positions
 from app.services.selection_service import SelectionResult, apply_selection_policy
+from app.services.candidate_pool_service import CandidatePoolService, _compute_stop_target
 
 log = logging.getLogger(__name__)
 
@@ -295,6 +297,7 @@ def _make_scores_row(
     regime_hint: Optional[str] = None,
     asm_hint: Optional[bool] = None,
     is_eod_snapshot: bool = False,
+    candidate_pool_member: bool = False,
 ) -> Dict[str, Any]:
     # Build the final Screener row for this symbol (spec 2025-10-12A).
     last = float(df["close"].iloc[-1]) if not df.empty else None
@@ -336,6 +339,7 @@ def _make_scores_row(
     ret_12_1m = _maybe_float(r.get("ret_12_1m"))
     ret_5d = _maybe_float(r.get("ret_5d"))
     ema10 = _maybe_float(r.get("ema10"))
+    ema20 = _maybe_float(r.get("ema20"))
     ema50 = _maybe_float(r.get("ema50"))
     ema200 = _maybe_float(r.get("ema200"))
     atr14_pct = _maybe_float(r.get("atr14_pct"))
@@ -441,6 +445,7 @@ def _make_scores_row(
         "rsi14": rsi14,
         "adx14": adx14,
         "ema10": ema10,
+        "ema20": ema20,
         "ema50": ema50,
         "ema200": ema200,
         "relvol20": relvol20,
@@ -513,6 +518,7 @@ def _make_scores_row(
     row.setdefault("pct_today", row.get("change_pct"))
     row.setdefault("minutes_since_open", None)
     row.setdefault("in_lunch_window", None)
+    row["candidate_pool_member"] = bool(candidate_pool_member)
 
     try:
         row["pre_gates_pass"] = global_pre_gates({**row, "close": row.get("last")})
@@ -703,6 +709,11 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
     _ensure_parquet_root()
     jobs = SqlJobsRepo(session)
     history = SqlHistoryRepo(session)
+    pool_repo = CandidatePoolRepo(session)
+    try:
+        active_pool_symbols = {str(row.get("symbol") or "").upper() for row in pool_repo.list_entries(active_only=True)}
+    except Exception:
+        active_pool_symbols = set()
 
     now_utc = _utcnow_aware()
     # ---- make as_of ISO **timezone-aware** ----
@@ -934,6 +945,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 regime_hint=nifty_regime_value,
                 asm_hint=asm_flag,
                 is_eod_snapshot=is_eod_snapshot,
+                candidate_pool_member=sym.upper() in active_pool_symbols,
             )
             if breadth_pct is not None:
                 row["breadth_pct_50dma"] = breadth_pct
@@ -956,23 +968,88 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             if parsed is not None and not pd.isna(parsed):
                 selection_trading_day = parsed.to_pydatetime().date()
 
-        selection_result = None
-        try:
-            selection_result = apply_selection_policy(
-                session=session,
-                rows=rows,
+        def _build_selection_from_pool(entry: Any) -> Tuple[Optional[SelectionResult], Optional[Dict[str, Any]]]:
+            sym = getattr(entry, "symbol", None)
+            if not sym:
+                return None, None
+            symbol_upper = str(sym).upper()
+            row = rows_by_symbol.get(symbol_upper)
+            price_val = _maybe_float((row or {}).get("last")) or _maybe_float(getattr(entry, "last_price", None))
+            if price_val is None or price_val <= 0:
+                return None, None
+            stop_price, target_price, r_mult_calc, _ = _compute_stop_target(
+                row or {"atr_pct": getattr(entry, "atr_pct", None), "atr10_pct": getattr(entry, "atr_pct", None), "atr14_pct": getattr(entry, "atr_pct", None)},
+                price=price_val,
                 strategy=cfg.strategy,
-                policy=cfg.selection_policy,
+            )
+            r_multiple = r_mult_calc or getattr(entry, "r_multiple", None) or 0.0
+            row_index = next((i for i, r in enumerate(rows) if str(r.get("symbol") or "").upper() == symbol_upper), 0)
+            selection = SelectionResult(
+                symbol=symbol_upper,
+                sector=(row or {}).get("sector"),
+                profile=(row or {}).get("buy_profile"),
+                mode=(row or {}).get("buy_mode") or ("EOD" if is_eod_snapshot else "INTRADAY"),
+                price=price_val or 0.0,
+                stop_price=stop_price or 0.0,
+                target_price=target_price or 0.0,
+                r_multiple=r_multiple or 0.0,
+                score=_maybe_float((row or {}).get("score")) or getattr(entry, "score", None),
                 run_id=job.run_id,
-                trading_day=selection_trading_day,
-                nifty_regime=nifty_regime_value,
+                trading_date=selection_trading_day,
+                row_index=row_index,
+                reason=f"Pool rank #{getattr(entry, 'rank_ord', None) or 1}",
+            )
+            return selection, row
+
+        pool_result = None
+        try:
+            pool_service = CandidatePoolService(
+                repo=pool_repo,
+                cfg=getattr(cfg, "candidate_pool", None),
+                strategy=cfg.strategy,
+            )
+            pool_result = pool_service.sync(
+                rows_by_symbol=rows_by_symbol,
                 now_utc=now_utc,
+                run_id=job.run_id,
+                as_of=as_of_date,
+                trading_day=selection_trading_day,
+                is_eod_snapshot=is_eod_snapshot,
             )
         except Exception:
-            selection_result = None
+            pool_result = None
 
-        if selection_result:
-            selection_row = rows[selection_result.row_index]
+        if pool_result:
+            entry_map = {e.symbol: e for e in pool_result.entries}
+            for sym, entry in entry_map.items():
+                row = rows_by_symbol.get(sym)
+                if row:
+                    row["candidate_pool_member"] = True
+                    row["candidate_pool_rank"] = entry.rank_ord
+                    row["candidate_pool_rank_score"] = entry.rank_score
+                    status = "exit_soon" if any(not c.passed for c in entry.exit_checks) else ("weakening" if entry.reasons else "strong")
+                    row["candidate_pool_status"] = status
+            if getattr(pool_result, "selected", None):
+                selection_result, selection_row = _build_selection_from_pool(pool_result.selected)
+
+        if selection_result is None:
+            try:
+                selection_result = apply_selection_policy(
+                    session=session,
+                    rows=rows,
+                    strategy=cfg.strategy,
+                    policy=cfg.selection_policy,
+                    run_id=job.run_id,
+                    trading_day=selection_trading_day,
+                    nifty_regime=nifty_regime_value,
+                    now_utc=now_utc,
+                )
+            except Exception:
+                selection_result = None
+            if selection_result:
+                selection_row = rows[selection_result.row_index]
+
+        if selection_result and selection_row:
             selection_row["buy_selected"] = True
             selection_row["buy_selection_reason"] = selection_result.reason
             selection_row["buy_stop_price"] = selection_result.stop_price
