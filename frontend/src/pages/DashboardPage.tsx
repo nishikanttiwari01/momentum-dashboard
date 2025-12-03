@@ -77,16 +77,7 @@ const formatPercentCompact = (value?: number | null) => {
   return `${percentFormatter.format(value)}%`;
 };
 
-const rangeSinceTrade = (createdAt?: string) => {
-  // Bucket to API-friendly ranges instead of arbitrary days to ensure data returns.
-  if (!createdAt) return '90d';
-  const start = dayjs(createdAt);
-  if (!start.isValid()) return '90d';
-  const days = Math.max(1, Math.ceil(dayjs().diff(start, 'day', true)));
-  if (days <= 30) return '30d';
-  if (days <= 90) return '90d';
-  return '1y';
-};
+const rangeSinceTrade = (_createdAt?: string) => '';
 
 interface MoversTableProps {
   title: string;
@@ -245,7 +236,9 @@ export default function Dashboard() {
 
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
-          <Typography variant="subtitle2">Active Buy Candidates (Pool)</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
+            Active Buy Candidates (Pool)
+          </Typography>
           <Typography variant="caption" color="text.secondary">
             {candidatePool
               ? `Max ${candidatePool.max_size} • Updated ${
@@ -281,7 +274,7 @@ export default function Dashboard() {
                     <span>R</span>
                     <InfoTooltip
                       title="Reward-to-risk (R)"
-                      body="Uses current price, an ATR-based stop, and the T1 target to estimate potential reward per unit of risk. Higher R means a better cushion between stop and target."
+                      body="Uses current price, an ATR-based stop, and the T1 target sale price to estimate potential reward per unit of risk. Higher R means a better cushion between stop and target profit like 10%."
                     />
                   </Stack>
                 </TableCell>
@@ -312,7 +305,7 @@ export default function Dashboard() {
                       {displaySymbol(item.symbol)}
                     </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {item.added_as_of ? `EOD ${item.added_as_of}` : ''}
+                        {item.added_as_of ? `EOD ${displayDate(item.added_as_of)}` : ''}
                       </Typography>
                     </TableCell>
                     <TableCell>{formatDateLabel(item.added_on)}</TableCell>
@@ -359,7 +352,9 @@ export default function Dashboard() {
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
-            <Typography variant="subtitle2">Top Movers</Typography>
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
+              Top Movers
+            </Typography>
             {moversData ? (
               <Typography variant="caption" color="text.secondary">
                 {`Snapshot ${displayDate(moversData.as_of ?? 'latest')} • Updated ${displayDateTime(moversData.generated_at)}`}
@@ -407,7 +402,9 @@ export default function Dashboard() {
 
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, gap: 1, flexWrap: 'wrap' }}>
-          <Typography variant="subtitle2">Active Trades (since entry)</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
+            Active Trades
+          </Typography>
           <Typography variant="caption" color="text.secondary">
             Price evolution from trade start; updates with live feed
           </Typography>
@@ -459,15 +456,17 @@ export default function Dashboard() {
                         sx={{ cursor: 'pointer' }}
                         onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? candidatePool?.as_of)}
                       >
-                        <Typography variant="subtitle1" fontWeight={700}>
-                          {displaySymbol(p.symbol)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Qty: {p.qty ?? '--'} | Entry: {formatPrice(p.entry_price_locked)}
-                        </Typography>
+                        <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
+                          <Typography variant="subtitle1" fontWeight={700}>
+                            {displaySymbol(p.symbol)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Qty: {p.qty ?? '--'} | Entry: {formatPrice(p.entry_price_locked)}
+                          </Typography>
+                        </Stack>
                       </Box>
                       <Typography variant="caption" color="text.secondary">
-                        Range: {rangeLabel}
+                        {rangeLabel}
                       </Typography>
                     </Stack>
                     <Box sx={{ cursor: 'pointer' }} onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? candidatePool?.as_of)}>

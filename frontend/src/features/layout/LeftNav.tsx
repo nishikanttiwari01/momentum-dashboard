@@ -25,7 +25,7 @@ const items = [
   { to: '/news', label: 'News', icon: <ArticleIcon /> },
   { to: '/history', label: 'Trades', icon: <TrendingUpIcon  /> }, // ← renamed
   { to: '/learning', label: 'Learning', icon: <SchoolIcon /> },
-  { to: '/watchlist', label: 'Watchlist', icon: <BookmarkIcon /> },
+  { to: '/simulator', label: 'Simulator', icon: <BookmarkIcon /> },
   { to: '/alerts', label: 'Alerts', icon: <NotificationsIcon /> },
   { to: '/settings', label: 'Settings', icon: <SettingsIcon /> },
 ];

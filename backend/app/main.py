@@ -29,6 +29,7 @@ from app.api.v1 import (
     news_api,
     momentum,
     candidate_pool,
+    simulator,
 )
 from app.api.errors import (
     on_validation_error,
@@ -215,6 +216,7 @@ def create_app() -> FastAPI:
     app.include_router(momentum.router,    prefix=prefix, tags=["Momentum"])
     app.include_router(news_api.router,   prefix=prefix, tags=["News"])
     app.include_router(candidate_pool.router, prefix=prefix, tags=["Screener"])
+    app.include_router(simulator.router,   prefix=prefix, tags=["Simulator"])
 
     return app
 

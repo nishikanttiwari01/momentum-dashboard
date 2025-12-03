@@ -81,7 +81,7 @@ export default function SparklineRe({ data, height = 220, showHeader = true }: P
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || !payload.length) return null;
 
-    const items: Array<{ name: string; value: number }> = [];
+    const items: Array<{ name: string; value: number, color?: string }> = [];
     let addedClose = false;
 
     for (const it of payload) {
@@ -90,10 +90,10 @@ export default function SparklineRe({ data, height = 220, showHeader = true }: P
       if (key === 'price') {
         if (addedClose) continue;                 // dedupe Close
         addedClose = true;
-        items.push({ name: 'Close', value: Number(it.value) });
+        items.push({ name: 'Close', value: Number(it.value), color: priceStroke });
         continue;
       }
-      if (key === 'ema') items.push({ name: 'EMA10', value: Number(it.value) });
+      if (key === 'ema') items.push({ name: 'EMA10', value: Number(it.value), color: emaStroke });
     }
 
     return (
@@ -103,11 +103,12 @@ export default function SparklineRe({ data, height = 220, showHeader = true }: P
           border: '1px solid rgba(128,128,128,0.3)',
           borderRadius: 8,
           padding: '6px 8px',
+          fontSize: 11,
         }}
       >
         <div style={{ marginBottom: 4, opacity: 0.8 }}>{label}</div>
         {items.map((it, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, color: it.color }}>
             <span>{it.name}</span>
             <span>{it.value.toFixed(2)}</span>
           </div>
@@ -118,7 +119,7 @@ export default function SparklineRe({ data, height = 220, showHeader = true }: P
 
   // Theme-aware colors
   const priceStroke = theme.palette.info.main;
-  const emaStroke   = theme.palette.success.main;
+  const emaStroke   = theme.palette.success.dark;
   const gridColor   = theme.palette.divider;
   const areaTop     = theme.palette.mode === 'dark' ? 'rgba(56,189,248,0.20)' : 'rgba(56,189,248,0.18)';
   const areaBottom  = theme.palette.mode === 'dark' ? 'rgba(56,189,248,0.02)' : 'rgba(0,0,0,0.00)';
@@ -173,10 +174,10 @@ export default function SparklineRe({ data, height = 220, showHeader = true }: P
             <Area type="monotone" dataKey="priceFill" stroke="none" fill="url(#priceArea)" isAnimationActive={false} />
 
             {/* Main price line */}
-            <Line type="monotone" dataKey="price" stroke={priceStroke} strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line type="monotone" dataKey="price" stroke={priceStroke} strokeWidth={1.5} dot={false} isAnimationActive={false} />
 
-            {/* EMA overlay if available */}
-            <Line type="monotone" dataKey="ema" stroke={emaStroke} strokeWidth={1.6} dot={false} isAnimationActive={false} connectNulls />
+          {/* EMA overlay if available */}
+          <Line type="monotone" dataKey="ema" stroke={emaStroke} strokeWidth={1.2} dot={false} isAnimationActive={false} connectNulls />
 
             <Tooltip
               cursor={{ stroke: gridColor, strokeWidth: 1 }}

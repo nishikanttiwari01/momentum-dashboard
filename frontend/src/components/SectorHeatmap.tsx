@@ -209,7 +209,9 @@ const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
         sx={{ mb: statusNote ? 1 : 1, flexWrap: 'wrap', gap: 1 }}
       >
         <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
-          <Typography variant="subtitle2">Sector Momentum Heatmap</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
+            Sector Momentum Heatmap
+          </Typography>
           {statusNote ? (
             <Typography variant="caption" color="warning.main">
               {statusNote}

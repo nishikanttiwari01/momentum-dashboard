@@ -15,6 +15,7 @@ from . import scan
 from . import positions
 from . import momentum
 from . import candidate_pool
+from . import simulator
 
 __all__: list[str] = [
     "health",
@@ -28,4 +29,5 @@ __all__: list[str] = [
     "positions",
     "momentum",
     "candidate_pool",
+    "simulator",
 ]

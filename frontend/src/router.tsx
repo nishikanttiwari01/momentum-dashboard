@@ -2,7 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './layouts/AppShell';
 import Dashboard from './pages/DashboardPage';
 import Screener from './pages/Screener';
-import Watchlist from './pages/Watchlist';
+import Simulator from './pages/Simulator';
 import Trades from './pages/Trades';
 import News from './pages/News';
 import Alerts from './pages/Alerts';
@@ -17,7 +17,8 @@ export default function AppRouter() {
         <Route path="/screener" element={<Screener />} />
         <Route path="/history" element={<Trades />} />
         <Route path="/news" element={<News />} />
-        <Route path="/watchlist" element={<Watchlist />} />
+        <Route path="/simulator" element={<Simulator />} />
+        <Route path="/watchlist" element={<Simulator />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/learning" element={<Learning />} />

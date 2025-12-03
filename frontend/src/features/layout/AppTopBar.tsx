@@ -20,8 +20,8 @@ export default function AppTopBar({
       elevation={0}
       sx={(theme) => ({
         zIndex: theme.zIndex.drawer + 1,
-        ml: `${navWidth}px`,
-        width: `calc(100% - ${navWidth}px)`,
+        ml: 0,
+        width: '100%',
         mt: 0,
         mr: 0,
         borderRadius: 0,
