@@ -432,6 +432,15 @@ const renderPctCell = (p: any) => <span className={signClass(p?.value)}>{fmtPct(
         renderCell: (p) => displaySymbol(p?.value as string),
       },
 
+      {
+        field: 'name',
+        headerName: 'Company',
+        minWidth: 180,
+        flex: 1.2,
+        sortable: false,
+        renderCell: (p) => <span>{p?.row?.name || ''}</span>,
+      },
+
       { field: 'score', headerName: 'Score', width: 70, flex: 0.7, type: 'number', renderCell: renderNum, cellClassName: (p) => signClass(p?.value) },
 
       { field: 'last', headerName: 'Price', minWidth: 130, flex: 1, sortable: true, renderCell: PriceDeltaCell },

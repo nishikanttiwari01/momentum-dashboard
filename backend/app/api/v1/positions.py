@@ -62,6 +62,8 @@ def create_position(
 ):
     if payload.price is None or payload.price <= 0:
         raise HTTPException(status_code=400, detail="price must be > 0")
+    if payload.qty is None or payload.qty <= 0:
+        raise HTTPException(status_code=400, detail="qty must be provided and > 0")
     repo = PositionsRepo(session=s)
     row = repo.create_or_lock(
         symbol=payload.symbol,
@@ -80,15 +82,23 @@ def update_position(
     s: Session = Depends(_require_session()),
 ):
     repo = PositionsRepo(session=s)
-    if not repo.get_by_id(id):
+    current = repo.get_by_id(id)
+    if not current:
         raise HTTPException(status_code=404, detail="Position not found")
 
-    if fields.trade_on is False:
-        if fields.sell_price is None or fields.sell_price <= 0:
+    payload = fields.model_dump(exclude_unset=True)
+
+    if payload.get("trade_on") is False:
+        sell_price = payload.get("sell_price") if "sell_price" in payload else fields.sell_price
+        if sell_price is None or sell_price <= 0:
             raise HTTPException(status_code=400, detail="sell_price must be provided to close a trade")
 
+    requested_qty = payload["qty"] if "qty" in payload else current.get("qty")
+    if payload.get("trade_on") is True:
+        if requested_qty is None or requested_qty <= 0:
+            raise HTTPException(status_code=400, detail="qty must be provided and > 0 to activate a trade")
+
     # Disallow entry_price_locked changes here (unlock->lock flow only)
-    payload = fields.model_dump(exclude_unset=True)
     payload.pop("entry_price_locked", None)
     row = repo.update_by_id(id, **payload)
     if not row:

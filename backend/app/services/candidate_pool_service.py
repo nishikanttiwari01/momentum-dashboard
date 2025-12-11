@@ -215,6 +215,32 @@ class CandidatePoolService:
                 existing_map[symbol] = entry
                 added_symbols.append(symbol)
 
+        # If no fresh symbols/rows were available, keep existing ACTIVE entries unchanged
+        if not rows_by_symbol:
+            active_entries = [e for e in existing_map.values() if e.db_status != "REMOVED"]
+            ranked = self._rank_entries(active_entries)
+            ranked.sort(
+                key=lambda e: (
+                    -(e.rank_score or 0.0),
+                    -(e.score or 0.0),
+                    e.symbol,
+                )
+            )
+            for idx, entry in enumerate(ranked, start=1):
+                entry.rank_ord = idx
+            try:
+                self.repo.record_history(trading_day, existing_map.values())
+            except Exception:
+                pass
+            return PoolSyncResult(
+                entries=ranked,
+                added=added_symbols,
+                removed=removed_symbols,
+                selected=ranked[0] if ranked else None,
+                as_of=as_of,
+                run_id=run_id,
+            )
+
         # Evaluate exit checks (remove only on EOD)
         active_entries: List[PoolEntry] = []
         for entry in existing_map.values():

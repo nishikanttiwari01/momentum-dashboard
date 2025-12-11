@@ -150,11 +150,26 @@ class CandidatePoolRepo:
         for e in entries:
             # tolerate either dicts or dataclass-like objects
             getter = e.get if hasattr(e, "get") else lambda k, default=None: getattr(e, k, default)
+            status = getter("db_status") or getter("status")
+            exit_reason = getter("exit_reason")
+            if (status or "").upper() == "REMOVED" and not exit_reason:
+                # Try to derive from checks or reasons on the entry
+                checks = getattr(e, "exit_checks", None)
+                if checks:
+                    failing = next((c for c in checks if not getattr(c, "passed", False)), None)
+                    if failing:
+                        exit_reason = getattr(failing, "code", None) or getattr(failing, "label", None)
+                if not exit_reason:
+                    reasons = getattr(e, "reasons", None)
+                    if isinstance(reasons, list) and reasons:
+                        exit_reason = str(reasons[0])
+                if not exit_reason:
+                    exit_reason = "removed"
             rows.append(
                 {
                     "trading_day": trading_day.isoformat(),
                     "symbol": str(getter("symbol", "")).upper(),
-                    "status": getter("db_status") or getter("status"),
+                    "status": status,
                     "rank_ord": getter("rank_ord") or getter("rank"),
                     "rank_score": getter("rank_score"),
                     "score": getter("last_score", getter("score")),
@@ -163,7 +178,7 @@ class CandidatePoolRepo:
                     "prox_52w_high_pct": getter("last_prox_52w_high_pct", getter("prox52w", getter("prox_52w_high_pct"))),
                     "liquidity": getter("last_liquidity", getter("liquidity")),
                     "added_on": getter("added_on").isoformat() if getter("added_on") else None,
-                    "exit_reason": getter("exit_reason"),
+                    "exit_reason": exit_reason,
                     "as_of": getter("last_seen_as_of", getter("added_as_of")),
                     "run_id": getter("last_seen_run_id", getter("added_run_id")),
                     "last_price": getter("last_price"),

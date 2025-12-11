@@ -44,3 +44,20 @@ def test_close_and_reopen_records_history(tmp_path):
         assert len(all_rows) == 2
         active_rows = [r for r in all_rows if r["trade_on"]]
         assert len(active_rows) == 1
+
+
+def test_positions_without_qty_are_not_active(tmp_path):
+    db_path = tmp_path / "positions_qty_guard.db"
+    init_sqlite(str(db_path))
+    uow = SqliteUnitOfWork(get_sessionmaker())
+    with uow:
+        created = uow.positions.create_or_lock(symbol="NOQTY", price=101.5, qty=None)
+        assert created["trade_on"] is False
+        assert created["qty"] is None
+
+        zero_qty = uow.positions.create_or_lock(symbol="ZERO", price=88.0, qty=0)
+        assert zero_qty["trade_on"] is False
+        assert zero_qty["qty"] == 0
+
+        active_rows = [r for r in uow.positions.list_positions(active=True)]
+        assert all(r["symbol"] not in {"NOQTY", "ZERO"} for r in active_rows)

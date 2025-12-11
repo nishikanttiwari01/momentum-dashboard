@@ -51,6 +51,8 @@ class PositionsRepo(IPositionsRepo):
             q = q.filter(Position.symbol == self._canon_symbol(symbol))
         if active is not None:
             q = q.filter(Position.trade_on == bool(active))
+            if active:
+                q = q.filter(Position.qty.isnot(None)).filter(Position.qty > 0)
         rows: Iterable[Position] = (
             q.order_by(
                 Position.trade_on.desc(),
@@ -68,6 +70,8 @@ class PositionsRepo(IPositionsRepo):
             .filter(
                 Position.symbol == self._canon_symbol(symbol),
                 Position.trade_on.is_(True),
+                Position.qty.isnot(None),
+                Position.qty > 0,
             )
             .order_by(Position.created_at.desc(), Position.id.desc())
             .first()
@@ -96,23 +100,32 @@ class PositionsRepo(IPositionsRepo):
         session = self._session()
         now = self._utcnow_naive()
         symbol = self._canon_symbol(symbol)
+        should_activate = qty is not None and qty > 0
 
         row = (
             session.query(Position)
-            .filter(Position.symbol == symbol, Position.trade_on.is_(True))
+            .filter(
+                Position.symbol == symbol,
+                Position.trade_on.is_(True),
+                Position.qty.isnot(None),
+                Position.qty > 0,
+            )
             .order_by(Position.created_at.desc(), Position.id.desc())
             .first()
         )
 
         if row:
             row.entry_price_locked = float(price)
-            row.trade_on = True
             if qty is not None:
                 row.qty = qty
             if note is not None:
                 row.note = note
-            row.sell_price = None
-            row.sold_at = None
+            if should_activate:
+                row.trade_on = True
+                row.sell_price = None
+                row.sold_at = None
+            elif row.qty is None or row.qty <= 0:
+                row.trade_on = False
             row.updated_at = now
         else:
             row = Position(
@@ -123,7 +136,7 @@ class PositionsRepo(IPositionsRepo):
                 exit_close_threshold=None,
                 breakeven_active=False,
                 euphoria_on=False,
-                trade_on=True,
+                trade_on=should_activate,
                 sell_price=None,
                 sold_at=None,
                 note=note,
@@ -184,7 +197,9 @@ class PositionsRepo(IPositionsRepo):
             _assign("sold_at", self._to_naive_utc(value) if value is not None else None)
 
         if "trade_on" in fields and fields["trade_on"] is not None:
-            trade_on = bool(fields["trade_on"])
+            requested = bool(fields["trade_on"])
+            qty_ok = row.qty is not None and row.qty > 0
+            trade_on = requested and qty_ok
             if row.trade_on != trade_on:
                 row.trade_on = trade_on
                 updated = True
@@ -249,16 +264,19 @@ class PositionsRepo(IPositionsRepo):
         if r is None:
             return None
         realized_amount, realized_pct = self._realized_metrics(r)
+        qty = r.qty
+        qty_ok = qty is not None and qty > 0
+        active = bool(r.trade_on) and qty_ok
         return {
             "id": r.id,
             "symbol": r.symbol,
             "entry_price_locked": r.entry_price_locked,
-            "qty": r.qty,
+            "qty": qty,
             "stop_now": r.stop_now,
             "exit_close_threshold": r.exit_close_threshold,
             "breakeven_active": r.breakeven_active,
             "euphoria_on": r.euphoria_on,
-            "trade_on": r.trade_on,
+            "trade_on": active,
             "sell_price": r.sell_price,
             "sold_at": self._aware_utc(r.sold_at),
             "realized_pl": realized_amount,
@@ -277,6 +295,8 @@ class PositionsRepo(IPositionsRepo):
             .filter(
                 Position.symbol == self._canon_symbol(symbol),
                 Position.trade_on.is_(True),
+                Position.qty.isnot(None),
+                Position.qty > 0,
             )
             .order_by(Position.created_at.desc(), Position.id.desc())
             .first()
@@ -297,6 +317,8 @@ class PositionsRepo(IPositionsRepo):
             .filter(
                 Position.symbol == self._canon_symbol(symbol),
                 Position.trade_on.is_(True),
+                Position.qty.isnot(None),
+                Position.qty > 0,
             )
             .order_by(Position.created_at.desc(), Position.id.desc())
             .first()

@@ -1,10 +1,12 @@
 # backend/app/services/screening_service.py
 from __future__ import annotations
+import csv
 from datetime import datetime, timezone, time as dtime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 import logging
 from uuid import uuid4
 import math
+from pathlib import Path
 
 import pyarrow as pa
 import pandas as pd
@@ -42,6 +44,7 @@ log = logging.getLogger(__name__)
 
 _ALLOWED_PRESETS = {"NIFTY50", "NIFTY100", "NIFTY500", "MIDCAP", "SMALLCAP", "ALL"}
 _FALLBACK_NSE = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
+_MASTER_PATH = Path(__file__).resolve().parents[3] / "configs" / "nse_master.csv"
 
 
 # --------------------------- time helpers ---------------------------
@@ -186,6 +189,41 @@ def _find_committed_run_for_as_of(as_of_date: str) -> Optional[str]:
         return sorted(cands)[-1] if cands else None
     except Exception:
         return None
+
+def _load_instrument_metadata(path: Path = _MASTER_PATH) -> Dict[str, Dict[str, Optional[str]]]:
+    """
+    Best-effort loader for enriched NSE master. Returns a symbol -> metadata map.
+    Missing file or columns are tolerated (returns empty map).
+    """
+    meta: Dict[str, Dict[str, Optional[str]]] = {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                sym_raw = row.get("symbol") or row.get("SYMBOL") or ""
+                sym = str(sym_raw).strip().upper()
+                if not sym:
+                    continue
+                if not sym.endswith(".NS"):
+                    sym = f"{sym}.NS"
+                name_val = (
+                    row.get("name_of_company")
+                    or row.get("NAME_OF_COMPANY")
+                    or row.get("company_name")
+                    or row.get("COMPANY_NAME")
+                    or ""
+                )
+                meta[sym] = {
+                    "name": str(name_val).strip() or None,
+                    "series": str(row.get("series") or row.get("SERIES") or "").strip() or None,
+                    "isin": str(row.get("isin_number") or row.get("ISIN_NUMBER") or "").strip() or None,
+                    "face_value": str(row.get("face_value") or row.get("FACE_VALUE") or "").strip() or None,
+                    "market_lot": str(row.get("market_lot") or row.get("MARKET_LOT") or "").strip() or None,
+                    "date_of_listing": str(row.get("date_of_listing") or row.get("DATE_OF_LISTING") or "").strip() or None,
+                }
+    except Exception:
+        return {}
+    return meta
 
 def _history_df(symbol: str, period: str = "400d") -> pd.DataFrame:
     """
@@ -504,7 +542,8 @@ def _make_scores_row(
         "reason_codes": score_reason_codes,
         "score_reason_codes": score_reason_codes,
         "score_breakdown": score_breakdown,
-        "score_penalties": penalties_map,
+        # Parquet cannot write an empty struct; collapse empty penalties map to None.
+        "score_penalties": penalties_map or None,
         "score_components_raw": {
             "base": round(components.total_base(), 2),
             "with_context": round(components.total_with_context(), 2),
@@ -877,6 +916,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             quotes = {q["symbol"]: q for q in (ya.fetch_quotes(symbols) or [])}
         except Exception:
             quotes = {}
+        instrument_meta = _load_instrument_metadata()
 
         features_cfg = getattr(cfg, "features", {}) or {}
         momentum_features = features_cfg.get("momentum", {}) if isinstance(features_cfg, dict) else {}
@@ -887,7 +927,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             asm_flag_symbols = {str(s).upper() for s in raw_asm_flags}
 
         # Compute full rows
-        prep_rows: List[Tuple[str, Dict[str, Any], pd.DataFrame, pd.DataFrame, bool]] = []
+        prep_rows: List[Tuple[str, Dict[str, Any], pd.DataFrame, pd.DataFrame, bool, Dict[str, Any]]] = []
         breadth_total = 0
         rows_by_symbol: Dict[str, Dict[str, Any]] = {}
         buy_signal_rows: List[Dict[str, Any]] = []
@@ -896,6 +936,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         for sym in symbols:
             df = _history_df(sym, period="400d")
             q = quotes.get(sym, {})
+            meta = instrument_meta.get(sym.upper(), {})
 
             # --- as_of slicing for EOD/backfills ---
             df_eff = df
@@ -927,16 +968,16 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 if last_for_breadth >= ema50_for_breadth:
                     breadth_above += 1
             asm_flagged = sym.upper() in asm_flag_symbols
-            prep_rows.append((sym, q, df_eff, ind, asm_flagged))
+            prep_rows.append((sym, q, df_eff, ind, asm_flagged, meta))
 
         breadth_pct = round((breadth_above * 100.0) / breadth_total, 2) if breadth_total else None
         nifty_regime_value = _resolve_nifty_regime(as_of_date)
         rows: List[Dict[str, Any]] = []
-        for sym, q, df_eff, ind, asm_flag in prep_rows:
+        for sym, q, df_eff, ind, asm_flag, meta in prep_rows:
             row = _make_scores_row(
                 symbol=sym,
-                name=q.get("name"),
-                sector=q.get("sector"),
+                name=q.get("name") or meta.get("name"),
+                sector=q.get("sector") or meta.get("series"),
                 as_of_iso=as_of_iso,
                 run_id=job.run_id,
                 df=df_eff,
@@ -1063,6 +1104,39 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             log.info("scores_rows_built", extra={"rows": rows_written})
         except Exception:
             pass
+
+        if rows_written == 0:
+            # Nothing to write — skip committing an empty snapshot to avoid clobbering the last good run.
+            try:
+                log.warning(
+                    "scores_rows_empty_skip_write",
+                    extra={
+                        "run_id": job.run_id,
+                        "as_of": as_of_date,
+                        "intraday_date": intraday_date_override or intraday_date_str,
+                        "universe": resolved_universe,
+                        "symbols_requested": symbols_processed,
+                    },
+                )
+            except Exception:
+                pass
+            jobs.fail_run(run_id=job.run_id, error="no screener rows built")
+            return (
+                RunDetail(
+                    run_id=job.run_id,
+                    job_name="manual_scan",
+                    status="FAILED",
+                    started_at=_to_aware(job.started_at),
+                    ended_at=_utcnow_aware(),
+                    counts=Counts(symbols_processed=symbols_processed, rows_written=0),
+                    duration_ms=None,
+                    key=getattr(job, "key", None),
+                    snapshot_path=None,
+                    error="no screener rows built",
+                    error_json=None,
+                ),
+                created,
+            )
 
         # ------------------- WRITE SNAPSHOTS (new layout only) -------------------
         datasets.write_schema_version("scores", 2)

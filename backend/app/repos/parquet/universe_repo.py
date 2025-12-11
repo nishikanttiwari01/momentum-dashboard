@@ -1,5 +1,6 @@
 # backend/app/repos/parquet/universe_repo.py
 from __future__ import annotations
+import csv
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -19,8 +20,36 @@ class UniverseRepo:
         p = self.assets_dir / f"{preset}.csv"
         if not p.exists():
             return []  # tolerate missing presets (dev-first)
-        with p.open("r", encoding="utf-8") as f:
-            return [ln.strip().upper() for ln in f if ln.strip()]
+
+        try:
+            with p.open("r", encoding="utf-8") as f:
+                sample = f.read(1024)
+                f.seek(0)
+                reader = csv.reader(f)
+                rows = list(reader)
+        except Exception:
+            return []
+
+        if not rows:
+            return []
+
+        header = [h.strip().lower() for h in rows[0]]
+        idx = 0
+        data_rows = rows
+        if "symbol" in header:
+            idx = header.index("symbol")
+            data_rows = rows[1:]
+
+        symbols: List[str] = []
+        for row in data_rows:
+            if not row:
+                continue
+            raw = row[idx] if idx < len(row) else ""
+            sym = str(raw).strip().upper()
+            if sym:
+                symbols.append(sym)
+
+        return symbols
 
     def list_symbols(
         self,

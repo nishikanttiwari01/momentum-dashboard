@@ -77,11 +77,11 @@ def test_selection_policy_prefers_highest_r_multiple():
         assert result.row_index == 1
         assert result.r_multiple > 1.9  # higher R multiple candidate selected
 
-        # Position should be persisted for the winner
+        # Selection should NOT open an active position without a qty
         persisted = session.query(Position).all()
         assert len(persisted) == 1
         assert persisted[0].symbol == "BBB.NS"
-        assert persisted[0].trade_on is True
+        assert persisted[0].trade_on is False
     finally:
         session.close()
         engine.dispose()

@@ -205,6 +205,11 @@ def _list_intraday_dates(limit: int) -> List[ScreenerRunDate]:
     ):
         date_str = date_dir.name.split("=", 1)[-1]
         try:
+            trade_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            log.warning("intraday_date_dir_invalid", extra={"date_dir": str(date_dir)})
+            continue
+        try:
             run_ids = datasets.list_intraday_runs(date_str)
         except Exception:
             run_ids = []
@@ -214,7 +219,7 @@ def _list_intraday_dates(limit: int) -> List[ScreenerRunDate]:
         out.append(
             ScreenerRunDate(
                 mode=RUN_MODE_INTRADAY,
-                trade_date=date_str,
+                trade_date=trade_date,
                 run_count=run_count,
                 label=_format_date_label(date_str),
             )
