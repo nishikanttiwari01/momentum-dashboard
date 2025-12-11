@@ -5,7 +5,7 @@ metadata:
 
 delivery:
   email:
-    enabled: true
+    enabled: false
     on_backfill_digest: true
     include_trades: true
     smtp:
@@ -21,7 +21,7 @@ delivery:
         - ${ALERT_EMAIL_TO_1:-nishikant.tiwari01@gmail.com}
 
   ntfy:
-    enabled: true
+    enabled: false
     server: ${NTFY_SERVER:-https://ntfy.sh}
     topic_high: ${NTFY_TOPIC_HIGH:-momentum-alerts-nishi}
     topic_low: ${NTFY_TOPIC_LOW:-momentum-alerts-nishi}

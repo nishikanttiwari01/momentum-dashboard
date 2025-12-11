@@ -21,6 +21,12 @@ storage:
   use_dictionary: true
   write_statistics: true
 
+backfill:
+  export_utilities:
+    enabled: true
+    details: true
+    screener: true
+
 backfill_runtime:
   intraday_retention_days: 15
 

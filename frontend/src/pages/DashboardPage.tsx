@@ -18,6 +18,8 @@ import {
   ToggleButtonGroup,
   Chip,
   Typography,
+  TextField,
+  Button,
 } from '@mui/material';
 import dayjs from 'dayjs';
 import { useQueries } from '@tanstack/react-query';
@@ -28,6 +30,7 @@ import {
   useGetTopMovers,
   useGetCandidatePool,
 } from '@/lib/api/client';
+import axios from 'axios';
 import { TopMoversPeriod } from '@/lib/api/types';
 import type {
   DrawerSparkline,
@@ -168,9 +171,36 @@ export default function Dashboard() {
     },
   });
   const candidatePool = (candidatePoolQuery.data?.data as CandidatePoolList | undefined) ?? undefined;
+  const [poolDate, setPoolDate] = React.useState<string>('');
+  const [poolOverride, setPoolOverride] = React.useState<CandidatePoolList | null>(null);
+  const [poolOverrideLoading, setPoolOverrideLoading] = React.useState(false);
+  const [poolOverrideError, setPoolOverrideError] = React.useState<string | null>(null);
+
+  const handleLoadPoolDate = React.useCallback(async () => {
+    if (!poolDate) {
+      setPoolOverride(null);
+      setPoolOverrideError(null);
+      return;
+    }
+    setPoolOverrideLoading(true);
+    setPoolOverrideError(null);
+    try {
+      const resp = await axios.get('/api/v1/candidate-pool/history', { params: { date: poolDate } });
+      setPoolOverride(resp.data as CandidatePoolList);
+    } catch (err: any) {
+      setPoolOverrideError(err?.response?.data?.detail || 'Failed to load pool history');
+      setPoolOverride(null);
+    } finally {
+      setPoolOverrideLoading(false);
+    }
+  }, [poolDate]);
+
+  const poolData = poolOverride ?? candidatePool;
+  const poolLoading = poolOverride ? poolOverrideLoading : candidatePoolQuery.isLoading;
+  const poolError = poolOverrideError || (candidatePoolQuery.isError ? 'Unable to load candidate pool right now.' : null);
   const poolItems = React.useMemo(
-    () => (candidatePool?.items ? [...candidatePool.items].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)) : []),
-    [candidatePool]
+    () => (poolData?.items ? [...poolData.items].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0)) : []),
+    [poolData]
   );
 
   const handlePeriodChange = (_event: React.SyntheticEvent<Element, Event>, value: TopMoversPeriodValue | null) => {
@@ -182,10 +212,10 @@ export default function Dashboard() {
   const handleOpenDrawer = React.useCallback(
     (symbol: string, asOfHint?: string | null) => {
       setDrawerSymbol(symbol);
-      setDrawerAsOf(asOfHint ?? candidatePool?.as_of ?? undefined);
+      setDrawerAsOf(asOfHint ?? poolData?.as_of ?? undefined);
       setDrawerOpen(true);
     },
-    [candidatePool]
+    [poolData]
   );
 
   const handleCloseDrawer = React.useCallback(() => {
@@ -236,23 +266,43 @@ export default function Dashboard() {
 
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
-            Active Buy Candidates (Pool)
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {candidatePool
-              ? `Max ${candidatePool.max_size} • Updated ${
-                  candidatePool.generated_at
-                    ? displayDateTime(candidatePool.generated_at as string)
-                    : candidatePool.as_of ?? 'latest'
-                }`
-              : 'Relaxed intraday rules apply only to these symbols'}
-          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
+              Active Buy Candidates (Pool)
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {poolData
+                ? `Max ${poolData.max_size} · Updated ${
+                    poolData.generated_at
+                      ? displayDateTime(poolData.generated_at as string)
+                      : poolData.as_of ?? 'latest'
+                  }`
+                : 'Relaxed intraday rules apply only to these symbols'}
+            </Typography>
+          </Stack>
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
+            <TextField
+              label="Pool as of date"
+              type="date"
+              size="small"
+              value={poolDate}
+              onChange={(e) => setPoolDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+            <Button variant="outlined" size="small" onClick={handleLoadPoolDate} disabled={poolOverrideLoading}>
+              {poolDate ? 'Load date' : 'Latest'}
+            </Button>
+            {poolOverride ? (
+              <Button variant="text" size="small" onClick={() => { setPoolDate(''); setPoolOverride(null); setPoolOverrideError(null); }}>
+                Clear
+              </Button>
+            ) : null}
+          </Stack>
         </Stack>
         <Divider sx={{ mb: 1.5 }} />
-        {candidatePoolQuery.isError ? (
-          <Typography color="error">Unable to load candidate pool right now.</Typography>
-        ) : candidatePoolQuery.isLoading && poolItems.length === 0 ? (
+        {poolError ? (
+          <Typography color="error">{poolError}</Typography>
+        ) : poolLoading && poolItems.length === 0 ? (
           <Stack alignItems="center" justifyContent="center" sx={{ py: 4 }}>
             <CircularProgress size={24} />
           </Stack>
@@ -454,7 +504,7 @@ export default function Dashboard() {
                     <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>
                       <Box
                         sx={{ cursor: 'pointer' }}
-                        onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? candidatePool?.as_of)}
+                        onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? poolData?.as_of)}
                       >
                         <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
                           <Typography variant="subtitle1" fontWeight={700}>
@@ -469,7 +519,7 @@ export default function Dashboard() {
                         {rangeLabel}
                       </Typography>
                     </Stack>
-                    <Box sx={{ cursor: 'pointer' }} onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? candidatePool?.as_of)}>
+                    <Box sx={{ cursor: 'pointer' }} onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? poolData?.as_of)}>
                       <SparklineRe data={sparkData as any} height={180} showHeader={false} />
                     </Box>
                     <Stack direction="row" spacing={2} sx={{ mt: 0.5, mb: 0.5, flexWrap: 'wrap' }}>

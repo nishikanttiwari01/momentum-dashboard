@@ -55,6 +55,15 @@ class BackfillRuntimeCfg(BaseModel):
     # Housekeeping for parquet intraday partitions; keeps recent history only.
     intraday_retention_days: int = Field(default=15, ge=1)
 
+class BackfillExportUtilitiesCfg(BaseModel):
+    # Toggle NDJSON exports that run after a daily snapshot is produced.
+    enabled: bool = True          # master switch for all utility exports
+    details: bool | None = None   # optional override for details NDJSON
+    screener: bool | None = None  # optional override for screener NDJSON
+
+class BackfillCfg(BaseModel):
+    export_utilities: BackfillExportUtilitiesCfg = BackfillExportUtilitiesCfg()
+
 
 # ----------------- NEW sections (Phase 10) -----------------
 # Minimal, focused config blocks to avoid "magic strings" in code and keep YAML-first design.
@@ -624,6 +633,7 @@ class Settings(BaseModel):
     logging: LoggingCfg = LoggingCfg()
     server: ServerCfg = ServerCfg()
     storage: StorageCfg = StorageCfg()
+    backfill: BackfillCfg = BackfillCfg()
     backfill_runtime: BackfillRuntimeCfg = BackfillRuntimeCfg()
     screener: ScreenerCfg = ScreenerCfg()
     scheduler: SchedulerCfg = SchedulerCfg()

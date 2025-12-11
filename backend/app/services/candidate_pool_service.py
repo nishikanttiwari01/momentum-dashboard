@@ -252,6 +252,9 @@ class CandidatePoolService:
         # Any active entry dropped due to max_size should be marked removed
         dropped = {e.symbol for e in ranked_entries[len(kept) :]}
         for sym in dropped:
+            if sym in existing_map:
+                existing_map[sym].db_status = "REMOVED"
+                existing_map[sym].exit_reason = "replaced"
             self.repo.mark_removed(sym, reason="replaced", removed_at=now_utc, run_id=run_id)
             removed_symbols.append((sym, "replaced"))
 
@@ -262,6 +265,19 @@ class CandidatePoolService:
             self.repo.upsert(entry.to_repo_payload())
 
         selected_entry = kept[0] if (kept and is_eod_snapshot) else None
+
+        # Record daily history AFTER final ranks/removals
+        try:
+            self.repo.record_history(trading_day, existing_map.values())
+        except Exception:
+            pass
+
+        # Purge REMOVED rows immediately now that history is persisted
+        try:
+            self.repo.purge_removed(older_than_days=0)
+        except Exception:
+            pass
+
         return PoolSyncResult(
             entries=kept,
             added=added_symbols,

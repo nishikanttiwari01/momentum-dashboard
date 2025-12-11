@@ -33,6 +33,12 @@ storage:
   use_dictionary: true
   write_statistics: true
 
+backfill:
+  export_utilities:
+    enabled: false       # master switch for NDJSON exports (details + screener)
+    details: false       # optional override to control details export
+    screener: false      # optional override to control screener export
+
 backfill_runtime:
   intraday_retention_days: 15
   daily_retention_days: 365

@@ -7,11 +7,12 @@ import time
 import logging
 import shutil
 from dataclasses import dataclass
-from datetime import date, timedelta, datetime, timezone  # <-- added datetime, timezone
+from datetime import date, timedelta, datetime, timezone, time as dtime  # <-- added datetime, timezone
 from typing import Iterable, Optional, Tuple, Dict, Any, Callable  # <-- added Callable
 import csv  # <-- added
 import math
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -220,6 +221,34 @@ def _should_export_utilities(status: int, payload: Dict[str, Any] | None) -> boo
     snapshot_path = payload.get('snapshot_path')
     return bool(snapshot_path)
 
+def _export_utilities_flags() -> tuple[bool, bool]:
+    """
+    Resolve export toggles from config. Returns (details_enabled, screener_enabled).
+    Falls back to (True, True) on any error to preserve historical behavior.
+    """
+    default = (True, True)
+    try:
+        settings = _cfg_mod.load()
+        backfill_cfg = getattr(settings, "backfill", None)
+        if backfill_cfg is None:
+            return default
+        export_cfg = getattr(backfill_cfg, "export_utilities", None)
+        if export_cfg is None:
+            return default
+
+        master = getattr(export_cfg, "enabled", True)
+        details = getattr(export_cfg, "details", None)
+        screener = getattr(export_cfg, "screener", None)
+        if not master:
+            return (False, False)
+
+        details_enabled = default[0] if details is None else bool(details)
+        screener_enabled = default[1] if screener is None else bool(screener)
+        return (details_enabled, screener_enabled)
+    except Exception as e:  # pragma: no cover
+        log.warning("export_utilities_cfg_resolve_failed", extra={"error": str(e)})
+        return default
+
 def _daily_partition_has_parquet(as_of: date) -> bool:
     partition_root = _parquet_root_abs() / "scores" / "daily" / f"as_of={as_of.isoformat()}"
     if not partition_root.exists():
@@ -341,18 +370,25 @@ def _delete_intraday_partition(as_of: date) -> None:
             )
 
 
-def _trigger_util_exports(as_of: date) -> None:
+def _trigger_util_exports(as_of: date, *, enable_details: bool = True, enable_screener: bool = True) -> None:
     extra = {'date': as_of.isoformat()}
-    try:
-        details_path = run_fetch_details(as_of=as_of)
-        log.info('export_details_success', extra={**extra, 'output': str(details_path)})
-    except Exception:
-        log.exception('export_details_failed', extra=extra)
-    try:
-        screener_path = run_fetch_screener_pages(as_of=as_of)
-        log.info('export_screener_success', extra={**extra, 'output': str(screener_path)})
-    except Exception:
-        log.exception('export_screener_failed', extra=extra)
+    if enable_details:
+        try:
+            details_path = run_fetch_details(as_of=as_of)
+            log.info('export_details_success', extra={**extra, 'output': str(details_path)})
+        except Exception:
+            log.exception('export_details_failed', extra=extra)
+    else:
+        log.info('export_details_skipped(disabled)', extra=extra)
+
+    if enable_screener:
+        try:
+            screener_path = run_fetch_screener_pages(as_of=as_of)
+            log.info('export_screener_success', extra={**extra, 'output': str(screener_path)})
+        except Exception:
+            log.exception('export_screener_failed', extra=extra)
+    else:
+        log.info('export_screener_skipped(disabled)', extra=extra)
 
 
 # --- Housekeeping config helpers --------------------------------------------
@@ -758,6 +794,54 @@ def _news_enabled() -> bool:
 # -----------------------------------------------------------------------------
 
 
+def _market_close_passed(now_utc: datetime | None = None) -> bool:
+    """
+    Determine if the current local time (per trading_window.tz) is past the
+    configured market end time. Returns False on any parse/config error.
+    """
+    now_utc = now_utc or datetime.now(timezone.utc)
+    try:
+        cfg = _cfg_mod.load()
+        sched_cfg = getattr(cfg, "scheduler", None)
+        tw = getattr(sched_cfg, "trading_window", None) if sched_cfg else None
+        if tw is None:
+            return False
+        if hasattr(tw, "model_dump"):
+            twd = tw.model_dump()
+        elif hasattr(tw, "dict"):
+            twd = tw.dict()
+        elif isinstance(tw, dict):
+            twd = tw
+        else:
+            twd = dict(getattr(tw, "__dict__", {}))
+
+        tz_name = twd.get("tz") or "Asia/Kolkata"
+        end_str = twd.get("end") or "15:30"
+        days_raw = twd.get("days") or [0, 1, 2, 3, 4]
+
+        try:
+            days = {int(d) for d in (days_raw or [])}
+        except Exception:
+            days = {0, 1, 2, 3, 4}
+
+        tz = ZoneInfo(tz_name)
+        now_local = now_utc.astimezone(tz)
+        if days and now_local.weekday() not in days:
+            return False
+
+        try:
+            hh, mm = [int(x) for x in str(end_str).split(":", 1)]
+        except Exception:
+            log.warning("market_close_parse_failed", extra={"end": end_str})
+            return False
+
+        end_time = dtime(hour=hh, minute=mm)
+        return now_local.time() >= end_time
+    except Exception as exc:
+        log.warning("market_close_check_failed", extra={"error": str(exc)})
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     _setup_logging()
     argv = argv or sys.argv[1:]
@@ -773,16 +857,44 @@ def main(argv: list[str] | None = None) -> int:
         print("Usage: python -m app.cli.backfill [YYYY-MM-DD] [YYYY-MM-DD]", file=sys.stderr)
         return 64
 
-    today = date.today()
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.date()
     yesterday = today - timedelta(days=1)
     retention_days = _intraday_retention_days()
     _prune_intraday_history(retention_days, reference_date=today)
+    export_details_enabled, export_screener_enabled = _export_utilities_flags()
+    try:
+        log.info(
+            "export_utilities_config",
+            extra={
+                "details": export_details_enabled,
+                "screener": export_screener_enabled,
+            },
+        )
+    except Exception:
+        pass
 
     start = cfg.start or (today - timedelta(days=int(cfg.months_back * 365 / 12) + 30))
-    end = cfg.end or yesterday
+    close_passed = _market_close_passed(now_utc)
+    auto_end = cfg.end
+    if auto_end is None:
+        auto_end = today if close_passed else yesterday
+    end = auto_end
 
-    if end >= today:
+    if cfg.end is None and end >= today and not close_passed:
         end = yesterday
+
+    try:
+        log.info(
+            "backfill_window_resolved",
+            extra={
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "after_close": close_passed,
+            },
+        )
+    except Exception:
+        pass
 
     if start > end:
         log.warning("empty_backfill_window", extra={"start": start.isoformat(), "end": end.isoformat()})
@@ -914,7 +1026,11 @@ def main(argv: list[str] | None = None) -> int:
                 # Always wait briefly for daily snapshot visibility (commit marker or parquet)
                 _wait_for_daily_visible(d)
                 if _daily_partition_committed(d) or _daily_partition_has_parquet(d):
-                    _trigger_util_exports(d)
+                    _trigger_util_exports(
+                        d,
+                        enable_details=export_details_enabled,
+                        enable_screener=export_screener_enabled,
+                    )
                     exported_dates.add(d)
                 else:
                     log.info("export_skipped_uncommitted", extra={"date": d.isoformat()})

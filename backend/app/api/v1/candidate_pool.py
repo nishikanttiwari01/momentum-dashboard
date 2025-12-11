@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from datetime import date
 
 from app.core import config as app_config
 from app.repos.sql.candidate_pool_repo import CandidatePoolRepo
@@ -69,5 +70,54 @@ def list_candidate_pool(s: Session = Depends(_require_session())):
         run_id=None,
         as_of=as_of,
         generated_at=now.isoformat(),
+        items=items,
+    )
+
+
+@router.get("/history", response_model=CandidatePoolList)
+def list_candidate_pool_history(date: date, s: Session = Depends(_require_session())):
+    cfg = app_config.load()
+    repo = CandidatePoolRepo(session=s)
+    service = CandidatePoolService(repo=repo, cfg=cfg.candidate_pool, strategy=cfg.strategy)
+
+    rows = repo.list_history(date)
+    if not rows:
+        return CandidatePoolList(max_size=cfg.candidate_pool.max_size, run_id=None, as_of=date.isoformat(), generated_at=None, items=[])
+
+    items = []
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        # align keys for serializer
+        payload = {
+            "symbol": row.get("symbol"),
+            "rank_ord": row.get("rank_ord"),
+            "rank_score": row.get("rank_score"),
+            "score": row.get("score"),
+            "adx14": row.get("adx14"),
+            "atr_pct": row.get("atr_pct"),
+            "prox52w": row.get("prox_52w_high_pct"),
+            "liquidity": row.get("liquidity"),
+            "status": row.get("status") or "ACTIVE",
+            "exit_reason": row.get("exit_reason"),
+            "added_on": row.get("added_on"),
+            "added_as_of": row.get("as_of"),
+            "last_seen_as_of": row.get("as_of"),
+            "last_price": row.get("last_price"),
+            "reasons": [],
+            "exit_checks": [],
+        }
+        try:
+            entry = service._entry_from_repo(payload, now)  # type: ignore[attr-defined]
+            items.append(service.serialize_entry(entry, is_top=False))
+        except Exception:
+            continue
+
+    items.sort(key=lambda e: (e.get("rank") if e.get("rank") is not None else 1_000_000, e.get("symbol")))
+
+    return CandidatePoolList(
+        max_size=cfg.candidate_pool.max_size,
+        run_id=None,
+        as_of=date.isoformat(),
+        generated_at=None,
         items=items,
     )

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 from typing import Any, Dict, Iterable, List, Optional
+from sqlalchemy import text
 
 from sqlalchemy.orm import Session
 
@@ -103,6 +104,126 @@ class CandidatePoolRepo:
         session.flush()
         session.commit()
         return self._row_to_dict(row)
+
+    # ----- history support -----
+    def _ensure_history_table(self) -> None:
+        session = self._session()
+        session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS candidate_pool_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trading_day TEXT,
+                    symbol TEXT,
+                    status TEXT,
+                    rank_ord INTEGER,
+                    rank_score REAL,
+                    score REAL,
+                    adx14 REAL,
+                    atr_pct REAL,
+                    prox_52w_high_pct REAL,
+                    liquidity REAL,
+                    added_on TEXT,
+                    exit_reason TEXT,
+                    as_of TEXT,
+                    run_id TEXT,
+                    last_price REAL,
+                    recorded_at TEXT
+                );
+                """
+            )
+        )
+        session.execute(text("CREATE INDEX IF NOT EXISTS idx_cph_day_symbol ON candidate_pool_history(trading_day, symbol);"))
+        session.commit()
+
+    def record_history(self, trading_day: date, entries: Iterable[Any]) -> None:
+        if self.s is None:
+            return
+        self._ensure_history_table()
+        session = self._session()
+        session.execute(
+            text("DELETE FROM candidate_pool_history WHERE trading_day = :d"),
+            {"d": trading_day.isoformat()},
+        )
+        rows = []
+        now_iso = datetime.utcnow().isoformat()
+        for e in entries:
+            # tolerate either dicts or dataclass-like objects
+            getter = e.get if hasattr(e, "get") else lambda k, default=None: getattr(e, k, default)
+            rows.append(
+                {
+                    "trading_day": trading_day.isoformat(),
+                    "symbol": str(getter("symbol", "")).upper(),
+                    "status": getter("db_status") or getter("status"),
+                    "rank_ord": getter("rank_ord") or getter("rank"),
+                    "rank_score": getter("rank_score"),
+                    "score": getter("last_score", getter("score")),
+                    "adx14": getter("last_adx14", getter("adx14")),
+                    "atr_pct": getter("last_atr_pct", getter("atr_pct")),
+                    "prox_52w_high_pct": getter("last_prox_52w_high_pct", getter("prox52w", getter("prox_52w_high_pct"))),
+                    "liquidity": getter("last_liquidity", getter("liquidity")),
+                    "added_on": getter("added_on").isoformat() if getter("added_on") else None,
+                    "exit_reason": getter("exit_reason"),
+                    "as_of": getter("last_seen_as_of", getter("added_as_of")),
+                    "run_id": getter("last_seen_run_id", getter("added_run_id")),
+                    "last_price": getter("last_price"),
+                    "recorded_at": now_iso,
+                }
+            )
+        if rows:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO candidate_pool_history
+                    (trading_day, symbol, status, rank_ord, rank_score, score, adx14, atr_pct, prox_52w_high_pct,
+                     liquidity, added_on, exit_reason, as_of, run_id, last_price, recorded_at)
+                    VALUES
+                    (:trading_day, :symbol, :status, :rank_ord, :rank_score, :score, :adx14, :atr_pct, :prox_52w_high_pct,
+                     :liquidity, :added_on, :exit_reason, :as_of, :run_id, :last_price, :recorded_at)
+                    """
+                ),
+                rows,
+            )
+            session.commit()
+
+    def purge_removed(self, older_than_days: int = 0) -> int:
+        """
+        Delete REMOVED entries older than the cutoff.
+        Returns number of rows deleted.
+        """
+        if self.s is None:
+            return 0
+        cutoff = datetime.utcnow() - timedelta(days=max(0, older_than_days))
+        session = self._session()
+        res = session.query(CandidatePool).filter(
+            CandidatePool.status == "REMOVED",
+            CandidatePool.removed_at.isnot(None),
+            CandidatePool.removed_at < cutoff,
+        ).delete(synchronize_session=False)
+        session.commit()
+        return res or 0
+
+    def list_history(self, trading_day: date) -> List[Dict[str, Any]]:
+        if self.s is None:
+            return []
+        self._ensure_history_table()
+        session = self._session()
+        res = session.execute(
+            text(
+                """
+                SELECT symbol, status, rank_ord, rank_score, score, adx14, atr_pct, prox_52w_high_pct,
+                       liquidity, added_on, exit_reason, as_of, run_id, last_price
+                FROM candidate_pool_history
+                WHERE trading_day = :d
+                ORDER BY rank_ord IS NULL, rank_ord, rank_score DESC, symbol
+                """
+            ),
+            {"d": trading_day.isoformat()},
+        )
+        out: List[Dict[str, Any]] = []
+        for row in res.fetchall():
+            out.append(dict(row._mapping))
+        return out
 
     def mark_removed(
         self,
