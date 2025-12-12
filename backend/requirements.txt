@@ -76,3 +76,5 @@ yfinance>=0.2.40
 datamodel-code-generator>=0.25
 duckdb==1.0.0
 feedparser==6.0.11
+nsepython
+nsetools
