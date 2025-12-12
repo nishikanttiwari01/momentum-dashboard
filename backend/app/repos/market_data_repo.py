@@ -77,6 +77,8 @@ class MarketDataRepo:
 
     def _fetch(self, symbol: str, days: int) -> Tuple[List[str], List[float]]:
         symbol_u = symbol.upper()
+        if symbol_u and not symbol_u.endswith(".NS"):
+            symbol_u = f"{symbol_u}.NS"
         days = int(max(days, 60))  # ensure enough bars for weekends/holidays
         key = (symbol_u, days)
         now = datetime.utcnow()

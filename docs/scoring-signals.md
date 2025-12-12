@@ -1,3 +1,4 @@
+
 # Scoring, Signals, and Next Actions
 
 This doc summarises how scores and buy signals are produced, how `reason_parts` strings are built, and how the candidate pool is maintained (strict entry, relaxed exits).

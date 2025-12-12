@@ -17,14 +17,10 @@ def _format_for_template(value: Any) -> Any:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, Decimal):
-        if not value.is_finite():
-            return None
-        return f"{float(value):.2f}"
+        return float(value) if value.is_finite() else None
     if isinstance(value, Real) and not isinstance(value, bool):
         numeric = float(value)
-        if math.isfinite(numeric):
-            return f"{numeric:.2f}"
-        return None
+        return numeric if math.isfinite(numeric) else None
     return value
 
 

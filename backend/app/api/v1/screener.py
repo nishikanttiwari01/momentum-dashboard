@@ -44,7 +44,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.core import config as app_config
-from app.repos.parquet.universe_repo import UniverseRepo, PRESETS as UNIVERSE_PRESETS
+from app.repos.parquet.universe_ndjson_repo import UniverseNdjsonRepo, PRESETS as UNIVERSE_PRESETS
 
 router = APIRouter(tags=["Screener"])
 repo = ScoresRepo()
@@ -435,14 +435,14 @@ def get_screener_runs(
         latest=latest,
     )
 
-_universe_repo: UniverseRepo | None = None
+_universe_repo: UniverseNdjsonRepo | None = None
 
 
 
-def _get_universe_repo() -> UniverseRepo:
+def _get_universe_repo() -> UniverseNdjsonRepo:
     global _universe_repo
     if _universe_repo is None:
-        _universe_repo = UniverseRepo()
+        _universe_repo = UniverseNdjsonRepo()
     return _universe_repo
 
 
