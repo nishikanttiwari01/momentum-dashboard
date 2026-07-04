@@ -39,7 +39,7 @@ import { displaySymbol, displayDate } from '@/lib/formatters';
 import InfoTooltip from '@/components/InfoTooltip';
 
 import DrawerHeader from './DrawerHeader';
-import Sparkline from './SparklineRe';
+import Sparkline, { SparklineRange } from './SparklineRe';
 import IndicatorsGrid from './IndicatorsGrid';
 import ScoreBreakdown from './ScoreBreakdown';
 import EntryModule from './EntryModule';
@@ -381,14 +381,16 @@ function BuyChecklistSection({
 export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Props) {
   const sym = symbol || '';
   const enabled = Boolean(open && sym);
+  const [sparklineRange, setSparklineRange] = React.useState<SparklineRange>('30d');
 
   // Build query params for the detail API: prefer intraday run_id, else EOD as_of
   const detailParams = React.useMemo(() => {
     return {
       run_id: runId || undefined,
       as_of: !runId && asOf ? asOf : undefined,
+      sparkline_window: sparklineRange,
     };
-  }, [runId, asOf]);
+  }, [runId, asOf, sparklineRange]);
 
   // Pass snapshot context to the hook (it supports params as 2nd arg in our app)
   const { data, isFetching, error, refetch: refetchDetail } = useInstrumentDetail(
@@ -402,7 +404,7 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
     if (!enabled) return;
     refetchDetail();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, sym, runId, asOf]);
+  }, [enabled, sym, runId, asOf, sparklineRange]);
 
   const { data: position, refetch: refetchPosition } = usePosition(sym, { enabled });
 
@@ -813,7 +815,12 @@ export default function RightDrawer({ symbol, open, onClose, runId, asOf }: Prop
         {/* OVERVIEW tab */}
         {tab === 0 && (
           <React.Fragment>
-            <Sparkline data={d?.sparkline as any} height={200} />
+            <Sparkline
+              data={d?.sparkline as any}
+              height={200}
+              range={sparklineRange}
+              onRangeChange={setSparklineRange}
+            />
 
             <ScoreBreakdown
               score={

@@ -122,6 +122,52 @@ def update_event_channels_summary(conn, *, event_id: int, summary: dict) -> None
          WHERE id = :event_id
     """), {"summary": json.dumps(summary or {}), "event_id": event_id})
 
+
+def update_event_on_upgrade(conn, *,
+                            event_id: int,
+                            title_rendered: str,
+                            body_rendered: str,
+                            score_at_fire: Optional[float],
+                            next_action_code: Optional[str],
+                            context_json: Dict[str, Any],
+                            fired_at_utc: datetime) -> None:
+    """Upgrade an existing alert_events row in place.
+
+    Used by the best-in-session dedupe path: when a later scan within the
+    same (rule_code, symbol, trading_date, mode, bucket_ord) slot produces
+    a materially stronger signal, we rewrite the row rather than insert a
+    duplicate. This keeps one-row-per-bucket semantics while letting the
+    stored signal reflect the best read during the bucket.
+
+    Note: this only rewrites the event row. It does NOT re-dispatch any
+    channel deliveries; the caller decides whether to re-notify.
+    """
+    log.debug(
+        "Upgrading alert_event id=%s score_at_fire=%s next_action_code=%s",
+        event_id,
+        score_at_fire,
+        next_action_code,
+    )
+    q = text("""
+        UPDATE alert_events
+           SET title_rendered=:title_rendered,
+               body_rendered=:body_rendered,
+               score_at_fire=:score_at_fire,
+               next_action_code=:next_action_code,
+               context_json=:context_json,
+               fired_at_utc=:fired_at_utc
+         WHERE id=:event_id
+    """)
+    conn.execute(q, {
+        "event_id": event_id,
+        "title_rendered": title_rendered,
+        "body_rendered": body_rendered,
+        "score_at_fire": score_at_fire,
+        "next_action_code": next_action_code,
+        "context_json": json.dumps(context_json or {}),
+        "fired_at_utc": fired_at_utc,
+    })
+
 def upsert_state(conn, *, rule_code: str, symbol: str,
                  fired_at_utc, trading_date, mode: str, bucket_ord: int,
                  score_at_fire: float | None, next_action_code: str | None,

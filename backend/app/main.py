@@ -98,6 +98,30 @@ async def lifespan(app: FastAPI):
     cfg = config.load()
     logger.info("lifespan: config loaded env=%s", getattr(cfg.app, "env", "unknown"))
 
+    # Fail-loud config validation: abort startup on known-bad configurations
+    # (e.g. email alerter enabled with no SMTP password, or no buy profile
+    # enabled at all). Soft issues are logged as warnings by the validator.
+    try:
+        from app.core.config_validation import (
+            validate_startup_config,
+            ConfigValidationError,
+        )
+        warnings = validate_startup_config(cfg)
+        if warnings:
+            logger.info(
+                "lifespan: config validation passed with %d warning(s)",
+                len(warnings),
+            )
+        else:
+            logger.info("lifespan: config validation passed")
+    except ConfigValidationError:
+        logger.exception("lifespan: config validation FAILED — aborting startup")
+        raise
+    except Exception:
+        # Defensive: a bug in the validator itself should not wedge the app
+        # in production. Log and continue.
+        logger.exception("lifespan: config validation raised an unexpected error (continuing)")
+
     try:
         db.init_sqlite(cfg.storage.sqlite_path)
         logger.info("lifespan: db.init_sqlite ok path=%s", cfg.storage.sqlite_path)

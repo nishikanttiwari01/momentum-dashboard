@@ -6,7 +6,7 @@ schedules:
   enabled: false                    # disable background jobs in tests
 
 logging:
-  level: wARNING
+  level: WARNING
   file: ./logs/app.log        # string path
   max_bytes: 10485760         # 10 MB
   backup_count: 5

@@ -22,7 +22,9 @@ def _make_session():
     return SessionLocal(), engine
 
 
-def test_selection_policy_prefers_highest_r_multiple():
+def test_selection_policy_prefers_highest_score_when_r_ratio_equal():
+    """With R-ratio targets, both candidates get the same R multiple (2.0),
+    so score is the correct tiebreaker — higher score wins."""
     session, engine = _make_session()
     try:
         settings = app_config.load()
@@ -32,6 +34,7 @@ def test_selection_policy_prefers_highest_r_multiple():
         policy.weekly_quota = 5
         policy.symbol_cooldown_days = 0
         policy.sector_cooldown_days = 0
+        policy.tiebreaker = "R_multiple_then_score"
 
         now_utc = datetime(2025, 1, 10, 9, 30, tzinfo=timezone.utc)
         trading_day = now_utc.date()
@@ -43,7 +46,7 @@ def test_selection_policy_prefers_highest_r_multiple():
                 "buy_flag": True,
                 "score": 82,
                 "last": 100.0,
-                "atr_pct": 4.0,
+                "atr_pct": 4.0,   # risk=8%, R=2.0 with r_ratio_target=2.0
                 "buy_profile": "swing_eod",
                 "buy_mode": "EOD",
                 "buy_reasons_inline": "Score 82; ATR 4%",
@@ -54,7 +57,7 @@ def test_selection_policy_prefers_highest_r_multiple():
                 "buy_flag": True,
                 "score": 78,
                 "last": 100.0,
-                "atr_pct": 2.0,
+                "atr_pct": 2.0,   # risk=4%, R=2.0 with r_ratio_target=2.0
                 "buy_profile": "swing_eod",
                 "buy_mode": "EOD",
                 "buy_reasons_inline": "Score 78; ATR 2%",
@@ -73,15 +76,78 @@ def test_selection_policy_prefers_highest_r_multiple():
         )
 
         assert result is not None
-        assert result.symbol == "BBB.NS"
-        assert result.row_index == 1
-        assert result.r_multiple > 1.9  # higher R multiple candidate selected
+        # With R-ratio targets both candidates have R=2.0; score 82 > 78 so AAA wins.
+        assert result.symbol == "AAA.NS"
+        assert result.row_index == 0
+        assert abs(result.r_multiple - 2.0) < 0.05  # both have same R with ratio target
+        assert result.position_size_pct > 0          # position sizing is populated
 
-        # Selection should NOT open an active position without a qty
         persisted = session.query(Position).all()
         assert len(persisted) == 1
-        assert persisted[0].symbol == "BBB.NS"
+        assert persisted[0].symbol == "AAA.NS"
         assert persisted[0].trade_on is False
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_selection_policy_weighted_composite_prefers_score_and_liquidity_balance():
+    session, engine = _make_session()
+    try:
+        settings = app_config.load()
+        strategy = settings.strategy
+        policy = settings.selection_policy.model_copy(deep=True)
+        policy.max_open_positions = 5
+        policy.weekly_quota = 5
+        policy.symbol_cooldown_days = 0
+        policy.sector_cooldown_days = 0
+        policy.tiebreaker = "weighted_composite"
+
+        now_utc = datetime(2025, 1, 10, 9, 30, tzinfo=timezone.utc)
+        trading_day = now_utc.date()
+
+        rows = [
+            {
+                "symbol": "AAA.NS",
+                "sector": "Energy",
+                "buy_flag": True,
+                "score": 86,
+                "last": 100.0,
+                "atr_pct": 4.0,
+                "liquidity": 250_000_000.0,
+                "buy_profile": "swing_eod",
+                "buy_mode": "EOD",
+                "buy_reasons_inline": "Score 86; ATR 4%",
+            },
+            {
+                "symbol": "BBB.NS",
+                "sector": "Energy",
+                "buy_flag": True,
+                "score": 78,
+                "last": 100.0,
+                "atr_pct": 2.0,
+                "liquidity": 80_000_000.0,
+                "buy_profile": "swing_eod",
+                "buy_mode": "EOD",
+                "buy_reasons_inline": "Score 78; ATR 2%",
+            },
+        ]
+
+        result = apply_selection_policy(
+            session=session,
+            rows=rows,
+            strategy=strategy,
+            policy=policy,
+            run_id="RUN_WEIGHTED",
+            trading_day=trading_day,
+            nifty_regime="UP",
+            now_utc=now_utc,
+        )
+
+        assert result is not None
+        assert result.symbol == "AAA.NS"
+        assert result.row_index == 0
+        assert "Weighted" in result.reason
     finally:
         session.close()
         engine.dispose()

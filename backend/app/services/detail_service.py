@@ -458,7 +458,14 @@ def _compute_meters_and_next(price_now: Optional[float], ind: Dict[str, Any], po
 
 
 
-def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as_of: str | None = None) -> Dict[str, Any]:
+def build_drawer_detail(
+    symbol: str,
+    run_id: str | None,
+    deps: DetailDeps,
+    *,
+    as_of: str | None = None,
+    sparkline_window: str | None = None,
+) -> Dict[str, Any]:
     """
     Build drawer detail using **new parquet layout**:
       - If run_id is provided → try intraday at that run_id for the symbol; if not found, fall back to daily (date from run_id).
@@ -722,8 +729,9 @@ def build_drawer_detail(symbol: str, run_id: str | None, deps: DetailDeps, *, as
 
     # We pass the most specific run_id we have (intraday rid if present), else original hint
     run_id_for_spark = rid_used or (run_id or "")
+    spark_n = _sparkline_window_to_days(sparkline_window)
     prices_30d, ema10_30d, dates_30d = _sparkline_from_repos(
-        deps.indicators_repo, canon or sym_in, run_id_for_spark, row or {}
+        deps.indicators_repo, canon or sym_in, run_id_for_spark, row or {}, n=spark_n
     )
     sparkline = {
         "prices_30d": prices_30d if prices_30d else [price_now],
@@ -1273,11 +1281,29 @@ def _choose_exit_threshold(ind: Dict[str, Any], eup_on: bool) -> float:
     v = ind.get("ema10") or ind.get("ema_slow_value")
     return _f(v)
 
+def _sparkline_window_to_days(window: Optional[str]) -> int:
+    if not window:
+        return 30
+    w = str(window).strip().lower()
+    mapping = {
+        "30d": 30,
+        "3m": 90,
+        "90d": 90,
+        "1y": 365,
+        "12m": 365,
+        "5y": 1825,
+        "60m": 1825,
+    }
+    return int(mapping.get(w, 30))
+
+
 def _sparkline_from_repos(
     ind_repo: Any,
     symbol: str,
     run_id: str,
-    row: Dict[str, Any]
+    row: Dict[str, Any],
+    *,
+    n: int = 30,
 ) -> Tuple[List[float], Optional[List[float]], Optional[List[str]]]:
     prices: List[float] = []
     ema10: Optional[List[float]] = None
@@ -1291,7 +1317,7 @@ def _sparkline_from_repos(
         if hasattr(ind_repo, meth):
             try:
                 fn = getattr(ind_repo, meth)
-                data = fn(symbol=symbol, run_id=run_id, n=30) if "n" in fn.__code__.co_varnames else fn(symbol=symbol, run_id=run_id)
+                data = fn(symbol=symbol, run_id=run_id, n=n) if "n" in fn.__code__.co_varnames else fn(symbol=symbol, run_id=run_id)
 
                 if isinstance(data, dict):
                     if "prices" in data and isinstance(data["prices"], list):

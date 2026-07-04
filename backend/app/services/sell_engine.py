@@ -179,17 +179,43 @@ def evaluate_positions(
             breakeven_cfg.enabled
             and (mode == Mode.EOD or breakeven_cfg.intraday_enabled)
         )
+        # Arm breakeven when price first crosses the gain threshold.
         if not breakeven_active and breakeven_allowed_now:
             gain_threshold = entry_price * (1 + float(breakeven_cfg.gain_pct) / 100.0)
             if price_now >= gain_threshold:
                 breakeven_active = True
                 note_data["breakeven_armed_at"] = now_utc.isoformat()
 
+        # Also arm breakeven automatically once T1 has been tagged — this is
+        # the exit-ladder "protect the profit at T1" rule. Even if the
+        # configured gain_pct arm hasn't fired yet (e.g. gap-through), a T1
+        # touch should tighten the stop to the breakeven band for any
+        # subsequent pullback.
+        if t1_hit and not breakeven_active and breakeven_allowed_now:
+            breakeven_active = True
+            if not note_data.get("breakeven_armed_at"):
+                note_data["breakeven_armed_at"] = now_utc.isoformat()
+            note_data["breakeven_armed_by"] = "t1_touch"
+
         breakeven_condition = False
         if breakeven_active and breakeven_allowed_now and not breakeven_triggered:
+            # retrace_to_pct semantic: the stop sits at entry * (1 + retrace_to_pct).
+            # 0.00  -> breakeven exit (exit if price returns to entry)
+            # 0.02  -> lock +2% (exit if price pulls back below entry +2%)
+            # The previous default of 0.10 combined with a 5% arm threshold
+            # fired essentially at arm-time (any price >=+5% is also <=+10%),
+            # so the breakeven trigger acted as an immediate exit. Callers
+            # that want a tighter or looser lock should set it explicitly.
             retrace_pct = float(breakeven_cfg.retrace_to_pct or 0)
+            if retrace_pct < 0:
+                retrace_pct = 0.0
             retrace_price = entry_price * (1 + retrace_pct)
-            if price_now <= retrace_price:
+            # Only trigger on a PULLBACK from a prior gain — never on the same
+            # bar that armed the trail.
+            armed_on_this_bar = (
+                note_data.get("breakeven_armed_at") == now_utc.isoformat()
+            )
+            if not armed_on_this_bar and price_now <= retrace_price:
                 breakeven_condition = True
                 breakeven_active = False
                 note_data["breakeven_triggered"] = True
@@ -200,12 +226,16 @@ def evaluate_positions(
         t1_condition = allow_intraday_targets and price_now >= t1_price and not t1_hit
 
         weak_cfg = sell_cfg.weakness
-        ema_fast = _safe_float(row.get("ema10") if weak_cfg.fast_ema_period == 10 else row.get(f"ema{weak_cfg.fast_ema_period}"))
+        ema_fast = _safe_float(row.get(f"ema{weak_cfg.fast_ema_period}"))
+        # Weakness exit: only fire when there is genuine distribution evidence.
+        # Require price below entry (confirmed loss of momentum, not just a dip),
+        # 3+ consecutive closes below EMA20, and high relative volume (1.5x).
         weakness_condition = (
             weak_cfg.enabled
             and (not weak_cfg.eod_only or mode == Mode.EOD)
             and ema_fast is not None
             and price_now < ema_fast
+            and price_now < entry_price  # only exit with weakness if position is at a loss
             and row.get("n_consecutive_down") is not None
             and int(row.get("n_consecutive_down")) >= int(weak_cfg.max_closes_below_fast_ema)
             and (row.get("relvol20") or 0) >= (weak_cfg.confirm_relvol_min or 0)
@@ -261,6 +291,7 @@ def evaluate_positions(
             note_data["t2_hit"] = True
         elif t1_condition:
             event_code = "SELL_TARGET_T1"
+            partial_pct = float(getattr(targets_cfg, "t1_partial_exit_pct", 50.0) or 50.0)
             event_context = {
                 "symbol": symbol,
                 "price": price_now,
@@ -268,8 +299,14 @@ def evaluate_positions(
                 "entry_price": entry_price,
                 "pnl_pct": pnl_pct,
                 "t1": targets_cfg.t1_gain_pct,
+                "partial_exit_pct": partial_pct,
+                "action": f"sell_{int(partial_pct)}pct_trail_rest_to_breakeven",
             }
             note_data["t1_hit"] = True
+            note_data["t1_partial_exit_pct"] = partial_pct
+            # Tighten stop to entry so the remaining position is risk-free.
+            if new_stop is None or new_stop < entry_price:
+                new_stop = entry_price
         elif breakeven_condition:
             event_code = "SELL_BREAKEVEN"
             event_context = {

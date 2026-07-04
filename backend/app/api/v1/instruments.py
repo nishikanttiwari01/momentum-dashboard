@@ -58,6 +58,10 @@ def get_instrument_detail(
     symbol: str = Path(..., description="Canonical ticker (e.g., RELIANCE.NS)"),
     run_id: Optional[str] = Query(None, description="Snapshot run_id (intraday). If provided, takes precedence."),
     as_of: Optional[str] = Query(None, description="EOD snapshot date YYYY-MM-DD. Used when run_id is not provided."),
+    sparkline_window: Optional[str] = Query(
+        "30d",
+        description="Sparkline window: 30d, 3m, 1y, 5y",
+    ),
     deps: DetailDeps = Depends(_deps_runtime),
 ) -> DrawerDetail:
     # Normalize symbol for robustness against case/format drift
@@ -146,7 +150,13 @@ def get_instrument_detail(
         )
 
     # Build detail for the resolved snapshot (run_id for intraday, as_of for EOD)
-    raw = build_drawer_detail(canonical_symbol, resolved_run_id, deps, as_of=resolved_as_of)
+    raw = build_drawer_detail(
+        canonical_symbol,
+        resolved_run_id,
+        deps,
+        as_of=resolved_as_of,
+        sparkline_window=sparkline_window,
+    )
     log.info("detail built", extra={"keys": list(raw.keys())})
 
     # Hard clamp score_basic fields to contract bounds (defensive against legacy parquet values)

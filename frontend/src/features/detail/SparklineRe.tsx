@@ -1,6 +1,6 @@
 // frontend/src/features/detail/SparklineRe.tsx
 import * as React from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
+import { Box, FormControl, MenuItem, Select, Typography, useTheme } from '@mui/material';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Area,
 } from 'recharts';
@@ -17,7 +17,16 @@ export type DrawerSparkline =
     }
   | undefined;
 
-type Props = { data?: DrawerSparkline; height?: number; showHeader?: boolean };
+export type SparklineRange = '30d' | '3m' | '1y' | '5y';
+
+type Props = {
+  data?: DrawerSparkline;
+  height?: number;
+  showHeader?: boolean;
+  range?: SparklineRange;
+  onRangeChange?: (range: SparklineRange) => void;
+  showRangeSelect?: boolean;
+};
 
 const toNums = (xs?: (number | string)[] | null): number[] =>
   Array.isArray(xs) ? (xs.map(v => (typeof v === 'string' ? Number(v) : v)).filter(Number.isFinite) as number[]) : [];
@@ -33,7 +42,21 @@ const toDates = (xs?: (string | number | Date)[] | null): (Date | null)[] =>
 const fmtDate = (d: Date | null): string =>
   d ? new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: '2-digit' }).format(d) : '';
 
-export default function SparklineRe({ data, height = 220, showHeader = true }: Props) {
+const RANGE_LABEL: Record<SparklineRange, string> = {
+  '30d': '30 days',
+  '3m': '3 months',
+  '1y': '1 year',
+  '5y': '5 years',
+};
+
+export default function SparklineRe({
+  data,
+  height = 220,
+  showHeader = true,
+  range = '30d',
+  onRangeChange,
+  showRangeSelect = true,
+}: Props) {
   const theme = useTheme();
 
   // accept either ..._30d or legacy keys
@@ -124,12 +147,33 @@ export default function SparklineRe({ data, height = 220, showHeader = true }: P
   const areaTop     = theme.palette.mode === 'dark' ? 'rgba(56,189,248,0.20)' : 'rgba(56,189,248,0.18)';
   const areaBottom  = theme.palette.mode === 'dark' ? 'rgba(56,189,248,0.02)' : 'rgba(0,0,0,0.00)';
 
+  const rangeSelect = showRangeSelect && onRangeChange ? (
+    <Box
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      sx={{ display: 'inline-flex' }}
+    >
+      <FormControl size="small" sx={{ minWidth: 84 }}>
+        <Select
+          value={range}
+          onChange={(e) => onRangeChange(e.target.value as SparklineRange)}
+          sx={{ fontSize: 12, height: 30 }}
+        >
+          <MenuItem value="30d">30d</MenuItem>
+          <MenuItem value="3m">3m</MenuItem>
+          <MenuItem value="1y">1y</MenuItem>
+          <MenuItem value="5y">5y</MenuItem>
+        </Select>
+      </FormControl>
+    </Box>
+  ) : null;
+
   return (
-    <Box sx={{ mb: 2 }}>
+    <Box sx={{ mb: 2, position: 'relative' }}>
       {showHeader && (
         <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 1, gap: 1 }}>
           <Typography variant="subtitle1" color="text.secondary">
-            30-day price
+            {RANGE_LABEL[range]} price
           </Typography>
           <Typography variant="caption" sx={{ color: pct >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}>
             {pct >= 0 ? '▲' : '▼'} {pct.toFixed(1)}%
@@ -137,8 +181,15 @@ export default function SparklineRe({ data, height = 220, showHeader = true }: P
           <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
             ({n} pts)
           </Typography>
+          {rangeSelect}
         </Box>
       )}
+
+      {!showHeader && rangeSelect ? (
+        <Box sx={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }}>
+          {rangeSelect}
+        </Box>
+      ) : null}
 
       <Box sx={{ height, bgcolor: 'background.paper', borderRadius: 2, px: 1, pt: 1 }}>
         <ResponsiveContainer width="100%" height="100%">

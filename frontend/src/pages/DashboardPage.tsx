@@ -23,7 +23,7 @@ import {
 } from '@mui/material';
 import dayjs from 'dayjs';
 import { useQueries } from '@tanstack/react-query';
-import SparklineRe from '@/features/detail/SparklineRe';
+import SparklineRe, { SparklineRange } from '@/features/detail/SparklineRe';
 import {
   getGetApiV1InstrumentsSymbolDetailQueryOptions,
   useGetApiV1Positions,
@@ -235,19 +235,28 @@ export default function Dashboard() {
 
   const positions = (positionsQuery.data?.data as PositionOut[] | undefined) ?? [];
   const activeTrades = React.useMemo(() => positions.filter((p) => p.trade_on), [positions]);
+  const [sparklineRanges, setSparklineRanges] = React.useState<Record<string, SparklineRange>>({});
+  const rangeFor = React.useCallback(
+    (symbol: string) => sparklineRanges[symbol] ?? '30d',
+    [sparklineRanges]
+  );
 
   const detailQueries = useQueries({
     queries: activeTrades.map((p) =>
-      getGetApiV1InstrumentsSymbolDetailQueryOptions(p.symbol, undefined, {
-        axios: { baseURL: '' },
-        query: {
-          enabled: !!p.symbol,
-          refetchInterval: refetchIntervalMs || false,
-          refetchOnWindowFocus: false,
-          refetchOnReconnect: false,
-          select: (res) => res.data as DrawerDetail,
-        },
-      })
+      getGetApiV1InstrumentsSymbolDetailQueryOptions(
+        p.symbol,
+        { sparkline_window: rangeFor(p.symbol) } as any,
+        {
+          axios: { baseURL: '' },
+          query: {
+            enabled: !!p.symbol,
+            refetchInterval: refetchIntervalMs || false,
+            refetchOnWindowFocus: false,
+            refetchOnReconnect: false,
+            select: (res) => res.data as DrawerDetail,
+          },
+        }
+      )
     ),
   });
 
@@ -520,7 +529,15 @@ export default function Dashboard() {
                       </Typography>
                     </Stack>
                     <Box sx={{ cursor: 'pointer' }} onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? poolData?.as_of)}>
-                      <SparklineRe data={sparkData as any} height={180} showHeader={false} />
+                      <SparklineRe
+                        data={sparkData as any}
+                        height={180}
+                        showHeader={false}
+                        range={rangeFor(p.symbol)}
+                        onRangeChange={(next) =>
+                          setSparklineRanges((prev) => ({ ...prev, [p.symbol]: next }))
+                        }
+                      />
                     </Box>
                     <Stack direction="row" spacing={2} sx={{ mt: 0.5, mb: 0.5, flexWrap: 'wrap' }}>
                       <Stack spacing={0} minWidth={120}>

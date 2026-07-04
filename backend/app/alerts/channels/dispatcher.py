@@ -69,7 +69,7 @@ def deliver_event(
     event: Dict[str, Any],
     content: Dict[str, str],            # {"title": ..., "body": ...}
     channel_contents: Dict[str, Dict[str, str]] | None,
-    channels_cfg: Dict[str, Any],       # effective config: {"ntfy":{...}, "email":{...}, "webhook":{...}}
+    channels_cfg: Dict[str, Any],       # effective config: {"ntfy":{...}, "email":{...}, "webhook":{...}, "windows_toast":{...}}
     send_policy: Dict[str, Any] | None,
     quiet_hours: Dict[str, Any] | None,
     local_tz: str,
@@ -102,6 +102,9 @@ def deliver_event(
     ntfy_rate = int(rate_cfg.get("ntfy_per_minute", 0))
     email_rate = int(rate_cfg.get("email_per_minute", 0))
     webhook_rate = int(rate_cfg.get("webhook_per_minute", 0))
+    # windows_toast has no real network cost; default to unlimited (0) unless
+    # explicitly throttled in send_policy.rate_limit.windows_toast_per_minute.
+    windows_toast_rate = int(rate_cfg.get("windows_toast_per_minute", 0))
 
     # Helpers to run a channel with attempts / rate / quiet handling
     def run_channel(name: str, sender_func, limit_per_min: int, chan_cfg: dict[str, Any]):
@@ -170,15 +173,18 @@ def deliver_event(
     from .ntfy import send as send_ntfy
     from .email import send as send_email
     from .webhook import send as send_webhook
+    from .windows_toast import send as send_windows_toast
 
     # Dispatch
     cfg_ntfy = (channels_cfg or {}).get("ntfy") or {}
     cfg_email = (channels_cfg or {}).get("email") or {}
     cfg_hook = (channels_cfg or {}).get("webhook") or {}
+    cfg_toast = (channels_cfg or {}).get("windows_toast") or {}
 
     run_channel("ntfy", send_ntfy, ntfy_rate, cfg_ntfy)
     run_channel("email", send_email, email_rate, cfg_email)
     run_channel("webhook", send_webhook, webhook_rate, cfg_hook)
+    run_channel("windows_toast", send_windows_toast, windows_toast_rate, cfg_toast)
 
     # Save summary back to the event row
     P.update_event_channels_summary(conn, event_id=event["id"], summary=summary)

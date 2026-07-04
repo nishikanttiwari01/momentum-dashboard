@@ -5,14 +5,76 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.core.db import get_session
-from app.schemas import AlertEvent
+from app.repos.interfaces.base import AlertRuleVO
+from app.repos.sql.alerts_repo import SqlAlertsRepo
+from app.schemas import AlertEvent, AlertState, AlertRule, Channels
 
 router = APIRouter()
+
+
+class AlertRuleCreate(BaseModel):
+    symbol: str
+    rule_type: str
+    rule_value: Optional[str] = None
+    channels: List[str] = []
+    enabled: bool = True
+
+
+def _channels_from_list(channels: List[str] | None) -> Channels:
+    normalized = {str(channel or "").strip().lower() for channel in (channels or [])}
+    return Channels(
+        email="email" in normalized,
+        desktop="desktop" in normalized,
+        whatsapp="whatsapp" in normalized,
+    )
+
+
+def _state_from_rule(rule: AlertRuleVO) -> AlertState:
+    conditions: Dict[str, Any] = {}
+    if rule.rule_type:
+        conditions[rule.rule_type] = rule.rule_value
+    return AlertState(
+        id=rule.id,
+        rule=AlertRule(
+            symbol=str(rule.symbol or "").upper(),
+            enabled=bool(rule.enabled),
+            channels=_channels_from_list(rule.channels),
+            conditions=conditions or None,
+        ),
+        last_fired_at=None,
+        muted_until=None,
+    )
+
+
+@router.get("/alerts", response_model=List[AlertState])
+def list_alert_rules(session: Session = Depends(get_session)) -> List[AlertState]:
+    repo = SqlAlertsRepo(session)
+    return [_state_from_rule(rule) for rule in repo.list_alerts()]
+
+
+@router.post("/alerts", response_model=AlertState, status_code=status.HTTP_201_CREATED)
+def create_alert_rule(payload: AlertRuleCreate, session: Session = Depends(get_session)) -> AlertState:
+    repo = SqlAlertsRepo(session)
+    created = repo.create_alert(
+        AlertRuleVO(
+            id=None,
+            symbol=str(payload.symbol or "").upper(),
+            rule_type=payload.rule_type,
+            rule_value=payload.rule_value,
+            channels=[str(channel) for channel in (payload.channels or [])],
+            enabled=bool(payload.enabled),
+            created_at=None,  # type: ignore[arg-type]
+            updated_at=None,  # type: ignore[arg-type]
+        )
+    )
+    session.commit()
+    return _state_from_rule(created)
 
 
 def _parse_datetime(value: str) -> Optional[datetime]:

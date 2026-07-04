@@ -8,9 +8,16 @@ from typing import List, Tuple, Optional
 # Default NDJSON master produced by symbol_master.py
 ASSETS_DIR = Path(__file__).resolve().parents[3] / "app" / "assets" / "presets"
 DEFAULT_NDJSON = ASSETS_DIR / "nse_master.ndjson"
+PRESET_FILES = {
+    "NIFTY50": ASSETS_DIR / "NIFTY50.csv",
+    "NIFTY100": ASSETS_DIR / "NIFTY100.csv",
+    "NIFTY500": ASSETS_DIR / "NIFTY500.csv",
+    "MIDCAP": ASSETS_DIR / "MIDCAP.csv",
+    "SMALLCAP": ASSETS_DIR / "SMALLCAP.csv",
+}
 
 # Supported presets (single universe based on master NDJSON)
-PRESETS = {"ALL"}
+PRESETS = {"ALL", *PRESET_FILES.keys()}
 
 
 class UniverseNdjsonRepo:
@@ -53,8 +60,22 @@ class UniverseNdjsonRepo:
         if preset not in PRESETS:
             raise ValueError(f"Unknown preset: {preset}")
 
-        recs = self._load_records()
-        symbols_raw = [str(r.get("symbol") or "").strip().upper() for r in recs if r.get("symbol")]
+        if preset == "ALL":
+            recs = self._load_records()
+            symbols_raw = [str(r.get("symbol") or "").strip().upper() for r in recs if r.get("symbol")]
+        else:
+            symbols_raw = []
+            preset_file = PRESET_FILES.get(preset)
+            if preset_file and preset_file.exists():
+                try:
+                    with preset_file.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            symbol = line.strip().upper()
+                            if symbol:
+                                symbols_raw.append(symbol)
+                except Exception:
+                    symbols_raw = []
+
         symbols: List[str] = []
         for s in symbols_raw:
             if self.suffix and s and not s.endswith(self.suffix):

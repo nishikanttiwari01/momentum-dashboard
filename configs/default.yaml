@@ -79,30 +79,135 @@ data:
 # ------------------------------------------------------------
 # NEWS INGEST
 # ------------------------------------------------------------
+# NOTE on shape (this matters):
+#   The in-process news pipeline in `backend/app/pipeline/news_provider.py`
+#   reads feeds out of `news.sources` as a DICT keyed by category
+#   (`official`, `google_news`, optional `nse`), NOT the legacy
+#   `news.providers` list. A mismatch here = zero hits ingested. If you're
+#   adding a source, pick the right slot below.
 news:
   enabled: false
+  #refresh_minutes: ${NEWS_REFRESH_MINUTES:-60}   # scheduler polls this often
   refresh_minutes: 60
   since_days: 7
-  concurrency: ${NEWS_CONCURRENCY:-10}
-  shard_size: ${NEWS_SHARD_SIZE:-50}
-  providers:
-    - name: google_news
+  trading_timezone: Asia/Kolkata
+  #concurrency: ${NEWS_CONCURRENCY:-4}
+  #shard_size: ${NEWS_SHARD_SIZE:-50}
+  concurrency: 4
+  shard_size: 50
+
+  storage:
+    parquet_root: data/parquet/news_clusters
+    duckdb_path: data/index/news.duckdb
+    partition_format: YYYY-MM-DD
+    retention_days: 365
+
+  ingest:
+    accept_local_only: true
+    require_token: false
+    token_env: NEWS_INGEST_TOKEN
+    upsert_on_cluster_id: true
+
+  # ── SOURCES (dict, read by news_provider._collect_hits) ─────────────────
+  sources:
+    # RSS / JSON feeds we poll directly. `mode: rss` (default) or `nse_json`.
+    official:
+      - name: NSE Announcements
+        mode: nse_json
+        url: https://www.nseindia.com/api/corporate-announcements?index=equities
+        weight: 1.0
+      - name: SEBI Press/Filings
+        mode: rss
+        url: https://www.sebi.gov.in/sebiweb/rss/news.xml
+        weight: 1.0
+      - name: Economic Times Markets
+        mode: rss
+        url: https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms
+        weight: 0.9
+      - name: Moneycontrol Business
+        mode: rss
+        url: https://www.moneycontrol.com/rss/business.xml
+        weight: 0.9
+      - name: Business Standard Markets
+        mode: rss
+        url: https://www.business-standard.com/rss/markets-106.rss
+        weight: 0.9
+      - name: Mint Markets
+        mode: rss
+        url: https://www.livemint.com/rss/markets
+        weight: 0.9
+
+    # Google News site-filter search (per-symbol query). Disable to cut
+    # outbound QPS aggressively during market hours.
+    google_news:
       enabled: true
-      lang: en
-      country: in
-    - name: nse_announcements
-      enabled: true
+      sites:
+        - moneycontrol.com
+        - livemint.com
+        - economictimes.com
+        - business-standard.com
+        - financialexpress.com
+        - cnbctv18.com
+        - reuters.com
+      query_template: "site:{site} ({symbol} OR {alias})"
+      max_per_site: 6
+      lookback_minutes: 720
+
+  # Optional whitelist used by attribution/scoring; not required for ingest.
   sources_whitelist:
     - Reuters
     - Economic Times
     - Moneycontrol
     - Business Standard
     - Mint
+
+  extraction:
+    user_agent: MomentumSuiteBot/1.0 (+local)
+    connect_timeout_sec: 12
+    read_timeout_sec: 20
+    retries: 3
+    allow_languages: [en]
+    readabilize: true
+    keep_paywalled_title_only: true
+
+  mapping:
+    nse_master_csv: configs/nse_master.csv
+    aliases_csv: configs/symbol_aliases.csv
+    prefer_isin_for_filings: true
+
+  clustering:
+    method: minhash
+    title_shingle_size: 3
+    minhash_threshold: 0.82
+    time_merge_window_min: 240
+    max_cards_per_symbol_per_day: 24
+
+  run_modes:
+    intraday:
+      cohorts:
+        watchlist:
+          include: true
+        top_movers:
+          include: true
+          top_gainers_count: 10
+          top_losers_count: 10
+          min_abs_change_pct: 1.0
+        score_threshold:
+          include: true
+          score_type: full
+          min_score: 70
+          max_symbols: 100
+      fetch:
+        since: 60m
+        max_symbols_per_run: 250
+        max_items_per_symbol: 8
+
   sentiment:
     enabled: true
     model: builtin
     positive_min: 0.2
     negative_max: -0.2
+
   routing:
     digest_include_top_per_symbol: 3
     digest_include_global_top: 10
@@ -139,12 +244,15 @@ profiles:
     # EOD breakout profile (ALL 9 gates counted)
     swing_eod:
       enabled: true
-      # thresholds
-      min_score: 70
+      # thresholds — lowered score to 65 to catch setups earlier (was 70).
+      # pivot_clear extended to -2% so we flag stocks approaching the breakout
+      # before they've already run 4-6%; entry is at next-day open where the
+      # actual break happens, so we want to be alerted *before* not *after*.
+      min_score: 65
       prox52w_min_pct: -8
-      pivot_clear_pct: [-0.3, 6.0]
+      pivot_clear_pct: [-2.0, 5.0]
       base_len_min_bars: 5
-      relvol20_min: 1.3
+      relvol20_min: 1.2
       adx14_min: 22
       atr_pct: [2.0, 8.0]
       day_change_max_pct: 6.0
@@ -211,18 +319,30 @@ profiles:
       breakeven:
         enabled: true
         gain_pct: 5.0
-        retrace_to_pct: 0.10
-        intraday_enabled: false
+        # retrace_to_pct = 0.03 locks in +3% once arm fires at +5%.
+        # (Old value 0.0 = exact breakeven was too aggressive; any intraday
+        # wick to entry price triggered exit even in healthy uptrends.)
+        retrace_to_pct: 0.03
+        intraday_enabled: true
       targets:
+        # R-ratio based targets replace fixed %. Target = entry + risk * r_ratio.
+        # With ATR stop at ~4-5% risk and r_ratio=2.0, target ≈ 8-10%.
+        # t1_gain_pct is kept as a fallback if r_ratio_target is null.
         t1_gain_pct: 10.0
         t2_gain_pct: 15.0
         allow_intraday: true
+        r_ratio_target: 2.0      # target = entry + 2 × risk (adaptive)
+        r_ratio_target_t2: 3.0   # T2   = entry + 3 × risk
+        t1_partial_exit_pct: 50.0  # sell 50% at T1, trail rest to breakeven
       weakness:
         enabled: true
         eod_only: true
-        fast_ema_period: 10
-        max_closes_below_fast_ema: 2
-        confirm_relvol_min: 1.2
+        # EMA20 (was EMA10) is smoother — avoids premature exits on brief dips.
+        # 3 consecutive closes (was 2) + relvol 1.5 (was 1.2) + must be below
+        # entry to confirm real weakness, not just a mid-trend consolidation.
+        fast_ema_period: 20
+        max_closes_below_fast_ema: 3
+        confirm_relvol_min: 1.5
       failed_breakout:
         enabled: true
         eod_only: true
@@ -243,10 +363,20 @@ profiles:
 selection_policy:
   apply_at_buy: false
   apply_at_selection: true
-  weekly_quota: 1
+  weekly_quota: 3
   max_open_positions: 5
-  sector_cooldown_days: 10
-  symbol_cooldown_days: 30
+  # Risk-based position sizing: each trade risks exactly this % of portfolio.
+  # position_size = (portfolio * risk_pct_per_trade%) / (entry - stop).
+  risk_pct_per_trade: 1.5
+  # How many BUY_SELECTED picks a single scan can produce. Prior default of 1
+  # was the "selection bottleneck" — a 5-slot book filled at most once per
+  # scan, so even a strong setup day took multiple scans to fill.
+  top_n_per_run: 2
+  # Cap per-run picks from the same sector to prevent a single hot sector
+  # (e.g. PSU Banks on a rally day) from crowding out diversification.
+  max_per_sector_per_run: 1
+  sector_cooldown_days: 5
+  symbol_cooldown_days: 14
   regime:
     enabled: true
     index_symbol: "NIFTY_50"
@@ -258,7 +388,7 @@ selection_policy:
       enabled: false
       min_ratio: 1.2
       lookback_days: 5
-  tiebreaker: R_multiple_then_score
+  tiebreaker: weighted_composite
   r_multiple:
     stop_from: "profiles.sell.common.stop"
     target_from: "profiles.sell.common.targets.t1_gain_pct"

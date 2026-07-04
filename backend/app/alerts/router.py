@@ -71,6 +71,20 @@ def _resolve_topic_deliveries(
             "to": recipients,
         }
 
+    # Windows toast: desktop popup + sound. Only emits if a topic actually
+    # lists "windows_toast" AND the top-level config has enabled=true. The
+    # channel itself further checks an in-process runtime flag so users can
+    # silence toasts without restarting the server (see set_runtime_enabled).
+    if "windows_toast" in channels and getattr(delivery, "windows_toast", None) is not None:
+        toast_cfg = delivery.windows_toast
+        if getattr(toast_cfg, "enabled", False):
+            out["windows_toast"] = {
+                "enabled": True,
+                "play_sound": bool(getattr(toast_cfg, "play_sound", True)),
+                "sound_alias": getattr(toast_cfg, "sound_alias", "SystemAsterisk"),
+                "app_id": getattr(toast_cfg, "app_id", "Momentum Alerts"),
+            }
+
     return out
 
 
@@ -180,8 +194,45 @@ def route_event(
         bar_minutes = int(metadata.get("intraday_bar_minutes", 15))
         bucket_ord, bucket_label = buckets.compute_intraday_bucket(now_utc, tz, market_open, bar_minutes)
 
-    if D.exists_event(conn, event_code, symbol, trading_date, mode.value, bucket_ord):
-        return None
+    # Best-in-session upgrade: instead of hard-skipping any repeat within the
+    # same (rule_code, symbol, trading_date, mode, bucket_ord) slot, check
+    # whether the new signal is materially stronger. If yes, rewrite the
+    # stored row (no re-dispatch, to avoid notification noise). If no, skip.
+    existing = D.get_existing_event(conn, event_code, symbol, trading_date, mode.value, bucket_ord)
+    if existing is not None:
+        existing_id, existing_score = existing
+        # Pull upgrade delta from alerts_cfg.metadata (falls back to 5.0 pts).
+        # Set to a large number (e.g. 9999) to effectively disable upgrades.
+        _meta = alerts_cfg.metadata or {}
+        try:
+            upgrade_delta = float(_meta.get("upgrade_delta_score", 5.0))
+        except (TypeError, ValueError):
+            upgrade_delta = 5.0
+
+        should_upgrade = (
+            score_at_fire is not None
+            and existing_score is not None
+            and float(score_at_fire) >= float(existing_score) + upgrade_delta
+        )
+        if not should_upgrade:
+            return None
+
+        # Upgrade path: re-render templates against the fresh context, rewrite
+        # the stored row in place, and return the existing id. We deliberately
+        # do NOT re-dispatch channels — the first notification is sufficient;
+        # the upgrade is for record-keeping (analytics / UI / replay) only.
+        upgraded_content = _render_channel_content(alerts_cfg, event_code, context)
+        P.update_event_on_upgrade(
+            conn,
+            event_id=existing_id,
+            title_rendered=upgraded_content["email"]["title"],
+            body_rendered=upgraded_content["email"]["body"],
+            score_at_fire=score_at_fire,
+            next_action_code=next_action_code,
+            context_json=context,
+            fired_at_utc=now_utc,
+        )
+        return existing_id
 
     rendered_content = _render_channel_content(alerts_cfg, event_code, context)
     base_content = (

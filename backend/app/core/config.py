@@ -265,6 +265,12 @@ class StrategySellTargetsConfig(BaseModel):
     t1_gain_pct: float = 10.0
     t2_gain_pct: float = 15.0
     allow_intraday: bool = True
+    # R-ratio based targets (preferred over fixed pct): target = entry + risk * r_ratio.
+    # When set, these override t1_gain_pct / t2_gain_pct in selection_service.
+    r_ratio_target: float | None = None       # e.g. 2.0 → target at 2× risk
+    r_ratio_target_t2: float | None = None    # e.g. 3.0 → T2 at 3× risk
+    # Partial exit at T1: sell this fraction and trail the rest to breakeven.
+    t1_partial_exit_pct: float = 50.0
 
 
 class StrategySellWeaknessConfig(BaseModel):
@@ -363,6 +369,17 @@ class StrategySelectionPolicyConfig(BaseModel):
     max_open_positions: int = 5
     sector_cooldown_days: int = 10
     symbol_cooldown_days: int = 30
+    # Risk-based position sizing: allocate this % of portfolio per trade so that
+    # a stop hit costs exactly risk_pct_per_trade% of portfolio.
+    # e.g. 1.5 → risk ₹1.5 per ₹100 of book per trade.
+    risk_pct_per_trade: float = 1.5
+    # Cap how many BUY_SELECTED picks a single screening run can emit. Default
+    # 2 matches a "3-5 position book" target while preventing a single strong
+    # session from filling every slot at once.
+    top_n_per_run: int = 2
+    # Diversification helper: cap picks per sector within a single run so a
+    # momentum day in one sector (e.g. Banks) doesn't crowd out the book.
+    max_per_sector_per_run: int = 1
     regime: StrategySelectionRegimeConfig = StrategySelectionRegimeConfig()
     tiebreaker: str = "R_multiple_then_score"
     r_multiple: StrategySelectionRMultipleConfig = StrategySelectionRMultipleConfig()
@@ -533,11 +550,28 @@ class AlertDeliveryNtfyConfig(BaseModel):
     topic_low: str | None = None
 
 
+class AlertDeliveryWindowsToastConfig(BaseModel):
+    """Windows desktop toast + sound channel.
+
+    Enabled only when the backend is running on Windows. Falls back to a
+    SKIPPED delivery on non-Windows hosts (dev machines) without erroring.
+    """
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    play_sound: bool = True
+    # winsound system alias: SystemAsterisk | SystemExclamation | SystemHand |
+    # SystemQuestion | SystemDefault
+    sound_alias: str = "SystemAsterisk"
+    app_id: str = "Momentum Alerts"
+
+
 class AlertDeliveryConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     email: AlertDeliveryEmailConfig = AlertDeliveryEmailConfig()
     ntfy: AlertDeliveryNtfyConfig = AlertDeliveryNtfyConfig()
+    windows_toast: AlertDeliveryWindowsToastConfig = AlertDeliveryWindowsToastConfig()
 
 
 class AlertEmailTemplate(BaseModel):
@@ -604,12 +638,27 @@ class NewsCfg(BaseModel):
     Keep sub-sections as Dict[str, Any] so your YAML can evolve
     (sources, clustering, consensus, summarizer, attribution, run_modes, etc.).
     Only a few top-level toggles are typed for convenience.
+
+    Note: ``extra="allow"`` is explicit — the news YAML holds a lot of
+    operator-tunable fields (whitelists, routing knobs, sentiment hints)
+    that the service reads as dicts and we don't want pydantic silently
+    dropping unknown keys.
     """
+    model_config = ConfigDict(extra="allow")
+
     enabled: bool = True
     trading_timezone: str = "Asia/Kolkata"
+
+    # Top-level scheduler knobs read by the in-process news ingest job.
+    refresh_minutes: int = 60
+    since_days: int = 7
+    concurrency: int = 4
+    shard_size: int = 50
+
     storage: Dict[str, Any] = Field(default_factory=dict)
     ingest: Dict[str, Any] = Field(default_factory=dict)
     sources: Dict[str, Any] = Field(default_factory=dict)
+    sources_whitelist: List[str] = Field(default_factory=list)
     extraction: Dict[str, Any] = Field(default_factory=dict)
     mapping: Dict[str, Any] = Field(default_factory=dict)
     clustering: Dict[str, Any] = Field(default_factory=dict)
@@ -622,6 +671,8 @@ class NewsCfg(BaseModel):
     on_demand: Dict[str, Any] = Field(default_factory=dict)
     trigger: Dict[str, Any] = Field(default_factory=dict)
     fallbacks: Dict[str, Any] = Field(default_factory=dict)
+    sentiment: Dict[str, Any] = Field(default_factory=dict)
+    routing: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Settings(BaseModel):
@@ -893,6 +944,16 @@ def load() -> Settings:
         data["strategy"] = _env_interpolate_obj(data["strategy"])
     else:
         data["strategy"] = {}
+
+    # Interpolate ${ENV} / ${ENV:-default} placeholders across the rest of the
+    # config (news.*, scheduler.*, storage.*, etc.) so YAML like
+    # "refresh_minutes: ${NEWS_REFRESH_MINUTES:-60}" resolves to an int before
+    # Pydantic validation.
+    for _k in list(data.keys()):
+        if _k in ("alerts", "strategy"):
+            continue  # already interpolated above
+        if isinstance(data[_k], (dict, list, str)):
+            data[_k] = _env_interpolate_obj(data[_k])
 
     try:
         return Settings(**data)

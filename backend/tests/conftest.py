@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import tempfile
 import pytest
 
 try:
@@ -15,6 +16,18 @@ except Exception:  # pragma: no cover
 backend_dir = Path(__file__).resolve().parents[1]  # .../backend
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
+
+# Default tests to deterministic local data unless explicitly overridden.
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("APP_DATA_ADAPTER", "stub")
+os.environ.setdefault("APP_DEFAULT_UNIVERSE", "NIFTY50")
+_test_db_path = Path(tempfile.gettempdir()) / f"momentum-dashboard-tests-{os.getpid()}.db"
+for path in (_test_db_path, _test_db_path.with_suffix(".alembic.lock")):
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+os.environ.setdefault("APP_SQLITE_PATH", str(_test_db_path))
 
 # Use the real app (lifespan calls init_sqlite and disposes engine on shutdown)
 from app.main import app  # noqa: E402

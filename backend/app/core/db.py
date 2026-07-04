@@ -24,6 +24,15 @@ _SessionLocal: Optional[sessionmaker] = None
 _current_db_url: Optional[str] = None
 
 
+def _ensure_initialized() -> None:
+    """
+    Lazily initialize the DB for direct service/test callers that do not go
+    through FastAPI lifespan startup.
+    """
+    if _SessionLocal is None or _engine is None:
+        init_sqlite()
+
+
 def _alembic_upgrade_head(sqlite_path: str) -> None:
     """
     Run Alembic migrations programmatically against the provided SQLite file.
@@ -129,12 +138,14 @@ def dispose_engine():
 
 
 def get_sessionmaker() -> sessionmaker:
+    _ensure_initialized()
     if _SessionLocal is None:
         raise RuntimeError("DB not initialized. Call init_sqlite() first.")
     return _SessionLocal
 
 
 def get_engine():
+    _ensure_initialized()
     if _engine is None:
         raise RuntimeError("DB not initialized. Call init_sqlite() first.")
     return _engine

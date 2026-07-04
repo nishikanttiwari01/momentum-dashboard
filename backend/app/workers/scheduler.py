@@ -24,6 +24,19 @@ from app.workers.jobs import post_scan_jobs
 from app.repos.parquet import datasets  # <-- added (for root + target hint)
 from zoneinfo import ZoneInfo
 
+# Lazy pyarrow for reading the just-written intraday scores parquet.
+# Kept optional (scheduler still starts even if pyarrow is missing),
+# but the intraday alert path cannot populate metrics without it and
+# will skip loudly in that case.
+try:
+    import pyarrow.dataset as _pa_ds  # type: ignore
+    import pyarrow.compute as _pa_compute  # type: ignore
+except Exception:  # pragma: no cover
+    _pa_ds = None  # type: ignore
+    _pa_compute = None  # type: ignore
+
+import math  # for NaN sanitisation in metric values
+
 # === NEW: alerts orchestrator integration (non-invasive) ===
 try:
     from app.alerts.types import Mode as _AlertMode
@@ -162,46 +175,143 @@ def _resolve_alerts_cfg_dict() -> Dict[str, Any] | None:
         return None
 
 
-def _guess_symbols_from_result(result) -> list[str]:
-    """
-    Best-effort ways to get the universe symbols from the screening result.
-    We DO NOT hard-depend on any specific attribute. If we can't find symbols,
-    we return [] and skip alerts gracefully.
-    """
-    # Common patterns in services: result.universe_symbols, result.symbols
-    for attr in ("universe_symbols", "symbols"):
-        syms = getattr(result, attr, None)
-        if syms:
-            try:
-                return list(syms)
-            except Exception:
-                pass
-    # As a last resort, try a snapshot-based hint (do not read parquet here).
-    # Keep empty to avoid breaking if nothing is available.
-    return []
+def _sanitize_metric_value(value: Any) -> Any:
+    """Match the sanitisation used by backfill's EOD metric loader."""
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None
+        return value
+    if isinstance(value, list):
+        return [_sanitize_metric_value(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _sanitize_metric_value(v) for k, v in value.items()}
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return value
+    return value
 
 
-def _make_metric_getter_for_intraday(result) -> Callable[[str, str], Any]:
+def _load_symbols_and_metrics_from_intraday_scores(
+    snapshot_path: Optional[str],
+) -> tuple[list[str], Dict[str, Dict[str, Any]]]:
     """
-    Provide a metric_getter(symbol, name) for orchestrator that is safe even if the
-    underlying source isn't available here. We only log and return None on misses.
-    The real metric plumbing can be wired in the backfill/worker where the data loaders live.
-    """
-    # If the screening service exposes one (ideal), use it.
-    mg = getattr(result, "metric_getter", None)
-    if callable(mg):
-        return mg
+    Load (symbols, metrics) from the intraday scores parquet just written by run_screening.
+    Mirrors backfill._load_metrics_from_daily_scores so the two alert paths behave the same way.
 
-    # Fallback: a null getter that returns None (filters will fail -> no alerts).
-    def _null_getter(symbol: str, name: str):
+    Returns ([], {}) on any failure — callers should treat that as "no alerts this run"
+    and log a loud reason, not silently skip.
+    """
+    if not snapshot_path:
+        log.warning("alerts_intraday_snapshot_path_missing")
+        return [], {}
+
+    if _pa_ds is None or _pa_compute is None:
+        log.warning(
+            "alerts_intraday_pyarrow_missing",
+            extra={"snapshot_path": snapshot_path},
+        )
+        return [], {}
+
+    target = Path(snapshot_path)
+    if not target.exists():
+        log.warning(
+            "alerts_intraday_snapshot_missing",
+            extra={"snapshot_path": snapshot_path},
+        )
+        return [], {}
+
+    try:
+        dataset = _pa_ds.dataset(
+            str(target),
+            format="parquet",
+            partitioning="hive",
+            exclude_invalid_files=True,
+        )
+        table = dataset.to_table()
+    except Exception as exc:
+        log.warning(
+            "alerts_intraday_parquet_read_failed",
+            extra={"snapshot_path": snapshot_path, "error": str(exc)},
+        )
+        return [], {}
+
+    if table.num_rows == 0:
+        log.info(
+            "alerts_intraday_parquet_empty",
+            extra={"snapshot_path": snapshot_path},
+        )
+        return [], {}
+
+    metrics: Dict[str, Dict[str, Any]] = {}
+    symbols: list[str] = []
+    for record in table.to_pylist():
+        sym_raw = record.get("symbol")
+        symbol = str(sym_raw).strip().upper() if sym_raw else ""
+        if not symbol:
+            continue
+        if symbol in metrics:
+            continue
+        symbol_metrics: Dict[str, Any] = {}
+        for key, value in record.items():
+            lowered = str(key).strip().lower()
+            symbol_metrics[lowered] = _sanitize_metric_value(value)
+        metrics[symbol] = symbol_metrics
+        symbols.append(symbol)
+
+    log.info(
+        "alerts_intraday_metrics_loaded",
+        extra={"snapshot_path": snapshot_path, "symbols": len(symbols)},
+    )
+    return symbols, metrics
+
+
+# Aliases kept in lockstep with backfill._make_metric_getter_from_metrics so the
+# intraday and EOD filter paths see the same metric surface.
+_METRIC_ALIASES: Dict[str, list[str]] = {
+    "score": ["score", "setup_score", "quality_score"],
+    "relvol20": ["relvol20", "relvol_20", "rel_volume_20d"],
+    "day_change_pct": ["day_change_pct", "pct_change", "change_pct"],
+    "pivot_clear_pct": ["pivot_clear_pct", "bp_clear_pct", "breakout_clear_pct"],
+    "rsi14": ["rsi14", "rsi_14"],
+    "adx14": ["adx14", "adx_14"],
+    "atr10_pct": ["atr10_pct", "atr10p", "atr10_pct_of_price"],
+    "liquidity_rupees": ["liquidity_rupees", "turnover_rupees", "avg_turnover_20d"],
+    "next_action_code": ["next_action_code", "next_action", "action_code"],
+}
+
+
+def _make_metric_getter_from_metrics(
+    metrics: Dict[str, Dict[str, Any]]
+) -> Callable[[str, str], Any]:
+    """Return metric_getter(symbol, name) with lowercase + alias lookup."""
+
+    def getter(symbol: str, name: str):
+        m = metrics.get((symbol or "").upper())
+        if not m:
+            return None
+        key = (name or "").strip().lower()
+        if key in m:
+            return m[key]
+        for alias in _METRIC_ALIASES.get(key, []):
+            if alias in m:
+                return m[alias]
         return None
-    return _null_getter
+
+    return getter
 
 
 def _run_intraday_alerts(session, *, trading_day: date, result) -> None:
     """
-    Non-invasive alerts trigger: only runs if alerts orchestrator & cfg are present,
-    and we can obtain a non-empty symbol list. Otherwise, no-op.
+    Trigger the alerts orchestrator in INTRADAY mode against the symbols/metrics
+    from the just-written intraday scores parquet (result.snapshot_path).
+
+    Previously this function used a null metric_getter as a "safe" fallback. That
+    caused every filter in alerts/filters.py to return None -> filter failure, so
+    the INTRADAY alert path silently produced zero events on every scheduled scan.
+    The fix: load symbols + metrics from the run's own parquet snapshot and build
+    a real metric_getter (same alias set as the EOD path in backfill.py).
     """
     if not _ALERTS_AVAILABLE:
         log.info("alerts_orchestrator_missing_skip")
@@ -212,12 +322,18 @@ def _run_intraday_alerts(session, *, trading_day: date, result) -> None:
         log.info("alerts_cfg_missing_skip")
         return
 
-    symbols = _guess_symbols_from_result(result)
+    snapshot_path = getattr(result, "snapshot_path", None)
+    symbols, metrics = _load_symbols_and_metrics_from_intraday_scores(snapshot_path)
     if not symbols:
-        log.info("alerts_symbols_missing_skip", extra={"reason": "no_symbols_from_result"})
+        # _load_... has already logged the reason (pyarrow missing, snapshot missing,
+        # empty table, etc.). We do NOT fall back to a null getter here any more.
+        log.info(
+            "alerts_intraday_skip_no_metrics",
+            extra={"trading_date": trading_day.isoformat(), "snapshot_path": snapshot_path},
+        )
         return
 
-    metric_getter = _make_metric_getter_for_intraday(result)
+    metric_getter = _make_metric_getter_from_metrics(metrics)
 
     now_utc = datetime.now(timezone.utc)
     try:
@@ -242,7 +358,14 @@ def _run_intraday_alerts(session, *, trading_day: date, result) -> None:
             metric_getter=metric_getter,
             run_ctx={"triggered_by": "SCHEDULE"},
         )
-        log.info("alerts_intraday_created", extra={"count": len(created_ids), "trading_date": trading_day.isoformat()})
+        log.info(
+            "alerts_intraday_created",
+            extra={
+                "count": len(created_ids),
+                "trading_date": trading_day.isoformat(),
+                "symbols_considered": len(symbols),
+            },
+        )
     except Exception as e:
         log.exception("alerts_intraday_failed", extra={"error": str(e)})
     finally:
@@ -298,15 +421,27 @@ def _run_once(universe: Optional[str]) -> None:
         extra={"universe": universe or "default", "trading_date": trading_day.isoformat()},
     )
 
+    # NOTE: there used to be an early-return here that skipped the scan whenever
+    # today's *daily* (EOD) partition already existed. That was both redundant
+    # (the trading-window gate above already prevents post-close scans) and
+    # harmful: intraday scans write to scores/intraday/date=... — a different
+    # partition from scores/daily/as_of=... — so the presence of a daily parquet
+    # should never block intraday scans during market hours. It also caused the
+    # only "live" alert path to fall silent as soon as any daily partition
+    # appeared (including stale files from a previous startup backfill).
+    #
+    # Behaviour now: inside the trading window we proceed with the intraday scan
+    # regardless. We keep an informational log when a daily partition is already
+    # present so ops can still see the overlap in the logs.
     if _daily_partition_has_parquet(trading_day):
         log.info(
-            "scheduled scan skipped trading_date=%s reason=%s universe=%s",
-            trading_day.isoformat(),
-            "daily_already_committed",
-            universe or "default",
-            extra={"reason": "daily_already_committed", "trading_date": trading_day.isoformat(), "universe": universe or "default"},
+            "scheduler_intraday_scan_with_daily_present",
+            extra={
+                "reason": "daily_partition_exists_but_intraday_proceeding",
+                "trading_date": trading_day.isoformat(),
+                "universe": universe or "default",
+            },
         )
-        return
 
     # Acquire a SQLAlchemy session from the existing dependency
     gen = get_session()
@@ -380,6 +515,132 @@ def _run_once(universe: Optional[str]) -> None:
         )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# News ingest job (runs independently of the scan loop).
+# This replaces the old `subprocess`-driven provider: we call _build_batch and
+# ingest_news_batch in-process so there is nothing to shell out to and nothing
+# to configure with an API base URL. Symbol cohort selection reuses the same
+# helper the news CLI uses, so "manual run" and "scheduled run" see the same
+# universe logic.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _parse_since_expr(expr: Any, fallback_minutes: int) -> int:
+    """Accept '60m' / '2h' / integer-minutes string / int. Never throw."""
+    if expr is None:
+        return max(1, int(fallback_minutes))
+    try:
+        if isinstance(expr, (int, float)):
+            return max(1, int(expr))
+        s = str(expr).strip().lower()
+        if s.endswith("m"):
+            return max(1, int(s[:-1]))
+        if s.endswith("h"):
+            return max(1, int(s[:-1]) * 60)
+        if s.isdigit():
+            return max(1, int(s))
+    except Exception:
+        pass
+    return max(1, int(fallback_minutes))
+
+
+def _run_news_once() -> None:
+    """Fire one news-ingest cycle.
+
+    Guarded so a bad feed / missing parquet / transient network error never
+    kills the APScheduler job. We log loudly and return so the next tick
+    still runs.
+    """
+    run_id = _now_key()
+    try:
+        cfg = config.load()
+        if not getattr(cfg.news, "enabled", False):
+            log.info("news_sched.disabled", extra={"run_id": run_id})
+            return
+
+        # Lazy imports: keep scheduler module import-time fast, and avoid
+        # pulling the news pipeline into processes that don't use it.
+        from app.cli.news_pull import build_intraday_symbol_set
+        from app.pipeline.news_provider import _build_batch
+        from app.services.news_service import ingest_news_batch
+
+        run_modes = getattr(cfg.news, "run_modes", {}) or {}
+        intraday = run_modes.get("intraday") if isinstance(run_modes, dict) else {}
+        intraday = intraday if isinstance(intraday, dict) else {}
+        cohorts_cfg = intraday.get("cohorts") if isinstance(intraday, dict) else {}
+        cohorts_cfg = cohorts_cfg if isinstance(cohorts_cfg, dict) else {}
+        fetch_cfg = intraday.get("fetch") if isinstance(intraday, dict) else {}
+        fetch_cfg = fetch_cfg if isinstance(fetch_cfg, dict) else {}
+
+        top_movers = cohorts_cfg.get("top_movers") if isinstance(cohorts_cfg, dict) else {}
+        top_movers = top_movers if isinstance(top_movers, dict) else {}
+        score_thr = cohorts_cfg.get("score_threshold") if isinstance(cohorts_cfg, dict) else {}
+        score_thr = score_thr if isinstance(score_thr, dict) else {}
+
+        refresh_minutes = int(getattr(cfg.news, "refresh_minutes", 60) or 60)
+        since_minutes = _parse_since_expr(fetch_cfg.get("since"), refresh_minutes)
+
+        score_include = bool(score_thr.get("include", True))
+        cohorts, rid, as_of = build_intraday_symbol_set(
+            watchlist_file=None,
+            top_gainers_count=int(top_movers.get("top_gainers_count", 10) or 10),
+            top_losers_count=int(top_movers.get("top_losers_count", 10) or 10),
+            min_abs_change_pct=float(top_movers.get("min_abs_change_pct", 1.0) or 1.0),
+            score_min=(float(score_thr.get("min_score", 70)) if score_include else None),
+            score_type=str(score_thr.get("score_type", "full") or "full"),
+            max_symbols_score_bucket=(score_thr.get("max_symbols") if score_include else None),
+        )
+        symbols = cohorts.union() if cohorts else []
+        symbol_limit = fetch_cfg.get("max_symbols_per_run")
+        if symbol_limit:
+            try:
+                if len(symbols) > int(symbol_limit):
+                    symbols = symbols[: int(symbol_limit)]
+            except Exception:
+                pass
+        if not symbols:
+            log.info(
+                "news_sched.no_symbols",
+                extra={"run_id": run_id, "rid": rid, "as_of": as_of},
+            )
+            return
+
+        tz_name = getattr(cfg.news, "trading_timezone", None) or "Asia/Kolkata"
+        try:
+            anchor = datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            anchor = datetime.now(timezone.utc)
+
+        t0 = time.perf_counter()
+        batch = _build_batch(symbols=symbols, since_minutes=since_minutes, anchor=anchor)
+        n_items = len(batch.items) if batch and getattr(batch, "items", None) else 0
+        if n_items == 0:
+            log.info(
+                "news_sched.no_items",
+                extra={
+                    "run_id": run_id,
+                    "symbols": len(symbols),
+                    "since_min": since_minutes,
+                    "ms": round((time.perf_counter() - t0) * 1000, 2),
+                },
+            )
+            return
+
+        ingest_news_batch(batch)
+        log.info(
+            "news_sched.ok",
+            extra={
+                "run_id": run_id,
+                "symbols": len(symbols),
+                "items": n_items,
+                "since_min": since_minutes,
+                "ms": round((time.perf_counter() - t0) * 1000, 2),
+            },
+        )
+    except Exception:
+        log.exception("news_sched.failed", extra={"run_id": run_id})
+
+
 def start_if_enabled() -> Optional[BackgroundScheduler]:
     """
     Start the scheduler if enabled in config.
@@ -417,6 +678,32 @@ def start_if_enabled() -> Optional[BackgroundScheduler]:
         misfire_grace_time=900,
     )
 
+    # Optional: news ingest at its own cadence. Only registered when
+    # news is enabled in config so a broken news config can't wedge the
+    # scan loop.
+    news_enabled = bool(getattr(cfg.news, "enabled", False))
+    news_interval = int(getattr(cfg.news, "refresh_minutes", 0) or 0)
+    if news_enabled and news_interval > 0:
+        sch.add_job(
+            func=_run_news_once,
+            trigger="interval",
+            minutes=max(1, news_interval),
+            id="news_every_n_minutes",
+            replace_existing=True,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=600,
+        )
+        log.info(
+            "news_scheduler_job_added",
+            extra={"interval_min": news_interval},
+        )
+    else:
+        log.info(
+            "news_scheduler_job_skipped",
+            extra={"news_enabled": news_enabled, "interval_min": news_interval},
+        )
+
     sch.start()
     _scheduler = sch
 
@@ -429,12 +716,19 @@ def start_if_enabled() -> Optional[BackgroundScheduler]:
                 "interval_min": interval,
                 "universe": sched_universe or "<default>",
                 "parquet_root": str(root),
+                "news_enabled": news_enabled,
+                "news_interval_min": news_interval,
             },
         )
     except Exception:
         log.info(
             "scheduler_started",
-            extra={"interval_min": interval, "universe": sched_universe or "<default>"},
+            extra={
+                "interval_min": interval,
+                "universe": sched_universe or "<default>",
+                "news_enabled": news_enabled,
+                "news_interval_min": news_interval,
+            },
         )
 
     return _scheduler

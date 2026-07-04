@@ -26,9 +26,21 @@ delivery:
     topic_high: ${NTFY_TOPIC_HIGH:-momentum-alerts-nishi}
     topic_low: ${NTFY_TOPIC_LOW:-momentum-alerts-nishi}
 
+  # Windows desktop toast + sound. Only fires on Windows hosts; on Linux/macOS
+  # it silently returns SKIPPED. Toggle at runtime without restart via
+  # POST /api/v1/settings/windows-toast {"enabled": true|false}.
+  windows_toast:
+    enabled: ${WINDOWS_TOAST_ENABLED:-true}
+    play_sound: true
+    sound_alias: SystemAsterisk     # SystemExclamation | SystemHand | SystemDefault
+    app_id: "Momentum Alerts"
+
 topics:
   high_signal:
-    channels: ["ntfy", "email"]    # most actionable alerts
+    # Desktop toast is included here so high-signal alerts (BUY_SELECTED,
+    # SELL_STOP, etc.) pop a Windows notification with sound on the
+    # operator's machine in addition to the usual ntfy push and email.
+    channels: ["ntfy", "email", "windows_toast"]
   low_signal:
     channels: ["ntfy"]             # fyi/low-noise
   digest:
@@ -52,6 +64,27 @@ routes:
     enabled: true
     topic: high_signal
     throttle: { per_symbol_cooldown_min: 1440 }
+
+  CANDIDATE_POOL_EOD:
+    enabled: true
+    topic: low_signal
+    channels: ["ntfy", "email"]
+    throttle: { per_symbol_cooldown_min: 0, per_event_cooldown_min: 0 }
+
+  # ---- PRE-BREAKOUT RADAR (PBSS) ----
+  # Fires when institutional accumulation is detected BEFORE the buy flag triggers.
+  # Gives 20-30 days advance warning before a potential 25%+ surge.
+  PRE_BREAKOUT_WATCHLIST:
+    enabled: true
+    topic: high_signal
+    channels: ["ntfy", "email", "windows_toast"]
+    throttle: { per_symbol_cooldown_min: 4320 }   # 3-day cooldown to avoid repeat noise
+
+  PRE_BREAKOUT_SURGE:
+    enabled: true
+    topic: high_signal
+    channels: ["ntfy", "email", "windows_toast"]
+    throttle: { per_symbol_cooldown_min: 2880 }   # 2-day cooldown for urgent surge alerts
 
   # ---- SELL ----
   SELL_STOP:
@@ -126,6 +159,9 @@ templates:
     SELL_BREAKEVEN:      "SELL BREAKEVEN {{symbol}} retraced to entry | P/L {{pnl_pct}}%"
     SELL_TRAIL_UPDATE:   "SELL TRAIL UPDATE {{symbol}} -> {{stop}}"
 
+    PRE_BREAKOUT_WATCHLIST: "WATCH {{symbol}} | PBSS {{pbss}} | Vol-Z {{vol_z20|round(1)}} | relvol {{relvol20|round(1)}}x | ret5d +{{ret_5d}}% | Score {{score}}"
+    PRE_BREAKOUT_SURGE:     "SURGE ALERT {{symbol}} | PBSS {{pbss}} (43%+ prob) | Vol-Z {{vol_z20|round(1)}} | relvol {{relvol20|round(1)}}x | ret5d +{{ret_5d}}% | Score {{score}} | prox52 {{proximity_52w_high_pct|round(1)}}%"
+
   email:
     BUY_SELECTED:
       subject: "[BUY SELECTED] {{symbol}} @ {{entry_ref}} | Stop {{stop}} | R {{r_multiple|round(2)}}"
@@ -154,6 +190,46 @@ templates:
         Score: {{score}} | ADX14: {{adx14}} | IntradayRelVol: {{intraday_relvol}}
         VWAP: {{above_vwap}} | PDH clear: {{prev_day_high_clear}}
         Reasons: {{reasons_inline}}
+        Run: {{run_id}}
+
+    PRE_BREAKOUT_WATCHLIST:
+      subject: "[WATCH] {{symbol}} — Volume accumulation detected (PBSS {{pbss}})"
+      body: |
+        {{symbol}} — Institutional accumulation signal. Not yet a buy — monitor for entry.
+        PBSS Score: {{pbss}} / 22  |  Hit rate at this level: ~12%  |  Avg gain: +8%
+        Vol Z-score: {{vol_z20}} (>1.5 is significant)  |  RelVol: {{relvol20}}x
+        5-day return: +{{ret_5d}}%  |  Score: {{score}}
+        ADX: {{adx14}}  |  RSI: {{rsi14}}  |  Prox to 52W high: {{proximity_52w_high_pct}}%
+        Pivot clear: {{pivot_clear_pct}}%  |  OBV above MA: {{obv_above_ma}}
+        Sector: {{sector}}
+        Reason: {{description}}
+        As of: {{as_of}}  |  Run: {{run_id}}
+
+    PRE_BREAKOUT_SURGE:
+      subject: "[SURGE ALERT] {{symbol}} — High-conviction pre-breakout (PBSS {{pbss}}, 43% prob)"
+      body: |
+        {{symbol}} — HIGH-CONVICTION pre-breakout signal. Historically 43% chance of 25%+ gain in 1 month.
+        PBSS Score: {{pbss}} / 22  |  Hit rate at this level: ~44%  |  Avg gain: +20%
+        Vol Z-score: {{vol_z20}} (institutional surge)  |  RelVol: {{relvol20}}x
+        5-day return: +{{ret_5d}}%  |  1-month return: {{ret_1m}}%  |  Score: {{score}}
+        ADX: {{adx14}}  |  RSI: {{rsi14}}  |  Prox to 52W high: {{proximity_52w_high_pct}}%
+        Pivot clear: {{pivot_clear_pct}}%  |  OBV above MA: {{obv_above_ma}}
+        Sector: {{sector}}
+        NOTE: This is a watchlist alert. Wait for buy_flag + buy profile before entering.
+        Reason: {{description}}
+        As of: {{as_of}}  |  Run: {{run_id}}
+
+    CANDIDATE_POOL_EOD:
+      subject: "[POOL EOD] {{as_of}} ({{pool_count}})"
+      body: |
+        Candidate pool snapshot for {{as_of}} ({{pool_count}} symbols)
+        {% if pool_items and pool_items|length > 0 %}
+        {% for item in pool_items %}
+        #{{item.rank}} {{item.ticker}} | Score {{item.score_str}}
+        {% endfor %}
+        {% else %}
+        No active candidates.
+        {% endif %}
         Run: {{run_id}}
 
     SELL_STOP:

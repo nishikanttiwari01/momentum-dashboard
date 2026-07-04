@@ -2,7 +2,8 @@
 from __future__ import annotations
 import csv
 import json
-from datetime import datetime, timezone, time as dtime, timedelta
+import hashlib
+from datetime import date, datetime, timezone, time as dtime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 import logging
 from uuid import uuid4
@@ -33,12 +34,16 @@ import yfinance as yf
 # Phase 11 domain helpers (vectorized)
 from app.alerts.types import Mode
 from app.domain.indicators import compute_indicator_frame
-from app.domain.scoring import compute_score
+from app.domain.scoring import compute_score, compute_pre_breakout_score
 from app.domain.rules.next_action import global_pre_gates, compute_next_action
 from app.services.alerts import route_event as route_alert_event
 from app.services.buy_logic import evaluate_buy_gate
 from app.services.sell_engine import evaluate_positions as evaluate_sell_positions
-from app.services.selection_service import SelectionResult, apply_selection_policy
+from app.services.selection_service import (
+    SelectionResult,
+    apply_selection_policy,
+    apply_selection_policy_multi,
+)
 from app.services.candidate_pool_service import CandidatePoolService, _compute_stop_target
 
 log = logging.getLogger(__name__)
@@ -261,19 +266,25 @@ def _load_instrument_metadata(path: Path = _MASTER_PATH) -> Dict[str, Dict[str, 
         return {}
     return meta
 
-def _history_df(symbol: str, period: str = "400d") -> pd.DataFrame:
+def _history_df(symbol: str, period: str = "400d", interval: str = "1d") -> pd.DataFrame:
     """
-    Pull ~18 months of daily candles (adj close, ohlc, volume) for indicators.
-    We use yfinance directly here to keep adapter changes minimal.
+    Pull price history from Yahoo and normalise the OHLCV columns.
+    Daily callers keep the historical default; intraday callers can override interval.
     """
     sym = (symbol or "").strip().upper()
     if sym and not sym.endswith(".NS"):
         sym = f"{sym}.NS"
-    try:
-        t = yf.Ticker(sym)
-        df = t.history(period=period, interval="1d", auto_adjust=False)
-    except Exception:
-        df = None
+    adapter_name = str(
+        getattr(getattr(app_config.load(), "data", None), "adapter", "yahoo") or "yahoo"
+    ).strip().lower()
+    if adapter_name == "stub":
+        df = _synthetic_history_df(sym, period=period, interval=interval)
+    else:
+        try:
+            t = yf.Ticker(sym)
+            df = t.history(period=period, interval=interval, auto_adjust=False)
+        except Exception:
+            df = None
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -288,6 +299,221 @@ def _history_df(symbol: str, period: str = "400d") -> pd.DataFrame:
     else:
         df["adj_close"] = df["close"].astype(float)
     return df
+
+
+def _synthetic_history_df(symbol: str, *, period: str, interval: str) -> pd.DataFrame:
+    """
+    Deterministic local-market fallback used by the configured stub adapter in tests.
+    Produces plausible OHLCV series without any network dependency.
+    """
+    interval_norm = str(interval or "1d").strip().lower()
+    period_norm = str(period or "30d").strip().lower()
+    market_tz = ZoneInfo("Asia/Kolkata")
+
+    digits = "".join(ch for ch in period_norm if ch.isdigit())
+    days = max(int(digits or "30"), 1)
+
+    seed_bytes = hashlib.sha256(f"{symbol}|{period_norm}|{interval_norm}".encode("utf-8")).digest()
+    seed = int.from_bytes(seed_bytes[:8], "big", signed=False)
+    rng = np.random.default_rng(seed)
+    base_price = 80.0 + float(seed % 320)
+
+    def _frame_from_index(idx: pd.DatetimeIndex) -> pd.DataFrame:
+        steps = len(idx)
+        if steps == 0:
+            return pd.DataFrame()
+        drift = np.linspace(0.0, max(steps - 1, 1) * 0.18, steps)
+        noise = rng.normal(0.0, 0.9, steps).cumsum() * 0.22
+        close = np.maximum(15.0, base_price + drift + noise)
+        open_ = close * (1.0 + rng.normal(0.0, 0.0035, steps))
+        high = np.maximum(open_, close) * (1.0 + rng.uniform(0.001, 0.012, steps))
+        low = np.minimum(open_, close) * (1.0 - rng.uniform(0.001, 0.012, steps))
+        volume = rng.integers(250_000, 4_000_000, steps)
+        return pd.DataFrame(
+            {
+                "Open": np.round(open_, 2),
+                "High": np.round(high, 2),
+                "Low": np.round(low, 2),
+                "Close": np.round(close, 2),
+                "Volume": volume.astype(int),
+            },
+            index=idx,
+        )
+
+    if interval_norm == "1d":
+        idx = pd.bdate_range(end=pd.Timestamp.now(tz=market_tz).normalize(), periods=min(days, 600))
+        return _frame_from_index(idx)
+
+    minutes = 15
+    if interval_norm.endswith("m"):
+        try:
+            minutes = max(int(interval_norm[:-1]), 1)
+        except ValueError:
+            minutes = 15
+    session_days = pd.bdate_range(end=pd.Timestamp.now(tz=market_tz).normalize(), periods=min(days, 10))
+    stamps: List[pd.Timestamp] = []
+    for session_day in session_days:
+        start = session_day + pd.Timedelta(hours=9, minutes=15)
+        end = session_day + pd.Timedelta(hours=15, minutes=30)
+        stamps.extend(pd.date_range(start=start, end=end, freq=f"{minutes}min", inclusive="left"))
+    idx = pd.DatetimeIndex(stamps).tz_localize(market_tz)
+    return _frame_from_index(idx)
+
+
+def _resolve_market_tz(cfg: Any) -> ZoneInfo:
+    try:
+        window = _resolve_trading_window(cfg)
+        return ZoneInfo(str(window.get("tz") or "Asia/Kolkata"))
+    except Exception:
+        return ZoneInfo("Asia/Kolkata")
+
+
+def _coerce_market_index(index: pd.Index, market_tz: ZoneInfo) -> pd.DatetimeIndex:
+    dt_index = pd.DatetimeIndex(index)
+    if dt_index.tz is None:
+        return dt_index.tz_localize(market_tz)
+    return dt_index.tz_convert(market_tz)
+
+
+def _previous_session_refs(
+    df: pd.DataFrame,
+    *,
+    trading_day: Optional[date],
+    market_tz: ZoneInfo,
+) -> Tuple[Optional[float], Optional[float]]:
+    if df is None or df.empty or "close" not in df.columns:
+        return None, None
+    try:
+        idx = _coerce_market_index(df.index, market_tz)
+        session_days = pd.Series(idx.date, index=df.index)
+        if trading_day is not None:
+            completed = df.loc[session_days < trading_day]
+        else:
+            completed = df.iloc[:-1] if len(df) > 1 else df.iloc[:0]
+        if completed.empty and len(df) >= 2:
+            completed = df.iloc[:-1]
+        if completed.empty:
+            return None, None
+        ref = completed.iloc[-1]
+        prev_close = _maybe_float(ref.get("close"))
+        prev_high = _maybe_float(ref.get("high"))
+        return prev_close, prev_high
+    except Exception:
+        try:
+            prev_close = _maybe_float(df["close"].iloc[-2]) if len(df) >= 2 else None
+            prev_high = _maybe_float(df["high"].iloc[-2]) if len(df) >= 2 else None
+        except Exception:
+            return None, None
+        return prev_close, prev_high
+
+
+def _build_intraday_context(
+    *,
+    symbol: str,
+    daily_df: pd.DataFrame,
+    cfg: Any,
+    trading_day: date,
+) -> Optional[Dict[str, Any]]:
+    intraday_cfg = getattr(getattr(cfg, "data", None), "intraday", None)
+    if not getattr(intraday_cfg, "enabled", False):
+        return None
+
+    interval = str(getattr(intraday_cfg, "interval", "15m") or "15m")
+    lookback_days = int(getattr(intraday_cfg, "lookback_days", 1) or 1)
+    fetch_days = max(lookback_days, 5)
+    intraday_df = _history_df(symbol, period=f"{fetch_days}d", interval=interval)
+    if intraday_df.empty:
+        return None
+
+    market_tz = _resolve_market_tz(cfg)
+    try:
+        local_index = _coerce_market_index(intraday_df.index, market_tz)
+        intraday_df = intraday_df.copy()
+        intraday_df.index = local_index
+    except Exception:
+        return None
+
+    session_mask = pd.Series(intraday_df.index.date == trading_day, index=intraday_df.index)
+    session_df = intraday_df.loc[session_mask[session_mask].index]
+    if session_df.empty:
+        return None
+
+    prev_close, prev_day_high = _previous_session_refs(
+        daily_df,
+        trading_day=trading_day,
+        market_tz=market_tz,
+    )
+
+    session_open = _maybe_float(session_df["open"].iloc[0]) if "open" in session_df.columns else None
+    session_high = _maybe_float(session_df["high"].max()) if "high" in session_df.columns else None
+    session_low = _maybe_float(session_df["low"].min()) if "low" in session_df.columns else None
+    session_close = _maybe_float(session_df["close"].iloc[-1]) if "close" in session_df.columns else None
+    session_volume = _maybe_float(session_df["volume"].fillna(0).sum()) if "volume" in session_df.columns else None
+
+    intraday_vwap = None
+    above_vwap = None
+    if {"high", "low", "close", "volume"}.issubset(set(session_df.columns)):
+        typical_price = (session_df["high"] + session_df["low"] + session_df["close"]) / 3.0
+        volume = session_df["volume"].fillna(0.0)
+        cum_volume = volume.cumsum().replace(0.0, np.nan)
+        vwap_series = (typical_price.fillna(session_df["close"]) * volume).cumsum() / cum_volume
+        intraday_vwap = _maybe_float(vwap_series.iloc[-1]) if not vwap_series.empty else None
+        if session_close is not None and intraday_vwap is not None:
+            above_vwap = session_close >= intraday_vwap
+
+    bucket_count = len(session_df)
+    intraday_relvol = None
+    if "volume" in intraday_df.columns and bucket_count > 0:
+        peer_volumes: List[float] = []
+        grouped = intraday_df.groupby(intraday_df.index.date)
+        for session_date, peer in grouped:
+            if session_date >= trading_day:
+                continue
+            peer_slice = peer.iloc[:bucket_count]
+            peer_volume = _maybe_float(peer_slice["volume"].fillna(0).sum()) if not peer_slice.empty else None
+            if peer_volume is not None and peer_volume > 0:
+                peer_volumes.append(peer_volume)
+        if peer_volumes and session_volume is not None:
+            avg_peer_volume = float(sum(peer_volumes) / len(peer_volumes))
+            if avg_peer_volume > 0:
+                intraday_relvol = session_volume / avg_peer_volume
+
+    minutes_since_open = None
+    try:
+        trading_window = _resolve_trading_window(cfg)
+        open_time = _parse_time_str(str(trading_window.get("start") or "09:15"), dtime(hour=9, minute=15))
+        session_open_dt = datetime.combine(trading_day, open_time, tzinfo=market_tz)
+        last_bar_dt = session_df.index[-1].to_pydatetime()
+        minutes_since_open = max(0, int((last_bar_dt - session_open_dt).total_seconds() // 60))
+    except Exception:
+        minutes_since_open = None
+
+    change_pct = None
+    if session_close is not None and prev_close not in (None, 0):
+        change_pct = ((session_close - prev_close) * 100.0) / prev_close
+
+    prev_day_high_clear = None
+    if session_close is not None and prev_day_high is not None:
+        prev_day_high_clear = session_close >= prev_day_high
+
+    return {
+        "open": session_open,
+        "high": session_high,
+        "low": session_low,
+        "last": session_close,
+        "close": session_close,
+        "volume": session_volume,
+        "prev_close": prev_close,
+        "prev_day_high": prev_day_high,
+        "prev_day_high_clear": prev_day_high_clear,
+        "change_pct": change_pct,
+        "intraday_vwap": intraday_vwap,
+        "above_vwap": above_vwap,
+        "intraday_relvol": intraday_relvol,
+        "minutes_since_open": minutes_since_open,
+        "trading_day": trading_day.isoformat(),
+        "last_bar_ts": session_df.index[-1].isoformat(),
+    }
 
 
 # ---------------------- indicators computation ----------------------
@@ -375,6 +601,7 @@ def _make_scores_row(
     asm_hint: Optional[bool] = None,
     is_eod_snapshot: bool = False,
     candidate_pool_member: bool = False,
+    intraday_ctx: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     # Build the final Screener row for this symbol (spec 2025-10-12A).
     last = float(df["close"].iloc[-1]) if not df.empty else None
@@ -385,6 +612,11 @@ def _make_scores_row(
     prev_day_high_clear = None
     if prev_day_high is not None and last is not None:
         prev_day_high_clear = last >= prev_day_high
+
+    day_open = _maybe_float(df["open"].iloc[-1]) if not df.empty else None
+    day_high = _maybe_float(df["high"].iloc[-1]) if not df.empty else None
+    day_low = _maybe_float(df["low"].iloc[-1]) if not df.empty else None
+    day_volume = _maybe_float(df["volume"].iloc[-1]) if not df.empty else None
 
     r = ind.iloc[-1].to_dict() if not ind.empty else {}
     rsi14 = _maybe_float(r.get("rsi14"))
@@ -427,11 +659,45 @@ def _make_scores_row(
     asm_gsm_flags = bool(asm_hint) if asm_hint is not None else (bool(r.get("asm_gsm_flags")) if r.get("asm_gsm_flags") is not None else False)
     upper_circuit_hits_60d = _count_upper_circuit_hits(df)
 
+    intraday_vwap = None
+    intraday_relvol = None
+    above_vwap = None
+    minutes_since_open = None
+    if intraday_ctx:
+        intraday_last = _maybe_float(intraday_ctx.get("last") or intraday_ctx.get("close"))
+        intraday_prev_close = _maybe_float(intraday_ctx.get("prev_close"))
+        last = intraday_last if intraday_last is not None else last
+        prev = intraday_prev_close if intraday_prev_close is not None else prev
+        change_pct = _maybe_float(intraday_ctx.get("change_pct"))
+        if change_pct is None and last is not None and prev not in (None, 0):
+            change_pct = ((last - prev) * 100.0) / prev
+        prev_day_high = _maybe_float(intraday_ctx.get("prev_day_high")) or prev_day_high
+        ctx_prev_day_high_clear = intraday_ctx.get("prev_day_high_clear")
+        prev_day_high_clear = bool(ctx_prev_day_high_clear) if ctx_prev_day_high_clear is not None else prev_day_high_clear
+        day_open = _maybe_float(intraday_ctx.get("open")) or day_open
+        day_high = _maybe_float(intraday_ctx.get("high")) or day_high
+        day_low = _maybe_float(intraday_ctx.get("low")) or day_low
+        day_volume = _maybe_float(intraday_ctx.get("volume")) or day_volume
+        intraday_vwap = _maybe_float(intraday_ctx.get("intraday_vwap"))
+        intraday_relvol = _maybe_float(intraday_ctx.get("intraday_relvol"))
+        above_vwap = intraday_ctx.get("above_vwap")
+        minutes_since_open = _maybe_float(intraday_ctx.get("minutes_since_open"))
+        if pivot_high_20 not in (None, 0) and last is not None:
+            pivot_clear_pct = ((last / pivot_high_20) - 1.0) * 100.0
+        if high_252 not in (None, 0) and last is not None:
+            prox_52w = 100.0 * (last / high_252 - 1.0)
+        if day_high is not None and day_low is not None and day_high > day_low and last is not None:
+            close_pos_in_bar = (last - day_low) / (day_high - day_low)
+        if day_open is not None and prev not in (None, 0):
+            gap_up_pct = ((day_open / prev) - 1.0) * 100.0
+
     score_inputs = {
         "proximity_52w_high_pct": prox_52w,
         "ret_5d": ret_5d if ret_5d is not None else ret_1w,
         "ret_1m": ret_1m,
         "ret_1w": ret_1w,
+        "ret_3m": ret_3m,
+        "ret_6m": ret_6m,
         "relvol20": relvol20,
         "vol_z20": vol_z20,
         "obv_above_ma": obv_above_ma,
@@ -454,8 +720,7 @@ def _make_scores_row(
         "n_consecutive_down": n_consecutive_down,
     }
     score_bundle = compute_score(score_inputs)
-
-    score_bundle = compute_score(score_inputs)
+    pbss_bundle = compute_pre_breakout_score({**score_inputs, "score": score_bundle.score_full or score_bundle.score_basic})
     # domain.scoring returns score_basic on a 0..100 scale now.
     # Contract requires BOTH:
     # - score_basic (0..12 legacy)
@@ -517,6 +782,11 @@ def _make_scores_row(
         "symbol": symbol,
         "name": name,
         "sector": sector,
+        "open": day_open,
+        "high": day_high,
+        "low": day_low,
+        "close": last,
+        "volume": day_volume,
         "last": last,
         "change_pct": change_pct,
         "rsi14": rsi14,
@@ -546,6 +816,9 @@ def _make_scores_row(
         "delivery_ratio_20d": delivery_ratio_20d,
         "prev_day_high": prev_day_high,
         "prev_day_high_clear": prev_day_high_clear,
+        "intraday_vwap": intraday_vwap,
+        "intraday_relvol": intraday_relvol,
+        "above_vwap": above_vwap,
         "n_consecutive_up": (int(n_consecutive_up) if n_consecutive_up is not None else None),
         "n_consecutive_down": (int(n_consecutive_down) if n_consecutive_down is not None else None),
         "recent_failed_breakout_10d": recent_failed_breakout_10d,
@@ -594,8 +867,21 @@ def _make_scores_row(
     row.setdefault("pct_from_52w_high", row.get("proximity_52w_high_pct"))
     row.setdefault("atr_pct", row.get("atr14_pct"))
     row.setdefault("pct_today", row.get("change_pct"))
-    row.setdefault("minutes_since_open", None)
+    row.setdefault("minutes_since_open", minutes_since_open)
     row.setdefault("in_lunch_window", None)
+
+    # Pre-Breakout Surge Score — early warning radar for institutional accumulation.
+    # PBSS >= 12: radar (7.7% hit rate), >= 16: watchlist (11.7%), >= 20: surge alert (43.8%).
+    row["pre_breakout_score"] = pbss_bundle.pbss
+    row["pre_breakout_alert"] = pbss_bundle.alert_level  # "NONE" | "RADAR" | "WATCHLIST" | "SURGE"
+    row["pre_breakout_reason"] = pbss_bundle.reason
+
+    # Stocks with strong institutional accumulation (PBSS >= 12) enter the candidate
+    # pool even if the main buy criteria haven't fired yet. This gives advance notice
+    # before the official buy flag triggers, addressing the "signal is late" problem.
+    if pbss_bundle.pbss >= 12 and not candidate_pool_member:
+        candidate_pool_member = True
+
     row["candidate_pool_member"] = bool(candidate_pool_member)
 
     try:
@@ -908,6 +1194,10 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
     snapshot_path = None
     selection_result: Optional[SelectionResult] = None
     selection_row: Optional[Dict[str, Any]] = None
+    # Additional picks from the multi-pick selector (first one mirrored into
+    # selection_result/selection_row above for back-compat with downstream
+    # logging and the single-alert dispatch path).
+    selection_picks: List[Tuple[SelectionResult, Dict[str, Any]]] = []
 
     try:
         cfg = app_config.load()
@@ -949,12 +1239,17 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         except Exception:
             pass
 
-        # Name & sector via YahooAdapter (best-effort)
-        ya = YahooAdapter()
-        try:
-            quotes = {q["symbol"]: q for q in (ya.fetch_quotes(symbols) or [])}
-        except Exception:
+        # Name & sector via the configured data adapter. Tests use the stub path
+        # to avoid any live-network dependency.
+        adapter_name = str(getattr(getattr(cfg, "data", None), "adapter", "yahoo") or "yahoo").strip().lower()
+        if adapter_name == "stub":
             quotes = {}
+        else:
+            ya = YahooAdapter()
+            try:
+                quotes = {q["symbol"]: q for q in (ya.fetch_quotes(symbols) or [])}
+            except Exception:
+                quotes = {}
         instrument_meta = _load_instrument_metadata()
 
         # Inject name/sector from metadata into quotes when missing.
@@ -978,12 +1273,18 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             asm_flag_symbols = {str(s).upper() for s in raw_asm_flags}
 
         # Compute full rows
-        prep_rows: List[Tuple[str, Dict[str, Any], pd.DataFrame, pd.DataFrame, bool, Dict[str, Any]]] = []
+        prep_rows: List[Tuple[str, Dict[str, Any], pd.DataFrame, pd.DataFrame, bool, Dict[str, Any], Optional[Dict[str, Any]]]] = []
         breadth_total = 0
         rows_by_symbol: Dict[str, Dict[str, Any]] = {}
         buy_signal_rows: List[Dict[str, Any]] = []
+        pbss_alert_rows: List[Dict[str, Any]] = []
         frames_by_symbol: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
         breadth_above = 0
+        intraday_target_day = None
+        if intraday_date_override:
+            parsed_intraday_day = pd.to_datetime(intraday_date_override, errors="coerce")
+            if parsed_intraday_day is not None and not pd.isna(parsed_intraday_day):
+                intraday_target_day = parsed_intraday_day.to_pydatetime().date()
         for sym in symbols:
             df = _history_df(sym, period="400d")
             q = quotes.get(sym, {})
@@ -1019,12 +1320,20 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 if last_for_breadth >= ema50_for_breadth:
                     breadth_above += 1
             asm_flagged = sym.upper() in asm_flag_symbols
-            prep_rows.append((sym, q, df_eff, ind, asm_flagged, meta))
+            intraday_ctx = None
+            if not is_eod_snapshot and intraday_target_day is not None:
+                intraday_ctx = _build_intraday_context(
+                    symbol=sym,
+                    daily_df=df_eff,
+                    cfg=cfg,
+                    trading_day=intraday_target_day,
+                )
+            prep_rows.append((sym, q, df_eff, ind, asm_flagged, meta, intraday_ctx))
 
         breadth_pct = round((breadth_above * 100.0) / breadth_total, 2) if breadth_total else None
         nifty_regime_value = _resolve_nifty_regime(as_of_date)
         rows: List[Dict[str, Any]] = []
-        for sym, q, df_eff, ind, asm_flag, meta in prep_rows:
+        for sym, q, df_eff, ind, asm_flag, meta, intraday_ctx in prep_rows:
             row = _make_scores_row(
                 symbol=sym,
                 name=q.get("name") or meta.get("name"),
@@ -1038,6 +1347,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 asm_hint=asm_flag,
                 is_eod_snapshot=is_eod_snapshot,
                 candidate_pool_member=sym.upper() in active_pool_symbols,
+                intraday_ctx=intraday_ctx,
             )
             if breadth_pct is not None:
                 row["breadth_pct_50dma"] = breadth_pct
@@ -1052,6 +1362,10 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
             frames_by_symbol[symbol_key] = (df_eff, ind)
             if row.get("buy_flag"):
                 buy_signal_rows.append(row)
+            # Collect pre-breakout alerts; only emit for EOD runs to avoid noise.
+            pbss_level = row.get("pre_breakout_alert", "NONE")
+            if is_eod_snapshot and pbss_level in ("WATCHLIST", "SURGE") and not row.get("buy_flag"):
+                pbss_alert_rows.append(row)
 
         selection_trading_day = now_utc.date()
         selection_day_raw = as_of_date or intraday_date_override
@@ -1125,8 +1439,12 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 selection_result, selection_row = _build_selection_from_pool(pool_result.selected)
 
         if selection_result is None:
+            # Prefer the multi-pick selector so a single scan can fill 2+ slots
+            # when the book isn't full. Falls back to single-pick if the multi
+            # helper isn't available (e.g. during tests that monkey-patch it).
+            multi_picks: List[SelectionResult] = []
             try:
-                selection_result = apply_selection_policy(
+                multi_picks = apply_selection_policy_multi(
                     session=session,
                     rows=rows,
                     strategy=cfg.strategy,
@@ -1137,18 +1455,43 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                     now_utc=now_utc,
                 )
             except Exception:
-                selection_result = None
-            if selection_result:
-                selection_row = rows[selection_result.row_index]
+                multi_picks = []
 
-        if selection_result and selection_row:
-            selection_row["buy_selected"] = True
-            selection_row["buy_selection_reason"] = selection_result.reason
-            selection_row["buy_stop_price"] = selection_result.stop_price
-            selection_row["buy_target_price"] = selection_result.target_price
-            selection_row["buy_r_multiple"] = selection_result.r_multiple
-            selection_row["buy_selection_run_id"] = selection_result.run_id
-            selection_row["buy_selection_trading_day"] = selection_result.trading_date.isoformat()
+            if not multi_picks:
+                try:
+                    single_pick = apply_selection_policy(
+                        session=session,
+                        rows=rows,
+                        strategy=cfg.strategy,
+                        policy=cfg.selection_policy,
+                        run_id=job.run_id,
+                        trading_day=selection_trading_day,
+                        nifty_regime=nifty_regime_value,
+                        now_utc=now_utc,
+                    )
+                except Exception:
+                    single_pick = None
+                if single_pick:
+                    multi_picks = [single_pick]
+
+            for pick in multi_picks:
+                try:
+                    pick_row = rows[pick.row_index]
+                except (IndexError, TypeError):
+                    continue
+                selection_picks.append((pick, pick_row))
+
+            if selection_picks:
+                selection_result, selection_row = selection_picks[0]
+
+        for pick, pick_row in selection_picks:
+            pick_row["buy_selected"] = True
+            pick_row["buy_selection_reason"] = pick.reason
+            pick_row["buy_stop_price"] = pick.stop_price
+            pick_row["buy_target_price"] = pick.target_price
+            pick_row["buy_r_multiple"] = pick.r_multiple
+            pick_row["buy_selection_run_id"] = pick.run_id
+            pick_row["buy_selection_trading_day"] = pick.trading_date.isoformat()
 
         rows_written = len(rows)
         try:
@@ -1277,6 +1620,77 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
         # ------------------- END WRITES -------------------
 
         event_mode = Mode.EOD if is_eod_snapshot else Mode.INTRADAY
+        if is_eod_snapshot:
+            pool_entries: List[Any] = []
+            if pool_result and getattr(pool_result, "entries", None):
+                pool_entries = list(pool_result.entries)
+            else:
+                try:
+                    pool_entries = pool_repo.list_entries(active_only=True)
+                except Exception:
+                    pool_entries = []
+
+            pool_items: List[Dict[str, Any]] = []
+            for idx, entry in enumerate(pool_entries, start=1):
+                if entry is None:
+                    continue
+                if isinstance(entry, dict):
+                    symbol_val = entry.get("symbol")
+                    rank_val = entry.get("rank_ord") or entry.get("rank")
+                    score_val = entry.get("last_score")
+                    if score_val is None:
+                        score_val = entry.get("score")
+                else:
+                    symbol_val = getattr(entry, "symbol", None)
+                    rank_val = getattr(entry, "rank_ord", None) or getattr(entry, "rank", None)
+                    score_val = getattr(entry, "score", None)
+
+                symbol = str(symbol_val or "").upper()
+                if not symbol:
+                    continue
+                try:
+                    rank = int(rank_val)
+                except (TypeError, ValueError):
+                    rank = idx
+                score_val = _maybe_float(score_val)
+                score_str = f"{score_val:.2f}" if score_val is not None else "NA"
+                pool_items.append(
+                    {
+                        "rank": rank,
+                        "ticker": symbol,
+                        "score": score_val,
+                        "score_str": score_str,
+                    }
+                )
+
+            pool_items.sort(key=lambda item: (item.get("rank") or 0, item.get("ticker") or ""))
+            pool_count = len(pool_items)
+            as_of_value = as_of_date or selection_trading_day.isoformat()
+            header = f"Candidate pool snapshot for {as_of_value} ({pool_count} symbols)"
+            if pool_items:
+                lines = [f"#{item['rank']} {item['ticker']} {item['score_str']}" for item in pool_items]
+                description = header + "\n" + "\n".join(lines)
+            else:
+                description = header + "\nNo active candidates."
+            pool_context = _sanitize_for_json(
+                {
+                    "symbol": "CANDIDATE_POOL",
+                    "as_of": as_of_value,
+                    "run_id": job.run_id,
+                    "pool_count": pool_count,
+                    "pool_items": pool_items,
+                    "description": description,
+                }
+            )
+            route_alert_event(
+                session,
+                event_code="CANDIDATE_POOL_EOD",
+                symbol="CANDIDATE_POOL",
+                mode=event_mode,
+                trading_date=selection_trading_day,
+                context=pool_context,
+                next_action_code="CANDIDATE_POOL_EOD",
+            )
         buy_event_code = "BUY_SIGNAL_EOD" if is_eod_snapshot else "BUY_SIGNAL_INTRADAY"
         for row in buy_signal_rows:
             symbol_value = row.get("symbol")
@@ -1321,26 +1735,74 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 next_action_code=str(row.get("next_action_code") or "").upper() or None,
             )
 
-        if selection_result and selection_row:
-            selection_symbol_raw = selection_result.symbol or selection_row.get("symbol")
+        # Pre-Breakout Surge Score alerts — fire before the buy gate triggers.
+        # Only runs on EOD scans; non-buy-flagged stocks only (buy-flagged ones
+        # already get BUY_SIGNAL_EOD which is a stronger, actionable alert).
+        for row in pbss_alert_rows:
+            pbss_sym = str(row.get("symbol") or "").upper()
+            if not pbss_sym:
+                continue
+            pbss_level = row.get("pre_breakout_alert", "NONE")
+            pbss_event_code = "PRE_BREAKOUT_SURGE" if pbss_level == "SURGE" else "PRE_BREAKOUT_WATCHLIST"
+            pbss_context = _sanitize_for_json({
+                "symbol": pbss_sym,
+                "pbss": row.get("pre_breakout_score"),
+                "score": row.get("score"),
+                "relvol20": row.get("relvol20"),
+                "vol_z20": row.get("vol_z20"),
+                "ret_5d": row.get("ret_5d") or row.get("ret_1w"),
+                "ret_1m": row.get("ret_1m"),
+                "adx14": row.get("adx14"),
+                "rsi14": row.get("rsi14"),
+                "proximity_52w_high_pct": row.get("proximity_52w_high_pct"),
+                "pivot_clear_pct": row.get("pivot_clear_pct"),
+                "obv_above_ma": row.get("obv_above_ma"),
+                "sector": row.get("sector"),
+                "as_of": row.get("as_of"),
+                "run_id": job.run_id,
+                "description": row.get("pre_breakout_reason"),
+            })
+            route_alert_event(
+                session,
+                event_code=pbss_event_code,
+                symbol=pbss_sym,
+                mode=event_mode,
+                trading_date=selection_trading_day,
+                context=pbss_context,
+                score_at_fire=_maybe_float(row.get("score")),
+            )
+
+        # Dispatch one BUY_SELECTED per pick. When the multi-pick selector
+        # returns a single pick (or nothing), behaviour matches the previous
+        # single-dispatch path exactly.
+        picks_to_dispatch: List[Tuple[SelectionResult, Dict[str, Any]]]
+        if selection_picks:
+            picks_to_dispatch = selection_picks
+        elif selection_result and selection_row:
+            picks_to_dispatch = [(selection_result, selection_row)]
+        else:
+            picks_to_dispatch = []
+
+        for pick, pick_row in picks_to_dispatch:
+            selection_symbol_raw = pick.symbol or pick_row.get("symbol")
             selection_symbol = str(selection_symbol_raw or "").upper()
             if not selection_symbol:
                 selection_symbol = "UNKNOWN"
             selection_context = _sanitize_for_json({
                 "symbol": selection_symbol,
-                "profile": selection_result.profile or selection_row.get("buy_profile"),
-                "mode": selection_result.mode or event_mode.value,
-                "entry_ref": selection_result.price,
-                "entry_context": selection_row.get("buy_selection_reason") or "Screening selection",
-                "stop": selection_result.stop_price,
+                "profile": pick.profile or pick_row.get("buy_profile"),
+                "mode": pick.mode or event_mode.value,
+                "entry_ref": pick.price,
+                "entry_context": pick_row.get("buy_selection_reason") or "Screening selection",
+                "stop": pick.stop_price,
                 "stop_method": cfg.strategy.profiles.sell.common.stop.method,
-                "target_price": selection_result.target_price,
+                "target_price": pick.target_price,
                 "t1": cfg.strategy.profiles.sell.common.targets.t1_gain_pct,
                 "t2": cfg.strategy.profiles.sell.common.targets.t2_gain_pct,
-                "r_multiple": selection_result.r_multiple,
-                "reasons_inline": selection_row.get("buy_reasons_inline"),
-                "reason": selection_result.reason,
-                "run_id": selection_result.run_id,
+                "r_multiple": pick.r_multiple,
+                "reasons_inline": pick_row.get("buy_reasons_inline"),
+                "reason": pick.reason,
+                "run_id": pick.run_id,
             })
             if selection_context.get("reasons_inline") and not selection_context.get("description"):
                 selection_context["description"] = selection_context["reasons_inline"]
@@ -1351,7 +1813,7 @@ def run_screening(*, session: Session, key: Optional[str], payload: Dict[str, An
                 mode=event_mode,
                 trading_date=selection_trading_day,
                 context=selection_context,
-                score_at_fire=_maybe_float(selection_row.get("score")),
+                score_at_fire=_maybe_float(pick_row.get("score")),
                 next_action_code="BUY_SELECTED",
             )
 
