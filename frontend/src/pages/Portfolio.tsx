@@ -30,7 +30,6 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ResponsiveContainer,
   ComposedChart,
-  Area,
   Line,
   ReferenceDot,
   ReferenceLine,
@@ -180,7 +179,6 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
   const timeDomain = getFundChartDomain(chartData);
   const changeColor = tone(data?.change_pct);
   const latestPoint = chartData[chartData.length - 1];
-  const navGradientId = `navAreaGradient-${instrumentId.replace(/[^a-zA-Z0-9]/g, '')}`;
 
   return (
     <Box data-testid="fund-nav-chart" sx={{ py: 1.5, px: { xs: 0.5, md: 1 } }}>
@@ -189,17 +187,16 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
           {fundName} — NAV history
         </Typography>
         {data?.change_pct != null ? (
-          <Box sx={{ px: 1.1, py: 0.45, borderRadius: 2, bgcolor: data.change_pct >= 0 ? '#ECFDF3' : '#FFF1F3', color: changeColor, fontSize: 13, fontWeight: 800 }}>
+          <Typography variant="body2" sx={{ color: changeColor, fontWeight: 700 }}>
             {pct(data.change_pct)} over {NAV_RANGES.find((r) => r.value === range)?.label.toLowerCase()}
-          </Box>
+          </Typography>
         ) : null}
         {data?.inception_date ? (
           <Typography variant="caption" color="text.secondary">
             inception {dayjs(data.inception_date).format('DD MMM YYYY')}
           </Typography>
         ) : null}
-        {data?.latest_vs_average_pct != null ? <Box sx={{ px: 1.1, py: 0.45, borderRadius: 2, bgcolor: data.latest_vs_average_pct <= 0 ? '#ECFDF3' : '#FFF7ED', color: data.latest_vs_average_pct <= 0 ? '#079455' : '#C2410C', fontSize: 13, fontWeight: 700 }}>Latest NAV · {Math.abs(data.latest_vs_average_pct).toFixed(2)}% {data.latest_vs_average_pct < 0 ? 'below' : 'above'} average</Box> : null}
-        {data?.average_nav != null ? <Box sx={{ px: 1.1, py: 0.45, borderRadius: 2, bgcolor: '#F2F0FF', color: '#6941C6', fontSize: 13, fontWeight: 700 }}>Average NAV · {data.average_nav.toFixed(2)}</Box> : null}
+        {data?.latest_vs_average_pct != null ? <Typography variant="caption" sx={{ color: data.latest_vs_average_pct <= 0 ? '#079455' : '#C2410C', fontWeight: 600 }}>Latest NAV is {Math.abs(data.latest_vs_average_pct).toFixed(2)}% {data.latest_vs_average_pct < 0 ? 'below' : 'above'} average</Typography> : null}
         <Box sx={{ flexGrow: 1 }} />
         <ToggleButtonGroup
           size="small"
@@ -222,15 +219,14 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
           <CircularProgress size={28} />
         </Stack>
       ) : chartData.length ? (
-        <Box sx={{ width: '100%', height: 300, borderRadius: 3, border: '1px solid #E8E5FF', background: 'linear-gradient(180deg, #FFFFFF 0%, #FBFAFF 68%, #F4FFF9 100%)', boxShadow: '0 12px 34px rgba(91,70,180,0.10)', px: 1, pt: 1.5, overflow: 'hidden' }}>
+        <Box sx={{ width: '100%', height: 300, bgcolor: '#FFFFFF', px: 1, pt: 1.5, overflow: 'hidden' }}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 18, right: 28, bottom: 4, left: 0 }}>
-              <defs><linearGradient id={navGradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2E7CF6" stopOpacity={0.34} /><stop offset="52%" stopColor="#7A5AF8" stopOpacity={0.17} /><stop offset="100%" stopColor="#12B76A" stopOpacity={0.08} /></linearGradient></defs>
-              <CartesianGrid strokeDasharray="4 5" stroke="#DDE5F1" vertical={false} />
-              <XAxis dataKey="time" type="number" scale="time" domain={timeDomain} allowDataOverflow tick={{ fontSize: 11, fill: '#667085' }} axisLine={{ stroke: '#98A2B3' }} tickLine={false} minTickGap={40} tickMargin={8} tickFormatter={(value: number) => dayjs(value).format(labelFmt)} />
+              <CartesianGrid stroke="#F5F5F5" vertical={false} />
+              <XAxis dataKey="time" type="number" scale="time" domain={timeDomain} allowDataOverflow tick={{ fontSize: 10, fill: '#9b9b9b' }} axisLine={{ stroke: '#ECECEC' }} tickLine={false} minTickGap={40} tickMargin={8} tickFormatter={(value: number) => dayjs(value).format(labelFmt)} />
               <YAxis
-                tick={{ fontSize: 11, fill: '#667085' }}
-                axisLine={{ stroke: '#98A2B3' }}
+                tick={{ fontSize: 10, fill: '#9b9b9b' }}
+                axisLine={{ stroke: '#ECECEC' }}
                 tickLine={false}
                 width={64}
                 domain={['auto', 'auto']}
@@ -239,25 +235,23 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
               <ReTooltip
                 formatter={(v: any) => [Number(v).toFixed(2), 'NAV']}
                 labelFormatter={(value: any) => dayjs(Number(value)).format('DD MMM YYYY')}
-                contentStyle={{ borderRadius: 12, borderColor: '#D8D2FF', boxShadow: '0 10px 28px rgba(20,33,61,.16)' }}
+                contentStyle={{ borderRadius: 6, borderColor: '#ECECEC', fontSize: 12 }}
               />
-              <Area type="monotone" dataKey="nav" stroke="none" fill={`url(#${navGradientId})`} isAnimationActive={false} />
-              <Line type="monotone" dataKey="nav" stroke="#2E7CF6" strokeWidth={2.8} dot={false} activeDot={{ r: 6, fill: '#7A5AF8', stroke: '#fff', strokeWidth: 3 }} isAnimationActive={false} />
+              <Line type="monotone" dataKey="nav" stroke="#2E90FA" strokeWidth={1.8} dot={false} activeDot={{ r: 5, fill: '#2E90FA', stroke: '#fff', strokeWidth: 2 }} isAnimationActive={false} />
               {purchaseData.map((purchase: any, index: number) => (
                 <ReferenceDot
                   key={`${purchase.time}-${index}`}
                   x={purchase.time}
                   y={purchase.purchaseNav}
                   r={6}
-                  fill="#F79009"
+                  fill="#00B386"
                   stroke="#FFFFFF"
-                  strokeWidth={2.5}
-                  style={{ filter: 'drop-shadow(0 2px 4px rgba(247,144,9,.55))' }}
+                  strokeWidth={2}
                   ifOverflow="hidden"
                 />
               ))}
-              {data?.average_nav != null ? <ReferenceLine y={data.average_nav} stroke="#7A5AF8" strokeWidth={1.8} strokeDasharray="7 5" label={{ value: `Average NAV ${data.average_nav.toFixed(2)}`, position: 'insideTopRight', fill: '#6941C6', fontWeight: 700 }} /> : null}
-              {latestPoint ? <ReferenceDot x={latestPoint.time} y={latestPoint.nav} r={6} fill="#2E7CF6" stroke="#FFFFFF" strokeWidth={3} ifOverflow="extendDomain" label={{ value: `Latest NAV ${latestPoint.nav.toFixed(2)}`, position: 'top', dx: -58, fill: '#175CD3', fontWeight: 800, fontSize: 11 }} /> : null}
+              {data?.average_nav != null ? <ReferenceLine y={data.average_nav} stroke="#B0B4BE" strokeDasharray="5 4" label={{ value: `Average NAV ${data.average_nav.toFixed(2)}`, position: 'insideTopRight', fill: '#9b9b9b', fontSize: 10 }} /> : null}
+              {latestPoint ? <ReferenceDot x={latestPoint.time} y={latestPoint.nav} r={4} fill="#2E90FA" stroke="#FFFFFF" strokeWidth={2} ifOverflow="extendDomain" label={{ value: `Latest NAV ${latestPoint.nav.toFixed(2)}`, position: 'top', dx: -52, fill: '#667085', fontWeight: 600, fontSize: 10 }} /> : null}
             </ComposedChart>
           </ResponsiveContainer>
         </Box>
