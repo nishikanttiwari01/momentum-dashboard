@@ -1,26 +1,26 @@
-# Vibrant Mutual-Fund NAV Chart Design
+# Century Ply-Style Mutual-Fund NAV Chart Design
 
 ## Objective
 
-Make every Indian mutual-fund NAV chart visually engaging and faster to interpret while preserving its range controls, average NAV, purchase markers, inception date, returns, transaction table and data calculations.
+Make every Indian mutual-fund NAV chart faster to interpret by adopting the clean line-chart layout already used for Century Ply, while preserving its range controls, average NAV, purchase markers, inception date, returns, transaction table and data calculations.
 
 ## Direction
 
-Use a saturated blue-to-violet NAV line with a translucent gradient area fill. The visual language must match the Modern Wealth Ledger portfolio overview without turning the chart into a trading-terminal display.
+Use the existing Century Ply chart as the visual reference: a crisp blue line on white, restrained axes, faint horizontal grid lines and minimal annotation. Do not use an area or gradient fill.
 
 ## Visual Treatment
 
-- NAV line: strong blue `#2E7CF6` transitioning visually toward violet `#7A5AF8`.
-- Area fill: translucent blue/violet gradient fading into the chart background.
-- Below-average zone: quiet emerald tint `#12B76A` to indicate historically lower-than-average NAV.
-- Average NAV: violet dashed reference line with a compact label badge.
-- Purchases: amber `#F79009` dots with white border, soft glow and detailed tooltip.
-- Latest NAV: larger blue marker with a compact value badge.
-- Grid: faint dashed blue-grey lines.
-- Chart container: white rounded surface, subtle lavender border glow and adequate internal padding.
-- Header metrics: compact colored badges for selected-period return, inception date and latest-vs-average percentage.
+- NAV line: Century Ply blue `#2E90FA`, approximately `1.8px` wide, with no area or gradient fill.
+- Plot background: plain white with no tinted zones, glow or decorative backdrop.
+- Average NAV: grey dashed reference line, matching the Century Ply entry-price reference, with a small right-aligned label.
+- Purchases: green `#00B386` dots with a white border and the existing detailed transaction tooltip.
+- Latest NAV: a small blue marker and compact value label that remain inside the plot bounds.
+- Grid: very faint solid horizontal lines (`#F5F5F5`); no vertical grid lines.
+- Axes: compact muted-grey labels, no tick marks and subtle axis lines.
+- Chart container: minimal white surface with comfortable internal spacing and no lavender glow.
+- Header metrics: keep the existing return, inception and latest-vs-average information, using restrained text color rather than prominent badges.
 
-Red is reserved for negative return text. It is not used as the primary line color because the NAV series itself is not an error state.
+Red remains reserved for negative return text. It is not used as the primary line color because the NAV series itself is not an error state.
 
 ## Interactions and Data
 
@@ -37,12 +37,12 @@ The chart animation is disabled or minimized where it could produce incomplete s
 
 ## Component Boundary
 
-The change remains inside `FundNavChart` in `frontend/src/pages/Portfolio.tsx`, with focused helpers extracted only if required for gradient IDs or labels. No API or backend changes are needed.
+The change remains inside `FundNavChart` in `frontend/src/pages/Portfolio.tsx`, with focused helpers extracted only if required for marker or reference labels. No API or backend changes are needed.
 
 ## Validation
 
-1. A regression test requires an area series, gradient definition, average reference and latest-value marker.
+1. A regression test requires the clean line series, horizontal grid, average reference, purchase markers and latest-value marker, and rejects an area/gradient series.
 2. Existing chart-data and Portfolio tests remain green.
 3. The production build succeeds.
 4. The expanded mutual-fund chart is rendered in a browser at 1Y and 5Y ranges.
-5. Visual inspection confirms a complete area fill, purchase dots, readable badges and no chart clipping.
+5. Visual inspection confirms there is no area or gradient fill, and that the blue line, green purchase dots, references and labels are readable without chart clipping.
