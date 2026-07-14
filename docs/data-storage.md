@@ -44,3 +44,18 @@ Detected Parquet-related modules:
 **Notifications/Digests (by filename):**
 
 - `app/notifs/email_digest.py`
+
+# Wealth portfolio snapshots
+
+Portfolio workbook imports use normalized SQLite records instead of rendering workbook cell positions directly.
+
+- `portfolio_imports` stores the workbook fingerprint, safe basename, status, and issue counts. Workbook bytes and cell contents are not retained.
+- `portfolio_snapshots` is an immutable dated view linked one-to-one with a successful import.
+- `portfolio_assets`, `portfolio_transactions`, and `portfolio_valuations` store records scoped to a snapshot. Deterministic source keys prevent duplicates inside a snapshot while allowing the same historical transaction to appear in later immutable snapshots.
+- `portfolio_fx_rates` stores dated currency rates and their provenance. Current totals use the latest applicable rate and expose when a cached fallback was required.
+
+Upload previews live only in server memory for 30 minutes. Validation and preview do not write portfolio tables. Commit is atomic: any insert failure rolls back the import, snapshot, assets, transactions, and valuations together. Uploading identical workbook bytes returns the existing snapshot.
+
+The importer recognizes current portfolio sheets but explicitly ignores `MF discont.`, `Property Cal.`, `REMIT`, and `STOCKS RECMDN`. Ignored-sheet cell values must not be opened, logged, persisted, or returned to the browser.
+
+Backups of the application SQLite file include normalized portfolio snapshots and FX history, but not the source workbook. Retain the workbook separately if it is needed as an external source record.

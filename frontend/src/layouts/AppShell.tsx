@@ -17,6 +17,8 @@ export default function AppShell() {
   return (
   <Box sx={(theme) => ({
     display: 'flex',
+    width: '100%',
+    minWidth: 0,
     minHeight: '100vh',
     backgroundColor: theme.palette.background.default,
   })}>
@@ -24,7 +26,7 @@ export default function AppShell() {
       <AppTopBar refresh={refresh} setRefresh={setRefresh} navWidth={NAV_WIDTH} />
 
       {/* Main content area: shifted exactly by the drawer width, absolutely no extra padding */}
-      <Box component="main" sx={{ flexGrow: 1, px: 0 }}>
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, px: 0 }}>
         {/* push below AppBar */}
         <Toolbar />
         {/* Page outlet: keep it FULL width; individual pages/cards control their own padding */}
