@@ -123,6 +123,7 @@ describe('WealthGoalWorkspace', () => {
     const onSave = vi.fn();
     const restored = applyGoalFormChange(goalFormFromResponse(response), { type: 'restore' });
     expect(restored).toEqual(DEFAULT_GOAL_FORM);
+    expect(restored.name).toBe('₹15 Cr by 2029');
     expect(onSave).not.toHaveBeenCalled();
     onSave(goalUpdateFromForm(restored));
     expect(onSave).toHaveBeenCalledOnce();
@@ -162,10 +163,17 @@ describe('WealthGoalWorkspace', () => {
   });
 
   it('disables all editable fields, restore, and import while saving', () => {
-    const html = renderToStaticMarkup(<WealthGoalWorkspaceView data={{ ...response, data_health: 'empty' }} initialForm={applyGoalFormChange(goalFormFromResponse(response), { type: 'field', field: 'deadline', value: '2030-01-01' })} onSave={vi.fn()} isSaving onOpenDataImport={vi.fn()} />);
+    const html = renderToStaticMarkup(<WealthGoalWorkspaceView data={{ ...response, data_health: 'empty' }} initialForm={applyGoalFormChange(goalFormFromResponse(response), { type: 'field', field: 'deadline', value: '2030-01-01' })} onSave={vi.fn()} isSaving saveError="Save failed" onRetrySave={vi.fn()} onOpenDataImport={vi.fn()} />);
     expect(html.match(/<input[^>]*disabled=""/g)).toHaveLength(8);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Restore defaults<\/button>/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Import workbook<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Retry<\/button>/);
+  });
+
+  it('uses backend annual-return constraints for every scenario input', () => {
+    const html = renderView();
+    for (const label of ['Conservative', 'Expected', 'Optimistic']) expect(html).toContain(`${label} annual return`);
+    expect(html.match(/<input[^>]*min="-25"[^>]*max="50"[^>]*step="0.1"/g)).toHaveLength(3);
   });
 
   it('classifies 422 field problems separately from retryable form errors', () => {

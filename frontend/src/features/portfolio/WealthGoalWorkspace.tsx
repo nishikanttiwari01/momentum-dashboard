@@ -24,7 +24,7 @@ export type GoalFormAction =
   | { type: 'saveSuccess'; form: GoalForm };
 export type GoalSaveStatus = { saved: boolean; error: { message: string; payload: GoalConfigurationUpdate } | null };
 
-export const DEFAULT_GOAL_FORM: GoalForm = { name: 'Financial freedom', target: '150000000', deadline: '2029-12-31', scenarios: [
+export const DEFAULT_GOAL_FORM: GoalForm = { name: '₹15 Cr by 2029', target: '150000000', deadline: '2029-12-31', scenarios: [
   { scenario_key: 'conservative', annual_return_pct: '7', monthly_contribution: '0' },
   { scenario_key: 'expected', annual_return_pct: '10', monthly_contribution: '0' },
   { scenario_key: 'optimistic', annual_return_pct: '13', monthly_contribution: '0' },
@@ -123,11 +123,11 @@ export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSa
           <TextField disabled={isSaving} label="Target amount" type="number" value={form.target} onChange={(e) => changeForm({ type: 'field', field: 'target', value: e.target.value })} inputProps={{ min: 0 }} error={Boolean(fieldErrors.target)} helperText={fieldErrors.target} />
           <TextField disabled={isSaving} label="Deadline" type="date" value={form.deadline} onChange={(e) => changeForm({ type: 'field', field: 'deadline', value: e.target.value })} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors.deadline)} helperText={fieldErrors.deadline} />
           {form.scenarios.map((item, index) => <Box key={item.scenario_key}><Typography fontWeight={800} textTransform="capitalize" mb={1}>{item.scenario_key}</Typography><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <TextField disabled={isSaving} fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} annual return`} type="number" value={item.annual_return_pct} onChange={(e) => changeForm({ type: 'scenario', index, field: 'annual_return_pct', value: e.target.value })} inputProps={{ min: 0, max: 100, step: .1 }} error={Boolean(fieldErrors[`scenarios.${index}.annual_return_pct`])} helperText={fieldErrors[`scenarios.${index}.annual_return_pct`]} />
+            <TextField disabled={isSaving} fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} annual return`} type="number" value={item.annual_return_pct} onChange={(e) => changeForm({ type: 'scenario', index, field: 'annual_return_pct', value: e.target.value })} inputProps={{ min: -25, max: 50, step: .1 }} error={Boolean(fieldErrors[`scenarios.${index}.annual_return_pct`])} helperText={fieldErrors[`scenarios.${index}.annual_return_pct`]} />
             <TextField disabled={isSaving} fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} Monthly contribution`} type="number" value={item.monthly_contribution} onChange={(e) => changeForm({ type: 'scenario', index, field: 'monthly_contribution', value: e.target.value })} inputProps={{ min: 0 }} error={Boolean(fieldErrors[`scenarios.${index}.monthly_contribution`])} helperText={fieldErrors[`scenarios.${index}.monthly_contribution`]} />
           </Stack></Box>)}
           {saved && <Alert severity="success">Goal settings saved</Alert>}
-          {saveError && <Alert severity="error" action={onRetrySave && <Button color="inherit" onClick={onRetrySave}>Retry</Button>}>{saveError}</Alert>}
+          {saveError && <Alert severity="error" action={onRetrySave && <Button color="inherit" disabled={isSaving} onClick={onRetrySave}>Retry</Button>}>{saveError}</Alert>}
           <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={isGoalSaveDisabled(formState, isSaving)}>{isSaving ? 'Saving…' : 'Save changes'}</Button><Button type="button" disabled={isSaving} onClick={() => changeForm({ type: 'restore' })}>Restore defaults</Button></Stack>
         </Stack>
       </Paper>
