@@ -113,6 +113,25 @@ def test_projection_rejects_negative_contribution_and_invalid_monthly_rate():
         required_monthly_contribution(100, 200, 12, -1200)
 
 
+@pytest.mark.parametrize(
+    ("start", "annual_return_pct", "monthly", "months"),
+    [
+        (0, 0, 1e308, 12),
+        (1e308, 50, 0, 600),
+    ],
+)
+def test_project_balance_rejects_nonfinite_calculation_results(
+    start, annual_return_pct, monthly, months
+):
+    with pytest.raises(ValueError, match="finite projection"):
+        project_balance(start, annual_return_pct, monthly, months)
+
+
+def test_monthly_trajectory_rejects_nonfinite_balance():
+    with pytest.raises(ValueError, match="finite projection"):
+        monthly_trajectory(date(2026, 7, 14), 0, 0, 1e308, 12)
+
+
 def test_calendar_helpers_reject_reversed_dates_and_invalid_trajectory_inputs():
     with pytest.raises(ValueError):
         whole_months_between(date(2024, 2, 1), date(2024, 1, 31))

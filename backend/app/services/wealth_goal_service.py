@@ -65,12 +65,21 @@ def project_balance(
     )
     months = _positive_months(months)
     rate = annual_return_pct / 1200
-    if rate == 0:
-        return start + monthly * months
-    log_growth = months * math.log1p(rate)
-    growth = math.exp(log_growth)
-    annuity_factor = math.expm1(log_growth) / rate
-    return start * growth + monthly * annuity_factor
+    try:
+        if rate == 0:
+            result = start + monthly * months
+        else:
+            log_growth = months * math.log1p(rate)
+            growth = math.exp(log_growth)
+            annuity_factor = math.expm1(log_growth) / rate
+            result = start * growth + monthly * annuity_factor
+    except OverflowError as exc:
+        raise ValueError(
+            "projection must produce a finite projection balance"
+        ) from exc
+    if not math.isfinite(result):
+        raise ValueError("projection must produce a finite projection balance")
+    return result
 
 
 def required_monthly_contribution(

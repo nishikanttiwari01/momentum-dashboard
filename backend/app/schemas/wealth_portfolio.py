@@ -3,7 +3,14 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, computed_field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    computed_field,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 
@@ -80,15 +87,19 @@ ScenarioKey = Literal["conservative", "expected", "optimistic"]
 
 
 class GoalSettings(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     name: str = Field(min_length=1, max_length=120)
-    target_amount_inr: float = Field(gt=0)
+    target_amount_inr: float = Field(gt=0, le=1_000_000_000_000_000)
     deadline: date
 
 
 class GoalScenarioSettings(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     scenario_key: ScenarioKey
     annual_return_pct: float = Field(ge=-25, le=50)
-    monthly_contribution_inr: float = Field(ge=0)
+    monthly_contribution_inr: float = Field(ge=0, le=1_000_000_000_000)
 
 
 class GoalConfigurationUpdate(BaseModel):

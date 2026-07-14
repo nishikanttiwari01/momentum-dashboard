@@ -207,6 +207,29 @@ def test_put_rejects_invalid_configuration_without_partial_update(client, mutate
     assert body["scenario_projections"][1]["settings"]["annual_return_pct"] == 10
 
 
+def test_put_rejects_unsafe_contribution_without_mutating_persisted_goal(client):
+    payload = configuration()
+    payload["scenarios"][1]["monthly_contribution_inr"] = 1e308
+
+    response = client.put("/api/v1/wealth-portfolio/goals/primary", json=payload)
+
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["loc"] == [
+        "body",
+        "scenarios",
+        1,
+        "monthly_contribution_inr",
+    ]
+    reloaded = client.get("/api/v1/wealth-portfolio/goals/primary")
+    assert reloaded.status_code == 200
+    assert reloaded.json()["goal"]["target_amount_inr"] == 150_000_000
+    assert (
+        reloaded.json()["scenario_projections"][1]["settings"]
+        ["monthly_contribution_inr"]
+        == 0
+    )
+
+
 def test_deadline_validation_has_field_location_and_rolls_back(client):
     payload = configuration(deadline="2020-01-01")
 
