@@ -13,5 +13,8 @@ describe('mutual-fund table sorting integration', () => {
     expect(source).toContain('sortedFunds.map((f) =>');
     expect(source).toContain('<TableCell align="center">Action</TableCell>');
     expect(source).toContain('<TableCell align="center">Links</TableCell>');
+    expect(source).toContain('hideSortIcon={false}');
+    expect(source).toContain("'& .MuiTableSortLabel-icon': { opacity: 0.35 }");
+    expect(source).toContain("'&.Mui-active .MuiTableSortLabel-icon': { opacity: 1, color: 'primary.main' }");
   });
 });

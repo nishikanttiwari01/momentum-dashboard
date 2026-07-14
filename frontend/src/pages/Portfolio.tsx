@@ -42,7 +42,7 @@ import {
 import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
 import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
 import PortfolioAllocation from '../features/portfolio/PortfolioAllocation';
-import PortfolioWorkbookPreview from '../features/portfolio/PortfolioWorkbookPreview';
+import PortfolioHub from '../features/portfolio/PortfolioHub';
 import { PortfolioAssetPanels, PortfolioBalanceSheet, PortfolioWealthGrowth } from '../features/portfolio/PortfolioWorkbookSnapshot';
 import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
 import { PortfolioMetricTile, PortfolioSectionHeader } from '../features/portfolio/PortfolioVisuals';
@@ -282,7 +282,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
   );
 };
 
-const Portfolio: React.FC = () => {
+export const PortfolioInvestmentsPanel: React.FC = () => {
   const [refreshing, setRefreshing] = React.useState(false);
   const [expandedFund, setExpandedFund] = React.useState<string | null>(null);
   const [transactionFund, setTransactionFund] = React.useState<Instrument | null>(null);
@@ -442,7 +442,12 @@ const Portfolio: React.FC = () => {
                     <TableSortLabel
                       active={active}
                       direction={active ? sortDirection : 'asc'}
+                      hideSortIcon={false}
                       onClick={() => handleSort(column.key)}
+                      sx={{
+                        '& .MuiTableSortLabel-icon': { opacity: 0.35 },
+                        '&.Mui-active .MuiTableSortLabel-icon': { opacity: 1, color: 'primary.main' },
+                      }}
                     >
                       {column.label}
                     </TableSortLabel>
@@ -556,13 +561,13 @@ const Portfolio: React.FC = () => {
         </Paper>
       ) : null}
 
-      <PortfolioWorkbookPreview />
-
       <Typography variant="caption" color="text.secondary" sx={{ pb: 2 }}>
         {data.notes.join(' ')} Generated {dayjs(data.generated_at).format('DD MMM YYYY, HH:mm')}.
       </Typography>
     </Stack>
   );
 };
+
+const Portfolio: React.FC = () => <PortfolioHub investments={<PortfolioInvestmentsPanel />} />;
 
 export default Portfolio;

@@ -19,6 +19,7 @@ from app.api.v1 import (
     health,
     data_health,
     portfolio,
+    wealth_portfolio,
     us_portfolio,
     news_relevant,
     screener,
@@ -235,6 +236,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router,      prefix=prefix)
     app.include_router(data_health.router, prefix=prefix, tags=["Health"])
     app.include_router(portfolio.router,   prefix=prefix, tags=["Portfolio"])
+    app.include_router(wealth_portfolio.router, prefix=prefix, tags=["Portfolio"])
     app.include_router(us_portfolio.router, prefix=prefix, tags=["Portfolio"])
     app.include_router(news_relevant.router, prefix=prefix, tags=["News"])
     app.include_router(screener.router,    prefix=prefix, tags=["Screener"])
