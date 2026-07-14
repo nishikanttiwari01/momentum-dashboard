@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portfolio Workbook Dashboard — Design Sample</title>
+  <style>
+    :root { --ink:#14213d; --muted:#697386; --line:#e3e8ef; --panel:#fff; --bg:#f5f7fb; --blue:#2878ff; --green:#00a879; --orange:#f59e0b; --violet:#7c5ce7; --red:#dc4c64; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 Inter,Segoe UI,Arial,sans-serif; }
+    button,input { font:inherit; }
+    .shell { min-height:100vh; display:grid; grid-template-columns:220px 1fr; }
+    aside { color:#dce7ff; background:#10264d; padding:26px 18px; }
+    .brand { color:white; font-weight:800; font-size:18px; margin-bottom:38px; }
+    .brand span { color:#58a6ff; }
+    nav a { display:block; padding:11px 12px; color:#b9c8e5; text-decoration:none; border-radius:8px; margin:4px 0; }
+    nav a.active { background:#22477c; color:#fff; }
+    main { min-width:0; padding:26px; }
+    .topbar { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:22px; }
+    h1 { margin:0 0 5px; font-size:26px; letter-spacing:-.02em; }
+    h2 { margin:0 0 18px; font-size:17px; }
+    .subtle,.metric-label,.caption { color:var(--muted); }
+    .asof { background:#e8f1ff; color:#2367d1; padding:8px 12px; border-radius:18px; white-space:nowrap; }
+    .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:14px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 2px 8px rgba(25,45,80,.04); }
+    .metric { padding:18px; border-top:3px solid var(--blue); }
+    .metric:nth-child(2){border-color:var(--violet)} .metric:nth-child(3){border-color:var(--green)} .metric:nth-child(4){border-color:var(--orange)}
+    .metric-value { margin-top:7px; font-size:23px; font-weight:800; }
+    .positive { color:var(--green); }
+    .charts { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+    .chart-card { padding:20px; min-height:300px; }
+    .donut-layout { display:flex; align-items:center; gap:24px; }
+    .donut { width:180px; height:180px; flex:0 0 auto; transform:rotate(-90deg); }
+    .donut circle { fill:none; stroke-width:22; }
+    .donut .track { stroke:#edf1f7; }
+    .legend { flex:1; min-width:0; }
+    .legend-row { display:grid; grid-template-columns:12px 1fr auto; align-items:center; gap:9px; padding:9px 0; border-bottom:1px solid #eef1f5; }
+    .dot { width:10px; height:10px; border-radius:50%; }
+    .legend strong { display:block; }
+    .legend small { color:var(--muted); }
+    .history { padding:20px; margin-bottom:14px; }
+    .history-head { display:flex; justify-content:space-between; gap:20px; }
+    .key { display:flex; gap:15px; color:var(--muted); }
+    .key i { display:inline-block; width:18px; height:3px; margin-right:6px; vertical-align:middle; }
+    .history svg { width:100%; height:240px; margin-top:12px; overflow:visible; }
+    .gridline { stroke:#e6ebf2; stroke-dasharray:4 5; }
+    .axis-text { fill:#7c879b; font-size:12px; }
+    .tabs { display:flex; gap:7px; overflow:auto; margin:20px 0 12px; }
+    .tab { border:1px solid var(--line); background:#fff; color:#536078; padding:9px 14px; border-radius:8px; cursor:pointer; white-space:nowrap; }
+    .tab.active { color:#fff; background:var(--blue); border-color:var(--blue); }
+    .panel { display:none; padding:20px; }
+    .panel.active { display:block; }
+    .table-wrap { overflow-x:auto; }
+    table { border-collapse:collapse; width:100%; min-width:760px; }
+    th { color:#7b879a; font-size:11px; text-align:left; letter-spacing:.05em; text-transform:uppercase; background:#f8fafc; }
+    th,td { padding:12px 11px; border-bottom:1px solid #edf0f4; }
+    td.num,th.num { text-align:right; }
+    tr.total td { font-weight:800; background:#f8fbff; }
+    .tag { display:inline-block; border-radius:12px; background:#eef4ff; color:#2469d7; padding:3px 8px; font-size:11px; }
+    .upload-grid { display:grid; grid-template-columns:minmax(260px,.8fr) 1.2fr; gap:18px; }
+    .dropzone { border:2px dashed #b9c8df; border-radius:12px; text-align:center; padding:36px 18px; background:#f8fbff; }
+    .file-label { display:inline-block; margin-top:15px; padding:9px 15px; color:#fff; background:var(--blue); border-radius:8px; cursor:pointer; }
+    input[type=file] { position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; }
+    .preview { border:1px solid var(--line); border-radius:12px; padding:16px; }
+    .preview.waiting { color:var(--muted); display:grid; place-items:center; min-height:190px; }
+    .preview h3 { margin:0 0 12px; }
+    .status { display:flex; align-items:center; gap:8px; margin:8px 0; }
+    .status b { color:var(--green); }
+    .sheet-chips { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+    .sheet-chips span { padding:4px 8px; border-radius:12px; background:#eaf8f3; color:#087d5e; font-size:11px; }
+    .changes { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0; }
+    .changes div { text-align:center; padding:10px; background:#f5f7fb; border-radius:8px; }
+    .changes strong { display:block; font-size:18px; }
+    .confirm { border:0; background:var(--green); color:white; border-radius:8px; padding:9px 14px; cursor:pointer; }
+    .privacy { margin-top:14px; padding:11px 13px; background:#fff8e7; border-radius:8px; color:#7e5d0b; }
+    footer { margin-top:18px; color:var(--muted); font-size:12px; text-align:center; }
+    @media (max-width:1050px){ .shell{grid-template-columns:1fr} aside{display:none} .metrics{grid-template-columns:repeat(2,1fr)} }
+    @media (max-width:760px){ main{padding:16px} .charts,.upload-grid{grid-template-columns:1fr} .metrics{grid-template-columns:1fr 1fr} .donut-layout{flex-direction:column;align-items:flex-start} .topbar{flex-direction:column} }
+    @media (max-width:480px){ .metrics{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><span>◆</span> Momentum</div>
+      <nav aria-label="Primary navigation">
+        <a href="#">Dashboard</a><a href="#">Screener</a><a href="#" class="active">Portfolio</a><a href="#">Trades</a><a href="#">Learning</a>
+      </nav>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div><h1>Portfolio intelligence</h1><div class="subtle">Current holdings consolidated from your investment workbook</div></div>
+        <div class="asof">Workbook snapshot · 01 Sep 2025</div>
+      </header>
+
+      <section class="metrics" data-testid="portfolio-overview" data-total-gain="24395797.00" aria-label="Portfolio overview">
+        <article class="card metric"><div class="metric-label">Total principal</div><div class="metric-value">₹5.87 Cr</div><div class="caption">₹5,86,63,055</div></article>
+        <article class="card metric"><div class="metric-label">Current market value</div><div class="metric-value">₹8.31 Cr</div><div class="caption">₹8,30,58,852</div></article>
+        <article class="card metric"><div class="metric-label">Total gain</div><div class="metric-value positive">+₹2.44 Cr</div><div class="caption positive">+₹2,43,95,797</div></article>
+        <article class="card metric"><div class="metric-label">Overall return</div><div class="metric-value positive">+41.59%</div><div class="caption">Market value vs principal</div></article>
+      </section>
+
+      <section class="charts">
+        <article class="card chart-card" data-testid="asset-allocation-chart">
+          <h2>Asset allocation</h2>
+          <div class="donut-layout">
+            <svg class="donut" viewBox="0 0 120 120" role="img" aria-label="Current assets 53.8 percent, fixed assets 46.2 percent">
+              <circle class="track" cx="60" cy="60" r="43" pathLength="100"/>
+              <circle cx="60" cy="60" r="43" pathLength="100" stroke="#2878ff" stroke-dasharray="53.8 46.2" stroke-dashoffset="0"/>
+              <circle cx="60" cy="60" r="43" pathLength="100" stroke="#7c5ce7" stroke-dasharray="46.2 53.8" stroke-dashoffset="-53.8"/>
+            </svg>
+            <div class="legend">
+              <div class="legend-row"><i class="dot" style="background:#2878ff"></i><div><strong>Current assets</strong><small>Funds, equity and deposits</small></div><b>53.8%<br><small>₹4.47 Cr</small></b></div>
+              <div class="legend-row"><i class="dot" style="background:#7c5ce7"></i><div><strong>Fixed assets</strong><small>Property market value</small></div><b>46.2%<br><small>₹3.84 Cr</small></b></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card chart-card" data-testid="fund-allocation-chart">
+          <h2>Mutual fund allocation by category</h2>
+          <div class="donut-layout">
+            <svg class="donut" viewBox="0 0 120 120" role="img" aria-label="Small cap 75.8, mid cap 12.3, large cap 11.7 and debt 0.2 percent">
+              <circle class="track" cx="60" cy="60" r="43" pathLength="100"/>
+              <circle cx="60" cy="60" r="43" pathLength="100" stroke="#2878ff" stroke-dasharray="75.8 24.2"/>
+              <circle cx="60" cy="60" r="43" pathLength="100" stroke="#00a879" stroke-dasharray="12.3 87.7" stroke-dashoffset="-75.8"/>
+              <circle cx="60" cy="60" r="43" pathLength="100" stroke="#f59e0b" stroke-dasharray="11.7 88.3" stroke-dashoffset="-88.1"/>
+              <circle cx="60" cy="60" r="43" pathLength="100" stroke="#dc4c64" stroke-dasharray=".2 99.8" stroke-dashoffset="-99.8"/>
+            </svg>
+            <div class="legend">
+              <div class="legend-row"><i class="dot" style="background:#2878ff"></i><div><strong>Small cap</strong><small>High-growth allocation</small></div><b>75.8%<br><small>₹2.39 Cr</small></b></div>
+              <div class="legend-row"><i class="dot" style="background:#00a879"></i><div><strong>Mid cap</strong></div><b>12.3%<br><small>₹38.97 L</small></b></div>
+              <div class="legend-row"><i class="dot" style="background:#f59e0b"></i><div><strong>Large cap</strong></div><b>11.7%<br><small>₹37.05 L</small></b></div>
+              <div class="legend-row"><i class="dot" style="background:#dc4c64"></i><div><strong>Debt fund</strong></div><b>0.2%<br><small>₹51.82 K</small></b></div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="card history" data-testid="portfolio-history-chart">
+        <div class="history-head"><div><h2>Portfolio value history</h2><div class="caption">Year-end workbook snapshots</div></div><div class="key"><span><i style="background:#9aa6ba"></i>Principal</span><span><i style="background:#2878ff"></i>Market value</span></div></div>
+        <svg viewBox="0 0 1000 240" preserveAspectRatio="none" role="img" aria-label="Principal and market value increased from 2023 to 2025">
+          <line class="gridline" x1="55" y1="35" x2="970" y2="35"/><line class="gridline" x1="55" y1="95" x2="970" y2="95"/><line class="gridline" x1="55" y1="155" x2="970" y2="155"/><line x1="55" y1="210" x2="970" y2="210" stroke="#ccd4df"/>
+          <text class="axis-text" x="4" y="39">₹9 Cr</text><text class="axis-text" x="4" y="99">₹7 Cr</text><text class="axis-text" x="4" y="159">₹5 Cr</text>
+          <polyline points="120,157 510,132 900,129" fill="none" stroke="#9aa6ba" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+          <polyline points="120,130 510,50 900,48" fill="none" stroke="#2878ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+          <g fill="#2878ff"><circle cx="120" cy="130" r="5"/><circle cx="510" cy="50" r="5"/><circle cx="900" cy="48" r="5"/></g>
+          <g fill="#9aa6ba"><circle cx="120" cy="157" r="5"/><circle cx="510" cy="132" r="5"/><circle cx="900" cy="129" r="5"/></g>
+          <text class="axis-text" x="101" y="232">2023</text><text class="axis-text" x="491" y="232">2024</text><text class="axis-text" x="881" y="232">2025</text>
+        </svg>
+      </section>
+
+      <div class="tabs" role="tablist" aria-label="Portfolio details">
+        <button class="tab active" data-target="mutual-funds">Mutual funds</button><button class="tab" data-target="equity">Equity</button><button class="tab" data-target="fixed-assets">Fixed assets</button><button class="tab" data-target="upload-preview">Refresh from Excel</button>
+      </div>
+
+      <section class="card panel active" data-panel="mutual-funds">
+        <h2>Mutual funds</h2><div class="table-wrap"><table><thead><tr><th>Fund</th><th>Category</th><th class="num">Invested</th><th class="num">Current value</th><th class="num">XIRR</th><th class="num">Gain</th></tr></thead><tbody>
+          <tr><td>Quant Small Cap Fund — Direct Growth</td><td><span class="tag">SMALL CAP</span></td><td class="num">₹65,05,000</td><td class="num">₹80,80,057</td><td class="num positive">19.27%</td><td class="num positive">₹15,75,057</td></tr>
+          <tr><td>UTI Small Cap Fund — Direct Growth</td><td><span class="tag">SMALL CAP</span></td><td class="num">₹60,80,577</td><td class="num">₹71,73,797</td><td class="num positive">11.20%</td><td class="num positive">₹10,93,220</td></tr>
+          <tr><td>Edelweiss Mid Cap Fund — Direct Growth</td><td><span class="tag">MID CAP</span></td><td class="num">₹4,05,000</td><td class="num">₹5,22,335</td><td class="num positive">20.63%</td><td class="num positive">₹1,17,335</td></tr>
+          <tr><td>UTI Nifty 50 Index Fund — Direct Growth</td><td><span class="tag">LARGE CAP</span></td><td class="num">₹25,83,000</td><td class="num">₹36,73,005</td><td class="num positive">9.58%</td><td class="num positive">₹10,90,005</td></tr>
+          <tr class="total"><td colspan="2">Workbook fund portfolio total</td><td class="num">₹2,63,86,578</td><td class="num">₹3,15,86,738</td><td class="num positive">10.24%</td><td class="num positive">₹52,00,160</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="card panel" data-panel="equity">
+        <h2>Equity and other current assets</h2><div class="table-wrap"><table><thead><tr><th>Holding group</th><th>Source sheet</th><th class="num">Principal</th><th class="num">Market value</th><th class="num">Gain / loss</th></tr></thead><tbody>
+          <tr><td>Direct equity holdings</td><td>EQUITY</td><td class="num">₹40,85,955</td><td class="num">₹53,34,812</td><td class="num positive">₹12,48,857</td></tr>
+          <tr><td>Mutual funds and deposits</td><td>CURRENT ASSET</td><td class="num">₹3,68,67,884</td><td class="num">₹3,93,24,040</td><td class="num positive">₹24,56,156</td></tr>
+          <tr class="total"><td colspan="2">Current assets total</td><td class="num">₹4,09,53,839</td><td class="num">₹4,46,58,852</td><td class="num positive">₹37,05,013</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="card panel" data-panel="fixed-assets">
+        <h2>Fixed assets</h2><div class="table-wrap"><table><thead><tr><th>Asset</th><th>Type</th><th class="num">Principal</th><th class="num">Market value</th></tr></thead><tbody>
+          <tr><td>Brigade land</td><td>Residential land</td><td class="num">₹99,59,216</td><td class="num">₹2,16,00,000</td></tr>
+          <tr><td>Amrapali flat</td><td>Residential flat</td><td class="num">₹20,50,000</td><td class="num">₹68,00,000</td></tr>
+          <tr><td>Gera office</td><td>Office</td><td class="num">₹57,00,000</td><td class="num">₹1,00,00,000</td></tr>
+          <tr class="total"><td colspan="2">Fixed assets total</td><td class="num">₹1,77,09,216</td><td class="num">₹3,84,00,000</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section class="card panel" data-panel="upload-preview">
+        <h2>Refresh portfolio from Excel</h2>
+        <div class="upload-grid">
+          <div class="dropzone"><div style="font-size:34px">⇧</div><strong>Select your updated investment workbook</strong><div class="caption">The mockup validates locally and does not send the file.</div><label class="file-label" for="workbook">Choose .xlsx file</label><input id="workbook" type="file" accept=".xlsx"></div>
+          <div id="preview" class="preview waiting">Choose an Excel workbook to see the proposed import preview.</div>
+        </div>
+        <div class="privacy">Private identity and access fields are always excluded. Only approved current-portfolio sheets and financial values enter the import pipeline.</div>
+        <div hidden aria-hidden="true">BALANCE SHEET · CURRENT ASSET · FUNDS · Funds XIRR · Final XIRR · EQUITY · FIXED ASSET</div>
+      </section>
+
+      <footer>Design sample only · Values are a workbook snapshot · No data is uploaded or stored</footer>
+    </main>
+  </div>
+  <script>
+    const tabs = document.querySelectorAll('.tab');
+    const panels = document.querySelectorAll('.panel');
+    tabs.forEach(tab => tab.addEventListener('click', () => {
+      tabs.forEach(item => item.classList.toggle('active', item === tab));
+      panels.forEach(panel => panel.classList.toggle('active', panel.dataset.panel === tab.dataset.target));
+    }));
+
+    document.getElementById('workbook').addEventListener('change', event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      const valid = file.name.toLowerCase().endsWith('.xlsx');
+      const preview = document.getElementById('preview');
+      preview.classList.remove('waiting');
+      preview.innerHTML = valid ? `
+        <h3>Ready to refresh</h3>
+        <div class="status"><b>✓</b><span>${file.name} passed the sample format check</span></div>
+        <div class="caption">Recognized current-portfolio sheets</div>
+        <div class="sheet-chips"><span>BALANCE SHEET</span><span>CURRENT ASSET</span><span>FUNDS</span><span>Funds XIRR</span><span>Final XIRR</span><span>EQUITY</span><span>FIXED ASSET</span></div>
+        <div class="changes"><div><strong>4</strong><small>holdings updated</small></div><div><strong>2</strong><small>transactions added</small></div><div><strong>0</strong><small>blocking errors</small></div></div>
+        <div class="status"><b>✓</b><span>Totals reconcile with BALANCE SHEET</span></div>
+        <button class="confirm" type="button" onclick="this.textContent='Preview confirmed';this.disabled=true">Confirm sample refresh</button>`
+        : '<h3>Unsupported file</h3><p>Please choose an .xlsx workbook.</p>';
+    });
+  </script>
+</body>
+</html>
