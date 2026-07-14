@@ -82,7 +82,4 @@ def test_imported_wealth_drives_persisted_goal_projections(client):
         )
 
     summary_after = client.get("/api/v1/wealth-portfolio/summary").json()
-    assert summary_after["snapshot_id"] == snapshot_id
-    assert summary_after["net_worth_market_value_inr"] == summary_before[
-        "net_worth_market_value_inr"
-    ]
+    assert summary_after == summary_before
