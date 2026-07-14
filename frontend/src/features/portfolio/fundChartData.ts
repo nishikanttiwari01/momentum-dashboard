@@ -12,3 +12,8 @@ export function buildFundChartSeries(points: NavPoint[], purchases: Purchase[]) 
     })),
   };
 }
+
+export function getFundChartDomain(prices: { time: number }[]): [number, number] {
+  if (!prices.length) return [0, 0];
+  return [prices[0].time, prices[prices.length - 1].time];
+}

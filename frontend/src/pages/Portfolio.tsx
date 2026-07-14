@@ -35,7 +35,7 @@ import {
 } from 'recharts';
 import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
 import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
-import { buildFundChartSeries } from '../features/portfolio/fundChartData';
+import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
 
 type Holding = {
   account_id: string;
@@ -167,6 +167,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
   const series = buildFundChartSeries(points, data?.purchases ?? []);
   const chartData = series.prices;
   const purchaseData = series.purchases;
+  const timeDomain = getFundChartDomain(chartData);
   const changeColor = tone(data?.change_pct);
 
   return (
@@ -212,7 +213,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e6e8ee" vertical={false} />
-              <XAxis dataKey="time" type="number" scale="time" domain={['dataMin', 'dataMax']} tick={{ fontSize: 11 }} minTickGap={40} tickMargin={6} tickFormatter={(value: number) => dayjs(value).format(labelFmt)} />
+              <XAxis dataKey="time" type="number" scale="time" domain={timeDomain} allowDataOverflow tick={{ fontSize: 11 }} minTickGap={40} tickMargin={6} tickFormatter={(value: number) => dayjs(value).format(labelFmt)} />
               <YAxis
                 tick={{ fontSize: 11 }}
                 width={64}
