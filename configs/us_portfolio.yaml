@@ -1,0 +1,8 @@
+us_portfolio:
+  price_cache_ttl_hours: 12
+instruments:
+  - id: qqq
+    ticker: QQQ
+    name: Invesco QQQ Trust
+    type: us_etf
+    currency: USD

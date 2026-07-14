@@ -1,0 +1,171 @@
+# ------------------------------------------------------------
+# PORTFOLIO CONFIGURATION
+# ------------------------------------------------------------
+# Static configuration only. NAVs, returns and XIRR are CALCULATED at runtime
+# (AMFI/mfapi.in for NAV history + data/portfolio_transactions.csv for your
+# transactions). Never write current values into this file.
+#
+# amfi_scheme_code: set to the numeric AMFI code if you know it; leave null
+# and the backend will resolve it by fuzzy-matching `amfi_name_hint` against
+# the AMFI NAVAll list, then cache the result in data/mf_cache/.
+# ------------------------------------------------------------
+
+portfolio:
+  base_currency: INR
+
+accounts:
+  - id: nre_primary
+    label: NRE
+  - id: nro_primary
+    label: NRO
+  - id: nre_sbi
+    label: NRE-SBI
+
+# Accumulation (dip-buying) engine settings — used by /portfolio/overview.
+accumulation:
+  drawdown_watch_pct: 5.0      # NAV this % below 1y high -> "watch"
+  drawdown_tranche_pct: 10.0   # NAV this % below 1y high -> "tranche eligible"
+  nav_cache_ttl_hours: 12
+
+instruments:
+  - id: axis_midcap
+    type: mutual_fund
+    name: Axis Midcap Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "Axis Midcap Fund Direct Growth"
+    category: MID_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_MIDCAP_150_TRI
+    links:
+      groww: https://groww.in/mutual-funds/axis-midcap-fund-direct-growth
+
+  - id: edelweiss_midcap
+    type: mutual_fund
+    name: Edelweiss Mid Cap Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "Edelweiss Mid Cap Fund Direct Growth"
+    category: MID_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_MIDCAP_150_TRI
+    links:
+      groww: https://groww.in/mutual-funds/edelweiss-mid-cap-fund-direct-growth
+
+  - id: hsbc_small_cap
+    type: mutual_fund
+    name: HSBC Small Cap Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "HSBC Small Cap Fund Direct Growth"
+    category: SMALL_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_SMALLCAP_250_TRI
+    links:
+      groww: https://groww.in/mutual-funds/hsbc-small-cap-fund-direct-growth
+
+  - id: motilal_oswal_midcap
+    type: mutual_fund
+    name: Motilal Oswal Midcap Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "Motilal Oswal Midcap Fund Direct Growth"
+    category: MID_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_MIDCAP_150_TRI
+    links:
+      groww: https://groww.in/mutual-funds/motilal-oswal-most-focused-midcap-30-fund-direct-growth
+
+  - id: nippon_smallcap250_index
+    type: mutual_fund
+    name: Nippon India Nifty Smallcap 250 Index Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "Nippon India Nifty Smallcap 250 Index Fund Direct Growth"
+    category: SMALL_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_SMALLCAP_250_TRI
+    links:
+      groww: https://groww.in/mutual-funds/nippon-india-nifty-smallcap-250-index-fund-direct-growth
+
+  - id: uti_nifty50_index
+    type: mutual_fund
+    name: UTI Nifty 50 Index Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "UTI Nifty 50 Index Fund Direct Growth"
+    category: LARGE_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_50_TRI
+    links:
+      groww: https://groww.in/mutual-funds/uti-nifty-fund-direct-growth
+
+  - id: uti_small_cap
+    type: mutual_fund
+    name: UTI Small Cap Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "UTI Small Cap Fund Direct Growth"
+    category: SMALL_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_SMALLCAP_250_TRI
+    links:
+      groww: https://groww.in/mutual-funds/uti-small-cap-fund-direct-growth
+
+  - id: parag_parikh_flexi_cap
+    type: mutual_fund
+    name: Parag Parikh Flexi Cap Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "Parag Parikh Flexi Cap Fund Direct Growth"
+    category: LARGE_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_500_TRI
+    links:
+      groww: https://groww.in/mutual-funds/parag-parikh-long-term-value-fund-direct-growth
+
+  - id: quant_small_cap
+    type: mutual_fund
+    name: Quant Small Cap Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "Quant Small Cap Fund Direct Plan Growth"
+    category: SMALL_CAP
+    plan: DIRECT
+    option: GROWTH
+    benchmark: NIFTY_SMALLCAP_250_TRI
+    links:
+      groww: https://groww.in/mutual-funds/quant-small-cap-fund-direct-plan-growth
+
+  - id: uti_liquid
+    type: mutual_fund
+    name: UTI Liquid Fund - Direct Growth
+    amfi_scheme_code: null
+    amfi_name_hint: "UTI Liquid Fund Direct Growth"
+    category: DEBT_FUND
+    plan: DIRECT
+    option: GROWTH
+    benchmark: null
+    links: {}
+
+  - id: sbi_fd
+    type: fixed_deposit
+    name: SBI Fixed Deposit
+    category: DEBT_FUND
+    # FDs have no NAV; they only appear in allocation once transactions exist.
+
+# Which instrument+account pairs you actually hold, SIP amounts, and target
+# allocation (% of total portfolio). target_portfolio_pct drives the
+# underweight signal in the accumulation engine; null disables it.
+holdings_config:
+  - { instrument_id: axis_midcap,               account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: edelweiss_midcap,          account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: hsbc_small_cap,            account_id: nre_sbi,     sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: motilal_oswal_midcap,      account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: nippon_smallcap250_index,  account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: uti_nifty50_index,         account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: uti_small_cap,             account_id: nro_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: uti_small_cap,             account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: false }
+  - { instrument_id: parag_parikh_flexi_cap,    account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: quant_small_cap,           account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: true }
+  - { instrument_id: uti_liquid,                account_id: nro_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: false }
+  - { instrument_id: sbi_fd,                    account_id: nre_primary, sip_amount: 0,    target_portfolio_pct: null, accumulation_enabled: false }

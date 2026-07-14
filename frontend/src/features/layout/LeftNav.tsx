@@ -1,4 +1,4 @@
-// frontend/src/features/layout/LeftNav.tsx
+﻿// frontend/src/features/layout/LeftNav.tsx
 import * as React from 'react';
 import {
   Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Box, Typography, Divider
@@ -8,6 +8,7 @@ import ListIcon from '@mui/icons-material/ViewList';
 import BookmarkIcon from '@mui/icons-material/BookmarkBorder';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import ArticleIcon from '@mui/icons-material/Article';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import HistoryIcon from '@mui/icons-material/History';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -22,6 +23,7 @@ export const NAV_WIDTH = 165;
 const items = [
   { to: '/', label: 'Dashboard', icon: <DashboardIcon /> },
   { to: '/screener', label: 'Screener', icon: <ListIcon /> },
+  { to: '/portfolio', label: 'Portfolio', icon: <AccountBalanceWalletIcon /> },
   { to: '/news', label: 'News', icon: <ArticleIcon /> },
   { to: '/history', label: 'Trades', icon: <TrendingUpIcon  /> }, // ← renamed
   { to: '/learning', label: 'Learning', icon: <SchoolIcon /> },
@@ -41,7 +43,7 @@ export default function LeftNav() {
       }}
     >
       {/* Top spacer aligned with AppBar height (adjust if your header height changes) */}
-      <Toolbar sx={{ minHeight: 64 }} />
+      <Toolbar sx={{ minHeight: 52 }} />
 
       {/* Brand block — image on top, text below */}
       <Box sx={{ px: 2, pb: 1 }}>
@@ -70,7 +72,7 @@ export default function LeftNav() {
               boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
             }}
           />
-          <Typography variant="subtitle2" sx={{ lineHeight: 1.1 }}>
+          <Typography variant="subtitle2" sx={{ lineHeight: 1.2, fontSize: 12.5 }}>
             Shree Ganeshaya<br />Namah
           </Typography>
           <Typography variant="caption" color="text.secondary">
@@ -90,12 +92,21 @@ export default function LeftNav() {
             to={it.to}
             sx={{
               mx: 1,
-              mb: 0.5,
-              '&.active': { bgcolor: '#dfe5efff' },
+              mb: 0.25,
+              borderRadius: '4px',
+              py: 0.6,
+              '&.active': {
+                bgcolor: 'rgba(46,144,250,0.08)',
+                '& .MuiListItemText-primary': { color: 'primary.main', fontWeight: 600 },
+                '& .MuiListItemIcon-root': { color: 'primary.main' },
+              },
             }}
           >
-            <ListItemIcon sx={{ minWidth: 36, color: 'text.secondary' }}>{it.icon}</ListItemIcon>
-            <ListItemText primary={it.label} />
+            <ListItemIcon sx={{ minWidth: 32, color: 'text.secondary', '& svg': { fontSize: 19 } }}>{it.icon}</ListItemIcon>
+            <ListItemText
+              primary={it.label}
+              primaryTypographyProps={{ fontSize: 13, fontWeight: 500, lineHeight: 1.2 }}
+            />
           </ListItemButton>
         ))}
       </List>

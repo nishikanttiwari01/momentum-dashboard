@@ -1,4 +1,4 @@
-# backend/app/main.py
+﻿# backend/app/main.py
 from __future__ import annotations
 
 import logging
@@ -17,6 +17,10 @@ from app.middleware.request_log import RequestLogMiddleware
 from app.middleware.request_id import RequestIdMiddleware
 from app.api.v1 import (
     health,
+    data_health,
+    portfolio,
+    us_portfolio,
+    news_relevant,
     screener,
     instruments,
     alerts,
@@ -30,6 +34,7 @@ from app.api.v1 import (
     momentum,
     candidate_pool,
     simulator,
+    etfs,
 )
 from app.api.errors import (
     on_validation_error,
@@ -228,6 +233,10 @@ def create_app() -> FastAPI:
 
     prefix = cfg.app.api_prefix
     app.include_router(health.router,      prefix=prefix)
+    app.include_router(data_health.router, prefix=prefix, tags=["Health"])
+    app.include_router(portfolio.router,   prefix=prefix, tags=["Portfolio"])
+    app.include_router(us_portfolio.router, prefix=prefix, tags=["Portfolio"])
+    app.include_router(news_relevant.router, prefix=prefix, tags=["News"])
     app.include_router(screener.router,    prefix=prefix, tags=["Screener"])
     app.include_router(instruments.router, prefix=prefix, tags=["Instruments"])
     app.include_router(alerts.router,      prefix=prefix, tags=["Alerts"])
@@ -241,6 +250,7 @@ def create_app() -> FastAPI:
     app.include_router(news_api.router,   prefix=prefix, tags=["News"])
     app.include_router(candidate_pool.router, prefix=prefix, tags=["Screener"])
     app.include_router(simulator.router,   prefix=prefix, tags=["Simulator"])
+    app.include_router(etfs.router,        prefix=prefix, tags=["ETFs"])
 
     return app
 

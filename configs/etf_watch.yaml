@@ -1,0 +1,68 @@
+# ------------------------------------------------------------
+# ETF WATCH CONFIGURATION
+# ------------------------------------------------------------
+# Curated list of popular NSE-listed ETFs shown on the dashboard
+# "ETF Momentum Watch" card. Prices/returns are fetched at runtime
+# from Yahoo Finance (ticker = NSE symbol + ".NS") and cached in
+# data/etf_cache/. Edit freely — the card ranks by recent momentum.
+#
+# Fields:
+#   symbol   : NSE trading symbol (Yahoo ticker derived as SYMBOL.NS)
+#   name     : display name
+#   category : EQUITY_INDEX | EQUITY_SECTOR | EQUITY_FACTOR | INTERNATIONAL | COMMODITY
+# ------------------------------------------------------------
+
+etf_watch:
+  cache_ttl_hours: 6
+  rank_by: ret_3m_pct     # ret_1m_pct | ret_3m_pct | ret_6m_pct | ret_1y_pct
+  top_n: 8                # how many rows the dashboard card shows
+
+etfs:
+  - symbol: NIFTYBEES
+    name: Nippon India Nifty 50 BeES
+    category: EQUITY_INDEX
+  - symbol: JUNIORBEES
+    name: Nippon India Nifty Next 50 BeES
+    category: EQUITY_INDEX
+  - symbol: MID150BEES
+    name: Nippon India Nifty Midcap 150 BeES
+    category: EQUITY_INDEX
+  - symbol: HDFCSML250
+    name: HDFC Nifty Smallcap 250 ETF
+    category: EQUITY_INDEX
+  - symbol: MOM100
+    name: Motilal Oswal Nifty Midcap 100 ETF
+    category: EQUITY_INDEX
+  - symbol: BANKBEES
+    name: Nippon India Bank BeES
+    category: EQUITY_SECTOR
+  - symbol: ITBEES
+    name: Nippon India Nifty IT BeES
+    category: EQUITY_SECTOR
+  - symbol: PHARMABEES
+    name: Nippon India Nifty Pharma BeES
+    category: EQUITY_SECTOR
+  - symbol: PSUBNKBEES
+    name: Nippon India PSU Bank BeES
+    category: EQUITY_SECTOR
+  - symbol: AUTOBEES
+    name: Nippon India Nifty Auto BeES
+    category: EQUITY_SECTOR
+  - symbol: CPSEETF
+    name: Nippon India CPSE ETF
+    category: EQUITY_SECTOR
+  - symbol: MOMOMENTUM
+    name: Motilal Oswal Nifty 200 Momentum 30 ETF
+    category: EQUITY_FACTOR
+  - symbol: MON100
+    name: Motilal Oswal Nasdaq 100 ETF
+    category: INTERNATIONAL
+  - symbol: MAFANG
+    name: Mirae Asset NYSE FANG+ ETF
+    category: INTERNATIONAL
+  - symbol: GOLDBEES
+    name: Nippon India Gold BeES
+    category: COMMODITY
+  - symbol: SILVERBEES
+    name: Nippon India Silver BeES
+    category: COMMODITY

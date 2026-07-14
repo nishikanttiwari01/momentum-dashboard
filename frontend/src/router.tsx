@@ -1,7 +1,8 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+﻿import { Routes, Route, Navigate } from 'react-router-dom';
 import AppShell from './layouts/AppShell';
 import Dashboard from './pages/DashboardPage';
 import Screener from './pages/Screener';
+import Portfolio from './pages/Portfolio';
 import Simulator from './pages/Simulator';
 import Trades from './pages/Trades';
 import News from './pages/News';
@@ -15,6 +16,7 @@ export default function AppRouter() {
       <Route element={<AppShell />}>
         <Route index element={<Dashboard />} />
         <Route path="/screener" element={<Screener />} />
+        <Route path="/portfolio" element={<Portfolio />} />
         <Route path="/history" element={<Trades />} />
         <Route path="/news" element={<News />} />
         <Route path="/simulator" element={<Simulator />} />
