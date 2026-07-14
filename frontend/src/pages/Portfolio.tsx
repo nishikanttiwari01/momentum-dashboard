@@ -35,6 +35,8 @@ import {
 } from 'recharts';
 import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
 import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
+import PortfolioAllocation from '../features/portfolio/PortfolioAllocation';
+import PortfolioWorkbookPreview from '../features/portfolio/PortfolioWorkbookPreview';
 import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
 
 type Holding = {
@@ -304,15 +306,16 @@ const Portfolio: React.FC = () => {
   return (
     <Stack spacing={2} sx={{ px: 2 }}>
       {/* Summary strip */}
-      <Paper sx={{ p: 2 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={3} alignItems={{ md: 'center' }} flexWrap="wrap" useFlexGap>
-          <Typography variant="h6" sx={{ fontWeight: 800 }}>
-            Mutual Fund Portfolio
-          </Typography>
-          <SummaryItem label="Invested" value={money(data.summary.total_invested)} />
-          <SummaryItem label="Current value" value={money(data.summary.total_value)} />
+      <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems={{ md: 'center' }} flexWrap="wrap" useFlexGap sx={{ px: 2, py: 1.5 }}>
+          <Box sx={{ minWidth: 190 }}>
+            <Typography variant="h6" sx={{ fontWeight: 800 }}>Portfolio</Typography>
+            <Typography variant="caption" color="text.secondary">Maintain, compare and grow</Typography>
+          </Box>
+          <SummaryItem label="Principal invested" value={money(data.summary.total_invested)} />
+          <SummaryItem label="Current market value" value={money(data.summary.total_value)} />
           <SummaryItem
-            label="Return"
+            label="Absolute return"
             value={pct(data.summary.abs_return_pct)}
             color={tone(data.summary.abs_return_pct)}
           />
@@ -323,7 +326,7 @@ const Portfolio: React.FC = () => {
           </Button>
         </Stack>
         {!data.has_transactions ? (
-          <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 1 }}>
+          <Typography variant="caption" color="warning.main" sx={{ display: 'block', px: 2, py: 1, bgcolor: 'warning.50', borderTop: '1px solid', borderColor: 'divider' }}>
             No transactions yet — fill data/portfolio_transactions.csv to see invested value, XIRR and allocation.
             Fund performance and dip signals below work without it.
           </Typography>
@@ -332,19 +335,12 @@ const Portfolio: React.FC = () => {
 
       {/* Allocation */}
       {data.allocation.length ? (
-        <Paper sx={{ p: 2 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
             Allocation by category
           </Typography>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {data.allocation.map((a) => (
-              <Chip
-                key={a.category}
-                label={`${a.category}: ${a.weight_pct != null ? a.weight_pct.toFixed(1) : '—'}% (${money(a.value)})`}
-                variant="outlined"
-              />
-            ))}
-          </Stack>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>Invested amount across mutual-fund categories</Typography>
+          <PortfolioAllocation allocation={data.allocation} />
         </Paper>
       ) : null}
 
@@ -508,6 +504,8 @@ const Portfolio: React.FC = () => {
         </Paper>
       ) : null}
 
+      <PortfolioWorkbookPreview />
+
       <Typography variant="caption" color="text.secondary" sx={{ pb: 2 }}>
         {data.notes.join(' ')} Generated {dayjs(data.generated_at).format('DD MMM YYYY, HH:mm')}.
       </Typography>
@@ -516,11 +514,11 @@ const Portfolio: React.FC = () => {
 };
 
 const SummaryItem: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color }) => (
-  <Box>
-    <Typography variant="caption" color="text.secondary" display="block">
+  <Box sx={{ minWidth: 130 }}>
+    <Typography variant="overline" color="text.secondary" display="block" lineHeight={1.2}>
       {label}
     </Typography>
-    <Typography variant="subtitle1" fontWeight={700} color={color}>
+    <Typography variant="h6" fontWeight={700} color={color}>
       {value}
     </Typography>
   </Box>
