@@ -62,20 +62,48 @@ def test_wealth_goal_defaults_are_seeded():
             )
         }
         goal = conn.exec_driver_sql(
-            "select target_amount_inr, deadline, is_primary "
+            "select id, name, target_amount_inr, deadline, is_primary "
             "from wealth_goals where id = ?",
             ("00000000-0000-0000-0000-000000000015",),
         ).one()
         scenarios = conn.exec_driver_sql(
-            "select scenario_key, annual_return_pct "
+            "select id, goal_id, scenario_key, annual_return_pct, "
+            "monthly_contribution_inr, display_order "
             "from wealth_goal_scenarios order by display_order"
         ).all()
 
     dispose_engine()
     assert {"wealth_goals", "wealth_goal_scenarios"} <= names
-    assert goal == (150000000.0, "2029-12-31", 1)
+    assert goal == (
+        "00000000-0000-0000-0000-000000000015",
+        "₹15 Cr by 2029",
+        150000000.0,
+        "2029-12-31",
+        1,
+    )
     assert scenarios == [
-        ("conservative", 7.0),
-        ("expected", 10.0),
-        ("optimistic", 13.0),
+        (
+            "00000000-0000-0000-0000-000000000071",
+            "00000000-0000-0000-0000-000000000015",
+            "conservative",
+            7.0,
+            0.0,
+            0,
+        ),
+        (
+            "00000000-0000-0000-0000-000000000100",
+            "00000000-0000-0000-0000-000000000015",
+            "expected",
+            10.0,
+            0.0,
+            1,
+        ),
+        (
+            "00000000-0000-0000-0000-000000000130",
+            "00000000-0000-0000-0000-000000000015",
+            "optimistic",
+            13.0,
+            0.0,
+            2,
+        ),
     ]
