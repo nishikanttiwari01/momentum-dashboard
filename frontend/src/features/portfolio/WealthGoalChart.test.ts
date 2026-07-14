@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PrimaryGoalResponse } from './wealthTypes';
-import { GOAL_LINE_COLORS, mergeGoalTrajectories, prefersReducedMotion } from './WealthGoalChart';
+import { GOAL_LINE_COLORS, endpointLabelText, mergeGoalTrajectories } from './WealthGoalChart';
 
 describe('WealthGoalChart', () => {
   it('uses exactly four line colors without area or gradient configuration', () => {
@@ -18,9 +18,7 @@ describe('WealthGoalChart', () => {
       { on: '2029-12-31', required: 150, expected: 180 },
     ]);
   });
-  it('reads reduced-motion preference safely with and without a browser source', () => {
-    expect(prefersReducedMotion(undefined)).toBe(false);
-    expect(prefersReducedMotion({ matchMedia: () => ({ matches: true }) })).toBe(true);
-    expect(prefersReducedMotion({ matchMedia: () => ({ matches: false }) })).toBe(false);
+  it('gives endpoint labels an accessible series name and formatted value', () => {
+    expect(endpointLabelText('expected', 150_000_000)).toBe('Expected ₹15 Cr');
   });
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Alert, Box, Button, Chip, LinearProgress, Paper, Skeleton, Stack, TextField, Typography } from '@mui/material';
 import FlagRoundedIcon from '@mui/icons-material/FlagRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
@@ -17,6 +17,12 @@ export type GoalFormChange =
   | { type: 'field'; field: 'target' | 'deadline'; value: string }
   | { type: 'scenario'; index: number; field: 'annual_return_pct' | 'monthly_contribution'; value: string }
   | { type: 'restore' };
+export type GoalFormState = { accepted: GoalForm; draft: GoalForm; dirty: boolean; saved: boolean; saveError: { message: string; payload: GoalConfigurationUpdate } | null };
+export type GoalFormAction =
+  | { type: 'change'; change: GoalFormChange }
+  | { type: 'serverSync'; form: GoalForm }
+  | { type: 'saveSuccess'; form: GoalForm }
+  | { type: 'saveFailed'; message: string; payload: GoalConfigurationUpdate };
 
 export const DEFAULT_GOAL_FORM: GoalForm = { name: 'Financial freedom', target: '150000000', deadline: '2029-12-31', scenarios: [
   { scenario_key: 'conservative', annual_return_pct: '7', monthly_contribution: '0' },
@@ -31,6 +37,23 @@ export function applyGoalFormChange(form: GoalForm, change: GoalFormChange): Goa
   if (change.type === 'field') return { ...form, [change.field]: change.value };
   return { ...form, scenarios: form.scenarios.map((item, index) => index === change.index ? { ...item, [change.field]: change.value } : item) };
 }
+const formsEqual = (left: GoalForm, right: GoalForm) => JSON.stringify(left) === JSON.stringify(right);
+export function createGoalFormState(form: GoalForm): GoalFormState { return { accepted: form, draft: form, dirty: false, saved: false, saveError: null }; }
+export function goalFormReducer(state: GoalFormState, action: GoalFormAction): GoalFormState {
+  if (action.type === 'change') {
+    const draft = applyGoalFormChange(state.draft, action.change);
+    return { ...state, draft, dirty: !formsEqual(draft, state.accepted), saved: false, saveError: null };
+  }
+  if (action.type === 'serverSync') {
+    const draft = state.dirty ? state.draft : action.form;
+    return { ...state, accepted: action.form, draft, dirty: !formsEqual(draft, action.form) };
+  }
+  if (action.type === 'saveSuccess') return { accepted: action.form, draft: action.form, dirty: false, saved: true, saveError: null };
+  return { ...state, saved: false, saveError: { message: action.message, payload: action.payload } };
+}
+export function goalSubmissionFromState(state: GoalFormState): GoalConfigurationUpdate { return state.saveError?.payload ?? goalUpdateFromForm(state.draft); }
+export function isGoalSaveDisabled(state: Pick<GoalFormState, 'dirty'>, isSaving: boolean): boolean { return !state.dirty || isSaving; }
+export function retryGoalSave(error: { payload: GoalConfigurationUpdate } | null, submit: (payload: GoalConfigurationUpdate) => void): void { if (error) submit(error.payload); }
 
 export const wealthGoalQueryOptions = { queryKey: ['wealth-primary-goal'] as const, queryFn: fetchPrimaryGoal, retry: 1 };
 type GoalCacheClient = Pick<ReturnType<typeof useQueryClient>, 'setQueryData' | 'invalidateQueries'>;
@@ -50,12 +73,19 @@ export function EmptyWealthGoalAlert({ onOpenDataImport }: { onOpenDataImport?: 
   </Alert>
 ); }
 
-export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSave: (update: GoalConfigurationUpdate) => void; isSaving: boolean; initialForm?: GoalForm; fieldErrors?: FieldErrors; saved?: boolean; onOpenDataImport?: () => void }> = ({ data, onSave, isSaving, initialForm, fieldErrors = {}, saved = false, onOpenDataImport }) => {
+export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSave: (update: GoalConfigurationUpdate) => void; isSaving: boolean; initialForm?: GoalForm; fieldErrors?: FieldErrors; saved?: boolean; saveError?: string | null; onRetrySave?: () => void; onOpenDataImport?: () => void }> = ({ data, onSave, isSaving, initialForm, fieldErrors = {}, saved: savedProp, saveError = null, onRetrySave, onOpenDataImport }) => {
   const responseForm = useMemo(() => goalFormFromResponse(data), [data]);
-  const [form, setForm] = useState<GoalForm>(initialForm ?? responseForm);
-  useEffect(() => { if (!initialForm) setForm(responseForm); }, [responseForm, initialForm]);
-  const dirty = JSON.stringify(form) !== JSON.stringify(responseForm);
-  const changeForm = (change: GoalFormChange) => setForm((old) => applyGoalFormChange(old, change));
+  const [formState, dispatchForm] = useReducer(goalFormReducer, initialForm ?? responseForm, (form) => ({ ...createGoalFormState(form), saved: Boolean(savedProp) }));
+  const previousSaved = useRef(savedProp);
+  useEffect(() => { if (!initialForm) dispatchForm({ type: 'serverSync', form: responseForm }); }, [responseForm, initialForm]);
+  useEffect(() => {
+    if (savedProp && !previousSaved.current) dispatchForm({ type: 'saveSuccess', form: responseForm });
+    previousSaved.current = savedProp;
+  }, [savedProp, responseForm]);
+  const form = formState.draft;
+  const dirty = formState.dirty;
+  const saved = formState.saved;
+  const changeForm = (change: GoalFormChange) => dispatchForm({ type: 'change', change });
   const achieved = data.achieved_pct;
   const expected = data.scenario_projections.find((item) => item.settings.scenario_key === 'expected');
   return <Stack data-testid="wealth-goal-workspace" spacing={2.25}>
@@ -87,7 +117,8 @@ export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSa
             <TextField fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} Monthly contribution`} type="number" value={item.monthly_contribution} onChange={(e) => changeForm({ type: 'scenario', index, field: 'monthly_contribution', value: e.target.value })} inputProps={{ min: 0 }} error={Boolean(fieldErrors[`scenarios.${index}.monthly_contribution`])} helperText={fieldErrors[`scenarios.${index}.monthly_contribution`]} />
           </Stack></Box>)}
           {saved && <Alert severity="success">Goal settings saved</Alert>}
-          <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={isSaving}>{isSaving ? 'Saving…' : 'Save changes'}</Button><Button type="button" onClick={() => changeForm({ type: 'restore' })}>Restore defaults</Button></Stack>
+          {saveError && <Alert severity="error" action={onRetrySave && <Button color="inherit" onClick={onRetrySave}>Retry</Button>}>{saveError}</Alert>}
+          <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={isGoalSaveDisabled(formState, isSaving)}>{isSaving ? 'Saving…' : 'Save changes'}</Button><Button type="button" onClick={() => changeForm({ type: 'restore' })}>Restore defaults</Button></Stack>
         </Stack>
       </Paper>
     </Box>
@@ -100,7 +131,14 @@ export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSa
   </Stack>;
 };
 
-function errorsFrom(error: unknown): FieldErrors { const result: FieldErrors = {}; if (axios.isAxiosError<FieldProblemResponse>(error)) error.response?.data?.errors?.forEach((problem) => { const key = goalErrorFieldKey(problem.loc); if (key) result[key] = problem.msg; }); return result; }
+export function classifyGoalSaveError(error: unknown): { kind: 'fields'; errors: FieldErrors } | { kind: 'form'; message: string } {
+  const errors: FieldErrors = {};
+  if (axios.isAxiosError<FieldProblemResponse>(error) && error.response?.status === 422) {
+    error.response.data?.errors?.forEach((problem) => { const key = goalErrorFieldKey(problem.loc); if (key) errors[key] = problem.msg; });
+    if (Object.keys(errors).length) return { kind: 'fields', errors };
+  }
+  return { kind: 'form', message: 'Could not save goal settings. Please try again.' };
+}
 
 export const WealthGoalLoading = () => <Paper data-testid="wealth-goal-workspace" variant="outlined" sx={{ ...cardSx, minHeight: 640, p: 2 }}><Skeleton height={90} /><Skeleton variant="rounded" height={220} /><Skeleton height={160} /></Paper>;
 export function WealthGoalError({ retry }: { retry: () => void }) { return <Alert data-testid="wealth-goal-workspace" severity="error" action={<Button color="inherit" onClick={retry}>Retry</Button>}>We couldn’t load your wealth goal. No estimates are shown until the data is available.</Alert>; }
@@ -108,10 +146,11 @@ export function WealthGoalError({ retry }: { retry: () => void }) { return <Aler
 const WealthGoalWorkspace: React.FC<{ onOpenDataImport?: () => void }> = ({ onOpenDataImport }) => {
   const client = useQueryClient();
   const query = useQuery(wealthGoalQueryOptions);
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({}); const [saved, setSaved] = useState(false);
-  const mutation = useMutation({ mutationFn: updatePrimaryGoal, onSuccess: (next) => { setFieldErrors({}); setSaved(true); applyGoalMutationSuccess(client, next); }, onError: (error) => { setSaved(false); setFieldErrors(errorsFrom(error)); } });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [saveStatus, setSaveStatus] = useState<{ saved: boolean; error: { message: string; payload: GoalConfigurationUpdate } | null }>({ saved: false, error: null });
+  const mutation = useMutation({ mutationFn: updatePrimaryGoal, onSuccess: (next) => { setFieldErrors({}); setSaveStatus({ saved: true, error: null }); applyGoalMutationSuccess(client, next); }, onError: (error, payload) => { const failure = classifyGoalSaveError(error); if (failure.kind === 'fields') { setFieldErrors(failure.errors); setSaveStatus({ saved: false, error: null }); } else { setSaveStatus({ saved: false, error: { message: failure.message, payload } }); } } });
   if (query.isLoading) return <WealthGoalLoading />;
   if (query.isError || !query.data) return <WealthGoalError retry={() => void query.refetch()} />;
-  return <WealthGoalWorkspaceView data={query.data} onSave={(payload) => mutation.mutate(payload)} isSaving={mutation.isPending} fieldErrors={fieldErrors} saved={saved} onOpenDataImport={onOpenDataImport} />;
+  return <WealthGoalWorkspaceView data={query.data} onSave={(payload) => { setFieldErrors({}); setSaveStatus({ saved: false, error: null }); mutation.mutate(payload); }} isSaving={mutation.isPending} fieldErrors={fieldErrors} saved={saveStatus.saved} saveError={saveStatus.error?.message} onRetrySave={saveStatus.error ? () => retryGoalSave(saveStatus.error, mutation.mutate) : undefined} onOpenDataImport={onOpenDataImport} />;
 };
 export default WealthGoalWorkspace;

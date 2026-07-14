@@ -10,6 +10,12 @@ import {
   WealthGoalWorkspaceView,
   applyGoalFormChange,
   applyGoalMutationSuccess,
+  classifyGoalSaveError,
+  createGoalFormState,
+  goalFormReducer,
+  goalSubmissionFromState,
+  isGoalSaveDisabled,
+  retryGoalSave,
   goalFormFromResponse,
   goalUpdateFromForm,
   wealthGoalQueryOptions,
@@ -42,6 +48,8 @@ describe('WealthGoalWorkspace', () => {
     expect(html).toContain('123% achieved');
     expect(html).toContain('data-progress-fill="100"');
     expect(html).toContain('Attention needed');
+    expect(html).toContain('role="img"');
+    expect(html).toContain('Required path compared with conservative');
     for (const label of ['Conservative', 'Expected', 'Optimistic']) expect(html).toContain(label);
   });
 
@@ -85,6 +93,24 @@ describe('WealthGoalWorkspace', () => {
     });
   });
 
+  it('preserves a dirty expected return when refreshed server data changes', () => {
+    const initial = createGoalFormState(goalFormFromResponse(response));
+    const dirty = goalFormReducer(initial, { type: 'change', change: { type: 'scenario', index: 1, field: 'annual_return_pct', value: '11.5' } });
+    const refreshed = goalFormFromResponse({ ...response, goal: { ...response.goal, target_amount_inr: 160_000_000 } });
+    const synced = goalFormReducer(dirty, { type: 'serverSync', form: refreshed });
+    expect(synced.draft.scenarios[1].annual_return_pct).toBe('11.5');
+    expect(synced.accepted.target).toBe('160000000');
+    expect(synced.dirty).toBe(true);
+  });
+
+  it('syncs refreshed server data while pristine', () => {
+    const initial = createGoalFormState(goalFormFromResponse(response));
+    const refreshed = goalFormFromResponse({ ...response, goal: { ...response.goal, target_amount_inr: 160_000_000 } });
+    const synced = goalFormReducer(initial, { type: 'serverSync', form: refreshed });
+    expect(synced.draft).toEqual(refreshed);
+    expect(synced.dirty).toBe(false);
+  });
+
   it('restores visible default inputs without saving until submit', () => {
     const onSave = vi.fn();
     const restored = applyGoalFormChange(goalFormFromResponse(response), { type: 'restore' });
@@ -92,6 +118,39 @@ describe('WealthGoalWorkspace', () => {
     expect(onSave).not.toHaveBeenCalled();
     onSave(goalUpdateFromForm(restored));
     expect(onSave).toHaveBeenCalledOnce();
+  });
+
+  it('tracks dirty transitions and clears saved confirmation on edit or restore', () => {
+    const saved = goalFormReducer(createGoalFormState(goalFormFromResponse(response)), { type: 'saveSuccess', form: goalFormFromResponse(response) });
+    expect(saved.saved).toBe(true);
+    const edited = goalFormReducer(saved, { type: 'change', change: { type: 'field', field: 'deadline', value: '2030-01-01' } });
+    expect(edited).toMatchObject({ dirty: true, saved: false });
+    const restored = goalFormReducer(saved, { type: 'change', change: { type: 'restore' } });
+    expect(restored.saved).toBe(false);
+    expect(restored.dirty).toBe(JSON.stringify(DEFAULT_GOAL_FORM) !== JSON.stringify(saved.accepted));
+  });
+
+  it('disables save when pristine and exposes the attempted payload for retry after a generic failure', () => {
+    const initial = createGoalFormState(goalFormFromResponse(response));
+    expect(initial.dirty).toBe(false);
+    expect(isGoalSaveDisabled(initial, false)).toBe(true);
+    const dirty = goalFormReducer(initial, { type: 'change', change: { type: 'scenario', index: 1, field: 'annual_return_pct', value: '11.5' } });
+    expect(isGoalSaveDisabled(dirty, false)).toBe(false);
+    expect(isGoalSaveDisabled(dirty, true)).toBe(true);
+    const payload = goalSubmissionFromState(dirty);
+    const failed = goalFormReducer(dirty, { type: 'saveFailed', message: 'Could not save goal settings.', payload });
+    expect(failed.saveError).toEqual({ message: 'Could not save goal settings.', payload });
+    expect(goalSubmissionFromState(failed)).toEqual(payload);
+    const retry = vi.fn();
+    retryGoalSave(failed.saveError, retry);
+    expect(retry).toHaveBeenCalledWith(payload);
+  });
+
+  it('classifies 422 field problems separately from retryable form errors', () => {
+    const fieldError = { isAxiosError: true, response: { status: 422, data: { errors: [{ loc: ['body', 'goal', 'deadline'], msg: 'Future date required' }] } } };
+    expect(classifyGoalSaveError(fieldError)).toEqual({ kind: 'fields', errors: { deadline: 'Future date required' } });
+    expect(classifyGoalSaveError({ isAxiosError: true, response: { status: 500 } })).toEqual({ kind: 'form', message: 'Could not save goal settings. Please try again.' });
+    expect(classifyGoalSaveError(new Error('offline'))).toEqual({ kind: 'form', message: 'Could not save goal settings. Please try again.' });
   });
 
   it('renders inline indexed errors without replacing entered values', () => {
