@@ -37,6 +37,7 @@ import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
 import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
 import PortfolioAllocation from '../features/portfolio/PortfolioAllocation';
 import PortfolioWorkbookPreview from '../features/portfolio/PortfolioWorkbookPreview';
+import PortfolioWorkbookSnapshot from '../features/portfolio/PortfolioWorkbookSnapshot';
 import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
 
 type Holding = {
@@ -343,6 +344,8 @@ const Portfolio: React.FC = () => {
           <PortfolioAllocation allocation={data.allocation} />
         </Paper>
       ) : null}
+
+      <PortfolioWorkbookSnapshot />
 
       {/* Accumulation opportunities */}
       <Paper sx={{ p: 2 }}>
