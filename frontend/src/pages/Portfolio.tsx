@@ -12,6 +12,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TableSortLabel,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
@@ -45,6 +46,7 @@ import PortfolioWorkbookPreview from '../features/portfolio/PortfolioWorkbookPre
 import { PortfolioAssetPanels, PortfolioBalanceSheet, PortfolioWealthGrowth } from '../features/portfolio/PortfolioWorkbookSnapshot';
 import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
 import { PortfolioMetricTile, PortfolioSectionHeader } from '../features/portfolio/PortfolioVisuals';
+import { sortFunds, type FundSortKey, type SortDirection } from '../features/portfolio/fundTableSort';
 
 type Holding = {
   account_id: string;
@@ -125,6 +127,21 @@ const ACCUM_META: Record<string, { label: string; color: 'default' | 'info' | 'w
   watch: { label: 'Watch', color: 'info' },
   tranche_eligible: { label: 'Dip: tranche eligible', color: 'warning' },
 };
+
+const SORTABLE_FUND_COLUMNS: { key: FundSortKey; label: string; align?: 'left' | 'right' }[] = [
+  { key: 'fund', label: 'Fund' },
+  { key: 'category', label: 'Category' },
+  { key: 'nav', label: 'NAV', align: 'right' },
+  { key: 'return1m', label: '1M', align: 'right' },
+  { key: 'return6m', label: '6M', align: 'right' },
+  { key: 'return1y', label: '1Y', align: 'right' },
+  { key: 'drawdown', label: 'Off 1Y high', align: 'right' },
+  { key: 'invested', label: 'Invested', align: 'right' },
+  { key: 'value', label: 'Value', align: 'right' },
+  { key: 'xirr', label: 'XIRR', align: 'right' },
+  { key: 'averageNav', label: 'Avg NAV', align: 'right' },
+  { key: 'gain', label: 'Gain / loss', align: 'right' },
+];
 
 // ---------------------------------------------------------------------------
 // NAV history chart (expands under a fund row)
@@ -269,6 +286,8 @@ const Portfolio: React.FC = () => {
   const [refreshing, setRefreshing] = React.useState(false);
   const [expandedFund, setExpandedFund] = React.useState<string | null>(null);
   const [transactionFund, setTransactionFund] = React.useState<Instrument | null>(null);
+  const [sortKey, setSortKey] = React.useState<FundSortKey | null>(null);
+  const [sortDirection, setSortDirection] = React.useState<SortDirection>('asc');
   const query = useQuery({
     queryKey: ['portfolio-overview'],
     queryFn: async () => {
@@ -290,6 +309,22 @@ const Portfolio: React.FC = () => {
   };
 
   const data = query.data;
+  const funds = React.useMemo(
+    () => data?.instruments.filter((instrument) => instrument.type === 'mutual_fund') ?? [],
+    [data?.instruments],
+  );
+  const sortedFunds = React.useMemo(
+    () => sortFunds(funds, sortKey, sortDirection),
+    [funds, sortKey, sortDirection],
+  );
+  const handleSort = (key: FundSortKey) => {
+    if (sortKey === key) {
+      setSortDirection((current) => current === 'asc' ? 'desc' : 'asc');
+      return;
+    }
+    setSortKey(key);
+    setSortDirection('asc');
+  };
 
   if (query.isLoading) {
     return (
@@ -310,7 +345,6 @@ const Portfolio: React.FC = () => {
     );
   }
 
-  const funds = data.instruments.filter((i) => i.type === 'mutual_fund');
   const others = data.instruments.filter((i) => i.type !== 'mutual_fund');
   const opportunities = funds.filter(
     (f) => f.accumulation && f.accumulation.status !== 'no_action'
@@ -401,24 +435,26 @@ const Portfolio: React.FC = () => {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Fund</TableCell>
-              <TableCell>Category</TableCell>
-              <TableCell align="right">NAV</TableCell>
-              <TableCell align="right">1M</TableCell>
-              <TableCell align="right">6M</TableCell>
-              <TableCell align="right">1Y</TableCell>
-              <TableCell align="right">Off 1Y high</TableCell>
-              <TableCell align="right">Invested</TableCell>
-              <TableCell align="right">Value</TableCell>
-              <TableCell align="right">XIRR</TableCell>
-              <TableCell align="right">Avg NAV</TableCell>
-              <TableCell align="right">Gain / loss</TableCell>
+              {SORTABLE_FUND_COLUMNS.map((column) => {
+                const active = sortKey === column.key;
+                return (
+                  <TableCell key={column.key} align={column.align} sortDirection={active ? sortDirection : false}>
+                    <TableSortLabel
+                      active={active}
+                      direction={active ? sortDirection : 'asc'}
+                      onClick={() => handleSort(column.key)}
+                    >
+                      {column.label}
+                    </TableSortLabel>
+                  </TableCell>
+                );
+              })}
               <TableCell align="center">Action</TableCell>
               <TableCell align="center">Links</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {funds.map((f) => {
+            {sortedFunds.map((f) => {
               const perf = f.performance || {};
               const expanded = expandedFund === f.id;
               const canChart = !!f.scheme_code;
