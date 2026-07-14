@@ -18,7 +18,9 @@ import csv
 import json
 import logging
 import math
+import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -61,6 +63,82 @@ class Txn:
     units: Optional[float]
     nav: Optional[float]
     fees: float = 0.0
+
+
+def normalize_buy(payload: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Txn:
+    config = config or load_portfolio_config()
+    instrument_id = str(payload.get("instrument_id") or "").strip()
+    instruments = {row.get("id"): row for row in config.get("instruments") or []}
+    if instrument_id not in instruments or instruments[instrument_id].get("type") != "mutual_fund":
+        raise ValueError("Unknown mutual fund")
+    accounts = [row.get("account_id") for row in config.get("holdings_config") or [] if row.get("instrument_id") == instrument_id]
+    if not accounts:
+        raise ValueError("No holding account configured for this fund")
+    try:
+        purchased = date.fromisoformat(str(payload.get("date") or ""))
+        nav = float(payload.get("nav"))
+        fees = float(payload.get("fees") or 0)
+        amount = float(payload["amount"]) if payload.get("amount") is not None else None
+        units = float(payload["units"]) if payload.get("units") is not None else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid purchase values") from exc
+    if not math.isfinite(nav) or nav <= 0 or not math.isfinite(fees) or fees < 0:
+        raise ValueError("NAV must be positive and fees cannot be negative")
+    if amount is None and units is None:
+        raise ValueError("Enter amount or units")
+    if amount is not None and (not math.isfinite(amount) or amount <= 0):
+        raise ValueError("Amount must be positive")
+    if units is not None and (not math.isfinite(units) or units <= 0):
+        raise ValueError("Units must be positive")
+    if amount is None:
+        amount = units * nav
+    elif units is None:
+        units = amount / nav
+    elif abs(amount - units * nav) > max(0.01, amount * 0.0001):
+        raise ValueError("Amount and units do not match NAV")
+    return Txn(purchased, instrument_id, str(accounts[0]), "BUY", amount, units, nav, fees)
+
+
+def calculate_fund_holding(rows: List[Txn], latest_nav: Optional[float]) -> Dict[str, Any]:
+    buys = [row for row in rows if row.type in ("BUY", "SIP")]
+    units = sum(float(row.units or 0) for row in buys)
+    invested = sum(float(row.amount or 0) + float(row.fees or 0) for row in buys)
+    value = units * latest_nav if latest_nav is not None else None
+    gain = value - invested if value is not None else None
+    return {
+        "total_units": round(units, 4), "total_invested": round(invested, 2),
+        "average_nav": round(invested / units, 4) if units else None,
+        "current_value": round(value, 2) if value is not None else None,
+        "gain": round(gain, 2) if gain is not None else None,
+        "gain_pct": round(gain * 100 / invested, 2) if gain is not None and invested else None,
+    }
+
+
+def append_buy(payload: Dict[str, Any]) -> Dict[str, Any]:
+    transaction = normalize_buy(payload)
+    rows = load_transactions() + [transaction]
+    TRANSACTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fields = ("date", "instrument_id", "account_id", "type", "amount", "units", "nav", "fees")
+    fd, temp_name = tempfile.mkstemp(prefix=TRANSACTIONS_PATH.name, suffix=".tmp", dir=TRANSACTIONS_PATH.parent)
+    try:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({"date": row.date.isoformat(), "instrument_id": row.instrument_id,
+                    "account_id": row.account_id, "type": row.type, "amount": row.amount,
+                    "units": row.units, "nav": row.nav, "fees": row.fees})
+            handle.flush(); os.fsync(handle.fileno())
+        os.replace(temp_name, TRANSACTIONS_PATH)
+    finally:
+        if os.path.exists(temp_name): os.unlink(temp_name)
+    return _txn_payload(transaction)
+
+
+def _txn_payload(row: Txn) -> Dict[str, Any]:
+    return {"date": row.date.isoformat(), "instrument_id": row.instrument_id,
+        "type": row.type, "amount": row.amount, "units": row.units, "nav": row.nav,
+        "fees": row.fees, "invested": round(float(row.amount or 0) + row.fees, 2)}
 
 
 def load_transactions() -> List[Txn]:
@@ -289,7 +367,7 @@ _RANGE_DAYS: Dict[str, Optional[int]] = {
 _MAX_CHART_POINTS = 800  # downsample cap so 20y of daily NAVs stays light
 
 
-def build_nav_history(scheme_code: str, range_key: str = "1y") -> Dict[str, Any]:
+def build_nav_history(scheme_code: str, range_key: str = "1y", instrument_id: Optional[str] = None) -> Dict[str, Any]:
     """NAV series for one scheme, sliced to a UI range and downsampled.
 
     Returns {scheme_code, range, points: [{date, nav}], first/last stats}."""
@@ -318,6 +396,10 @@ def build_nav_history(scheme_code: str, range_key: str = "1y") -> Dict[str, Any]
     first_d, first_v = series[0]
     last_d, last_v = series[-1]
     change_pct = round((last_v / first_v - 1.0) * 100.0, 2) if first_v > 0 else None
+    txns = [t for t in load_transactions() if t.instrument_id == instrument_id and t.type in ("BUY", "SIP")] if instrument_id else []
+    holding = calculate_fund_holding(txns, last_v)
+    purchases = [t for t in txns if t.date >= first_d]
+    average = holding["average_nav"]
     return {
         "scheme_code": scheme_code,
         "range": rk,
@@ -328,6 +410,9 @@ def build_nav_history(scheme_code: str, range_key: str = "1y") -> Dict[str, Any]
         "last_nav": last_v,
         "change_pct": change_pct,
         "inception_date": history[0][0].isoformat(),
+        "purchases": [_txn_payload(t) for t in purchases],
+        "average_nav": average,
+        "latest_vs_average_pct": round((last_v / average - 1) * 100, 2) if average else None,
     }
 
 
@@ -432,6 +517,9 @@ def build_overview(force_refresh: bool = False) -> Dict[str, Any]:
                 entry["performance"] = compute_fund_performance(history)
 
         latest_nav = (entry["performance"] or {}).get("latest_nav")
+        instrument_txns = [t for t in txns if t.instrument_id == inst_id and t.type in ("BUY", "SIP")]
+        entry["transactions"] = [_txn_payload(t) for t in sorted(instrument_txns, key=lambda x: x.date, reverse=True)]
+        entry["combined_holding"] = calculate_fund_holding(instrument_txns, latest_nav)
 
         # holdings per account
         inst_units = 0.0

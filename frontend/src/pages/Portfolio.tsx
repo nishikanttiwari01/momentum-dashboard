@@ -24,14 +24,17 @@ import dayjs from 'dayjs';
 import { useQuery } from '@tanstack/react-query';
 import {
   ResponsiveContainer,
-  LineChart,
+  ComposedChart,
   Line,
+  Scatter,
+  ReferenceLine,
   XAxis,
   YAxis,
   Tooltip as ReTooltip,
   CartesianGrid,
 } from 'recharts';
 import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
+import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
 
 type Holding = {
   account_id: string;
@@ -79,6 +82,8 @@ type Instrument = {
     target_portfolio_pct: number | null;
     reasons: string[];
   } | null;
+  transactions: { date: string; type: string; amount: number; units: number; nav: number; fees: number; invested: number }[];
+  combined_holding: { total_units: number; total_invested: number; average_nav: number | null; current_value: number | null; gain: number | null; gain_pct: number | null };
 };
 
 type Overview = {
@@ -126,6 +131,9 @@ type NavHistory = {
   change_pct?: number | null;
   inception_date?: string;
   error?: string;
+  purchases?: { date: string; amount: number; units: number; nav: number; fees: number; invested: number }[];
+  average_nav?: number | null;
+  latest_vs_average_pct?: number | null;
 };
 
 const NAV_RANGES: { value: NavRange; label: string }[] = [
@@ -136,13 +144,13 @@ const NAV_RANGES: { value: NavRange; label: string }[] = [
   { value: 'max', label: 'Since inception' },
 ];
 
-const FundNavChart: React.FC<{ schemeCode: string; fundName: string }> = ({ schemeCode, fundName }) => {
+const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentId: string; transactions: Instrument['transactions'] }> = ({ schemeCode, fundName, instrumentId, transactions }) => {
   const [range, setRange] = React.useState<NavRange>('1y');
   const query = useQuery({
     queryKey: ['nav-history', schemeCode, range],
     queryFn: async () => {
       const res = await axios.get<NavHistory>('/api/v1/portfolio/nav_history', {
-        params: { scheme_code: schemeCode, range },
+        params: { scheme_code: schemeCode, instrument_id: instrumentId, range },
       });
       return res.data;
     },
@@ -160,6 +168,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string }> = ({ sche
     fullDate: dayjs(p.date).format('DD MMM YYYY'),
     nav: p.nav,
   }));
+  const purchaseData = (data?.purchases ?? []).map((p) => ({ label: dayjs(p.date).format(labelFmt), fullDate: dayjs(p.date).format('DD MMM YYYY'), purchaseNav: p.nav, purchase: p }));
   const changeColor = tone(data?.change_pct);
 
   return (
@@ -178,6 +187,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string }> = ({ sche
             inception {dayjs(data.inception_date).format('DD MMM YYYY')}
           </Typography>
         ) : null}
+        {data?.latest_vs_average_pct != null ? <Typography variant="body2" color={data.latest_vs_average_pct <= 0 ? 'success.main' : 'warning.main'}>Latest NAV is {Math.abs(data.latest_vs_average_pct).toFixed(2)}% {data.latest_vs_average_pct < 0 ? 'below' : 'above'} average</Typography> : null}
         <Box sx={{ flexGrow: 1 }} />
         <ToggleButtonGroup
           size="small"
@@ -202,7 +212,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string }> = ({ sche
       ) : chartData.length ? (
         <Box sx={{ width: '100%', height: 280 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+            <ComposedChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e6e8ee" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={40} tickMargin={6} />
               <YAxis
@@ -216,7 +226,9 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string }> = ({ sche
                 labelFormatter={(_, payload: any) => payload?.[0]?.payload?.fullDate ?? ''}
               />
               <Line type="monotone" dataKey="nav" stroke="#2f80ed" strokeWidth={1.6} dot={false} isAnimationActive={false} />
-            </LineChart>
+              <Scatter data={purchaseData} dataKey="purchaseNav" fill="#f59e0b" />
+              {data?.average_nav != null ? <ReferenceLine y={data.average_nav} stroke="#8b5cf6" strokeDasharray="6 4" label={{ value: `Avg ${data.average_nav.toFixed(2)}`, position: 'insideTopRight' }} /> : null}
+            </ComposedChart>
           </ResponsiveContainer>
         </Box>
       ) : (
@@ -224,6 +236,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string }> = ({ sche
           {data?.error ? 'No NAV history available for this fund.' : 'No data for this range.'}
         </Typography>
       )}
+      {transactions.length ? <Table size="small" sx={{ mt: 1 }}><TableHead><TableRow><TableCell>Date</TableCell><TableCell align="right">Units</TableCell><TableCell align="right">NAV</TableCell><TableCell align="right">Fees</TableCell><TableCell align="right">Invested</TableCell></TableRow></TableHead><TableBody>{transactions.map((t, i) => <TableRow key={`${t.date}-${i}`}><TableCell>{dayjs(t.date).format('DD MMM YYYY')}</TableCell><TableCell align="right">{t.units}</TableCell><TableCell align="right">{t.nav}</TableCell><TableCell align="right">{money(t.fees)}</TableCell><TableCell align="right">{money(t.invested)}</TableCell></TableRow>)}</TableBody></Table> : <Typography variant="caption" color="text.secondary">Add your first purchase to compare against NAV history.</Typography>}
     </Box>
   );
 };
@@ -231,6 +244,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string }> = ({ sche
 const Portfolio: React.FC = () => {
   const [refreshing, setRefreshing] = React.useState(false);
   const [expandedFund, setExpandedFund] = React.useState<string | null>(null);
+  const [transactionFund, setTransactionFund] = React.useState<Instrument | null>(null);
   const query = useQuery({
     queryKey: ['portfolio-overview'],
     queryFn: async () => {
@@ -376,6 +390,9 @@ const Portfolio: React.FC = () => {
               <TableCell align="right">Invested</TableCell>
               <TableCell align="right">Value</TableCell>
               <TableCell align="right">XIRR</TableCell>
+              <TableCell align="right">Avg NAV</TableCell>
+              <TableCell align="right">Gain / loss</TableCell>
+              <TableCell align="center">Action</TableCell>
               <TableCell align="center">Links</TableCell>
             </TableRow>
           </TableHead>
@@ -433,6 +450,9 @@ const Portfolio: React.FC = () => {
                   <TableCell align="right" sx={{ color: tone(f.totals?.xirr_pct) }}>
                     {pct(f.totals?.xirr_pct)}
                   </TableCell>
+                  <TableCell align="right">{f.combined_holding?.average_nav?.toFixed(2) ?? '—'}</TableCell>
+                  <TableCell align="right" sx={{ color: tone(f.combined_holding?.gain_pct) }}>{money(f.combined_holding?.gain)} {f.combined_holding?.gain_pct != null ? `(${pct(f.combined_holding.gain_pct)})` : ''}</TableCell>
+                  <TableCell align="center"><Button size="small" onClick={e => { e.stopPropagation(); setTransactionFund(f); }}>Add transaction</Button></TableCell>
                   <TableCell align="center">
                     {Object.entries(f.links || {}).map(([k, url]) => (
                       <Tooltip key={k} title={k}>
@@ -451,8 +471,8 @@ const Portfolio: React.FC = () => {
                 </TableRow>
                 {expanded && canChart ? (
                   <TableRow>
-                    <TableCell colSpan={11} sx={{ p: 0, borderBottom: '2px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
-                      <FundNavChart schemeCode={f.scheme_code!} fundName={f.name} />
+                    <TableCell colSpan={14} sx={{ p: 0, borderBottom: '2px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+                      <FundNavChart schemeCode={f.scheme_code!} fundName={f.name} instrumentId={f.id} transactions={f.transactions ?? []} />
                     </TableCell>
                   </TableRow>
                 ) : null}
@@ -464,6 +484,7 @@ const Portfolio: React.FC = () => {
       </Paper>
 
       <UsInvestmentsSection />
+      {transactionFund ? <AddFundTransactionDialog open fundId={transactionFund.id} fundName={transactionFund.name} onClose={() => setTransactionFund(null)} onSaved={async () => { await query.refetch(); }} /> : null}
 
       {others.length ? (
         <Paper sx={{ p: 2 }}>
