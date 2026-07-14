@@ -46,3 +46,36 @@ def test_wealth_foundation_tables_exist():
         "portfolio_valuations",
         "portfolio_fx_rates",
     } <= names
+
+
+def test_wealth_goal_defaults_are_seeded():
+    tmpdir = tempfile.mkdtemp()
+    db_path = Path(tmpdir) / "test_wealth_goals.db"
+    init_sqlite(str(db_path))
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        names = {
+            row[0]
+            for row in conn.exec_driver_sql(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+        goal = conn.exec_driver_sql(
+            "select target_amount_inr, deadline, is_primary "
+            "from wealth_goals where id = ?",
+            ("00000000-0000-0000-0000-000000000015",),
+        ).one()
+        scenarios = conn.exec_driver_sql(
+            "select scenario_key, annual_return_pct "
+            "from wealth_goal_scenarios order by display_order"
+        ).all()
+
+    dispose_engine()
+    assert {"wealth_goals", "wealth_goal_scenarios"} <= names
+    assert goal == (150000000.0, "2029-12-31", 1)
+    assert scenarios == [
+        ("conservative", 7.0),
+        ("expected", 10.0),
+        ("optimistic", 13.0),
+    ]
