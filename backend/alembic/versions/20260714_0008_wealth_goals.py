@@ -20,11 +20,18 @@ def upgrade() -> None:
         sa.Column("name", sa.String(120), nullable=False),
         sa.Column("target_amount_inr", sa.Float, nullable=False),
         sa.Column("deadline", sa.Date, nullable=False),
-        sa.Column("is_primary", sa.Boolean, nullable=False, unique=True),
+        sa.Column("is_primary", sa.Boolean, nullable=False),
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
     )
-    op.create_index("ix_wealth_goals_is_primary", "wealth_goals", ["is_primary"], unique=True)
+    op.create_index(
+        "uq_wealth_goals_primary",
+        "wealth_goals",
+        ["is_primary"],
+        unique=True,
+        sqlite_where=sa.text("is_primary = 1"),
+        postgresql_where=sa.text("is_primary = true"),
+    )
 
     scenarios = op.create_table(
         "wealth_goal_scenarios",

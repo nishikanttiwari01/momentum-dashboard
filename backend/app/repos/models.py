@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     func,
     MetaData,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -293,7 +294,7 @@ class WealthGoal(Base):
     name: Mapped[str] = mapped_column(String(120))
     target_amount_inr: Mapped[float] = mapped_column(Float)
     deadline: Mapped[date] = mapped_column(Date)
-    is_primary: Mapped[bool] = mapped_column(Boolean, unique=True, index=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), nullable=False
     )
@@ -302,6 +303,16 @@ class WealthGoal(Base):
         server_default=func.current_timestamp(),
         onupdate=func.current_timestamp(),
         nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_wealth_goals_primary",
+            "is_primary",
+            unique=True,
+            sqlite_where=text("is_primary = 1"),
+            postgresql_where=text("is_primary = true"),
+        ),
     )
 
 
