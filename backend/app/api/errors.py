@@ -4,19 +4,31 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 PROBLEM_MEDIA = "application/problem+json"
 
+
 def problem(status: int, code: str | None, title: str, detail: str):
     body = {"status": status, "title": title, "detail": detail}
     if code:
         body["code"] = code
     return body
 
+
 async def on_validation_error(request: Request, exc):
-    # Include code so tests can assert it
+    body = problem(
+        422,
+        "VALIDATION_ERROR",
+        "Validation failed",
+        "Request body/params failed validation.",
+    )
+    body["errors"] = [
+        {"loc": error.get("loc"), "msg": error.get("msg"), "type": error.get("type")}
+        for error in exc.errors()
+    ]
     return JSONResponse(
-        problem(422, "VALIDATION_ERROR", "Validation failed", "Request body/params failed validation."),
+        body,
         status_code=422,
         media_type=PROBLEM_MEDIA,
     )
+
 
 async def on_http_exception(request: Request, exc: StarletteHTTPException):
     # If the raiser passed {"code": "...", "message": "..."} as detail, honor that
@@ -26,10 +38,16 @@ async def on_http_exception(request: Request, exc: StarletteHTTPException):
         code = detail.get("code")
         detail = detail.get("message", str(detail))
     return JSONResponse(
-        problem(exc.status_code, code or "ERROR", "Error", detail if isinstance(detail, str) else str(detail)),
+        problem(
+            exc.status_code,
+            code or "ERROR",
+            "Error",
+            detail if isinstance(detail, str) else str(detail),
+        ),
         status_code=exc.status_code,
         media_type=PROBLEM_MEDIA,
     )
+
 
 async def on_unhandled_exception(request: Request, exc):
     return JSONResponse(

@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,6 +22,8 @@ from app.schemas.wealth_portfolio import (
     ImportPreview,
     SnapshotSummary,
     WealthSummary,
+    GoalConfigurationUpdate,
+    PrimaryGoalResponse,
 )
 from app.services.wealth_import_service import (
     ImportBlocked,
@@ -20,16 +31,38 @@ from app.services.wealth_import_service import (
     import_service,
 )
 from app.services.wealth_summary_service import build_summary
+from app.services.wealth_goal_service import (
+    InvalidGoalConfiguration,
+    PrimaryGoalNotFound,
+    get_primary_goal_response,
+    update_primary_goal,
+)
 
 
 MAX_WORKBOOK_BYTES = 20 * 1024 * 1024
 router = APIRouter(prefix="/wealth-portfolio", tags=["Wealth Portfolio"])
 
 
+def _goal_validation_error(exc: InvalidGoalConfiguration) -> RequestValidationError:
+    return RequestValidationError(
+        [
+            {
+                "type": exc.issue.error_type,
+                "loc": ("body", *exc.issue.loc),
+                "msg": exc.issue.message,
+                "input": None,
+                "ctx": {"error": exc},
+            }
+        ]
+    )
+
+
 @router.post("/imports/preview", response_model=ImportPreview)
 async def preview_import(workbook: UploadFile = File(...)) -> ImportPreview:
     if not workbook.filename or not workbook.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=422, detail="Only .xlsx workbooks are supported")
+        raise HTTPException(
+            status_code=422, detail="Only .xlsx workbooks are supported"
+        )
     payload = await workbook.read(MAX_WORKBOOK_BYTES + 1)
     if len(payload) > MAX_WORKBOOK_BYTES:
         raise HTTPException(status_code=413, detail="Workbook exceeds 20 MiB")
@@ -38,7 +71,9 @@ async def preview_import(workbook: UploadFile = File(...)) -> ImportPreview:
     try:
         return import_service.preview(payload, Path(workbook.filename).name)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail="Workbook could not be read") from exc
+        raise HTTPException(
+            status_code=422, detail="Workbook could not be read"
+        ) from exc
 
 
 @router.post(
@@ -54,7 +89,9 @@ def commit_import(
     try:
         result = import_service.commit(session, preview_token)
     except PreviewNotFound as exc:
-        raise HTTPException(status_code=404, detail="Import preview expired or was not found") from exc
+        raise HTTPException(
+            status_code=404, detail="Import preview expired or was not found"
+        ) from exc
     except ImportBlocked as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not result.created:
@@ -71,7 +108,9 @@ def latest_snapshot(session: Session = Depends(get_session)) -> SnapshotSummary:
         .limit(1)
     ).first()
     if row is None:
-        raise HTTPException(status_code=404, detail="No portfolio snapshot has been imported")
+        raise HTTPException(
+            status_code=404, detail="No portfolio snapshot has been imported"
+        )
     snapshot, import_row = row
     return SnapshotSummary(
         snapshot_id=snapshot.id,
@@ -84,3 +123,26 @@ def latest_snapshot(session: Session = Depends(get_session)) -> SnapshotSummary:
 @router.get("/summary", response_model=WealthSummary)
 def summary(session: Session = Depends(get_session)) -> WealthSummary:
     return build_summary(session)
+
+
+@router.get("/goals/primary", response_model=PrimaryGoalResponse)
+def primary_goal(session: Session = Depends(get_session)) -> PrimaryGoalResponse:
+    try:
+        return get_primary_goal_response(session)
+    except PrimaryGoalNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidGoalConfiguration as exc:
+        raise _goal_validation_error(exc) from exc
+
+
+@router.put("/goals/primary", response_model=PrimaryGoalResponse)
+def replace_primary_goal(
+    payload: GoalConfigurationUpdate,
+    session: Session = Depends(get_session),
+) -> PrimaryGoalResponse:
+    try:
+        return update_primary_goal(session, payload)
+    except PrimaryGoalNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidGoalConfiguration as exc:
+        raise _goal_validation_error(exc) from exc

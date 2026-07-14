@@ -59,3 +59,11 @@ Upload previews live only in server memory for 30 minutes. Validation and previe
 The importer recognizes current portfolio sheets but explicitly ignores `MF discont.`, `Property Cal.`, `REMIT`, and `STOCKS RECMDN`. Ignored-sheet cell values must not be opened, logged, persisted, or returned to the browser.
 
 Backups of the application SQLite file include normalized portfolio snapshots and FX history, but not the source workbook. Retain the workbook separately if it is needed as an external source record.
+
+## Wealth goals and scenarios
+
+`wealth_goals` and `wealth_goal_scenarios` contain user-authored goal configuration. The primary goal and its conservative, expected, and optimistic scenarios are seeded with defaults by the database migration, then edits are persisted in SQLite.
+
+Replacing the primary goal through `PUT /api/v1/wealth-portfolio/goals/primary` is atomic: the goal and all three ordered scenario settings are committed together, or the complete update is rolled back. Goal and scenario edits never modify portfolio snapshots or transactions.
+
+Projection results, trajectories, progress, and projected completion dates are calculated from the persisted settings and latest consolidated snapshot when requested; they are not stored as historical records. Consequently, a backup of the application SQLite file preserves authored goal/scenario settings and imported portfolio data, but projections are recalculated after restore. Keep the original workbooks separately when they are required as source records.

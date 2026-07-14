@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     func,
     MetaData,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -284,3 +285,56 @@ class PortfolioFxRate(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime)
 
     __table_args__ = (UniqueConstraint("base_currency", "quote_currency", "effective_on"),)
+
+
+class WealthGoal(Base):
+    __tablename__ = "wealth_goals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    target_amount_inr: Mapped[float] = mapped_column(Float)
+    deadline: Mapped[date] = mapped_column(Date)
+    is_primary: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_wealth_goals_primary",
+            "is_primary",
+            unique=True,
+            sqlite_where=text("is_primary = 1"),
+            postgresql_where=text("is_primary = true"),
+        ),
+    )
+
+
+class WealthGoalScenario(Base):
+    __tablename__ = "wealth_goal_scenarios"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    goal_id: Mapped[str] = mapped_column(ForeignKey("wealth_goals.id"), index=True)
+    scenario_key: Mapped[str] = mapped_column(String(16))
+    annual_return_pct: Mapped[float] = mapped_column(Float)
+    monthly_contribution_inr: Mapped[float] = mapped_column(
+        Float, default=0, server_default="0"
+    )
+    display_order: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
+    )
+
+    __table_args__ = (UniqueConstraint("goal_id", "scenario_key"),)
