@@ -442,7 +442,12 @@ export const PortfolioInvestmentsPanel: React.FC = () => {
                     <TableSortLabel
                       active={active}
                       direction={active ? sortDirection : 'asc'}
+                      hideSortIcon={false}
                       onClick={() => handleSort(column.key)}
+                      sx={{
+                        '& .MuiTableSortLabel-icon': { opacity: 0.35 },
+                        '&.Mui-active .MuiTableSortLabel-icon': { opacity: 1, color: 'primary.main' },
+                      }}
                     >
                       {column.label}
                     </TableSortLabel>
