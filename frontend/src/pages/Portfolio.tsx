@@ -26,7 +26,7 @@ import {
   ResponsiveContainer,
   ComposedChart,
   Line,
-  Scatter,
+  ReferenceDot,
   ReferenceLine,
   XAxis,
   YAxis,
@@ -225,7 +225,17 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
                 labelFormatter={(value: any) => dayjs(Number(value)).format('DD MMM YYYY')}
               />
               <Line type="monotone" dataKey="nav" stroke="#2f80ed" strokeWidth={1.6} dot={false} isAnimationActive={false} />
-              <Scatter data={purchaseData} dataKey="purchaseNav" fill="#f59e0b" />
+              {purchaseData.map((purchase: any, index: number) => (
+                <ReferenceDot
+                  key={`${purchase.time}-${index}`}
+                  x={purchase.time}
+                  y={purchase.purchaseNav}
+                  r={5}
+                  fill="#f59e0b"
+                  stroke="#f59e0b"
+                  ifOverflow="hidden"
+                />
+              ))}
               {data?.average_nav != null ? <ReferenceLine y={data.average_nav} stroke="#8b5cf6" strokeDasharray="6 4" label={{ value: `Avg ${data.average_nav.toFixed(2)}`, position: 'insideTopRight' }} /> : null}
             </ComposedChart>
           </ResponsiveContainer>
