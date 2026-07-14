@@ -28,11 +28,10 @@ const heading = (color: string, title: string, detail?: string) => (
   </Stack>
 );
 
-const PortfolioWorkbookSnapshot: React.FC = () => (
-  <Stack spacing={2}>
-    <Paper variant="outlined" sx={{ p: 2 }}>
+export const PortfolioWealthGrowth: React.FC = () => (
+    <Paper data-testid="portfolio-wealth-growth" variant="outlined" sx={{ p: 2, height: '100%', boxSizing: 'border-box' }}>
       {heading('#06aed4', 'Wealth growth over years', '₹ Cr · workbook snapshots')}
-      <Box sx={{ height: 245 }}>
+      <Box sx={{ height: 210 }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={history} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
             <CartesianGrid stroke="#eef1f5" vertical={false} />
@@ -47,7 +46,9 @@ const PortfolioWorkbookSnapshot: React.FC = () => (
       </Box>
       <Stack direction="row" justifyContent="flex-end"><Typography variant="caption" color="text.secondary">Latest market value <b>₹8.31 Cr</b></Typography></Stack>
     </Paper>
+);
 
+export const PortfolioAssetPanels: React.FC = () => (
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1.2fr 1fr' }, gap: 2 }}>
       <Paper variant="outlined" sx={{ p: 2, overflowX: 'auto' }}>
         {heading('#00b386', 'Stocks & current assets')}
@@ -62,7 +63,9 @@ const PortfolioWorkbookSnapshot: React.FC = () => (
         </TableBody></Table>
       </Paper>
     </Box>
+);
 
+export const PortfolioBalanceSheet: React.FC = () => (
     <Paper variant="outlined" sx={{ p: 2 }}>
       {heading('#06aed4', 'Balance sheet — year wise', 'all values ₹ Cr')}
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1.35fr 1fr' }, gap: 3, alignItems: 'center' }}>
@@ -75,6 +78,13 @@ const PortfolioWorkbookSnapshot: React.FC = () => (
         <Box sx={{ height: 210 }}><ResponsiveContainer width="100%" height="100%"><BarChart data={history}><CartesianGrid stroke="#eef1f5" vertical={false} /><XAxis dataKey="year" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 10 }} tickFormatter={(value) => `${value} Cr`} /><Tooltip /><Legend /><Bar dataKey="principal" name="Principal" fill="#c8cdd6" radius={[3, 3, 0, 0]} /><Bar dataKey="market" name="Market value" fill="#2e90fa" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></Box>
       </Box>
     </Paper>
+);
+
+const PortfolioWorkbookSnapshot: React.FC = () => (
+  <Stack spacing={2}>
+    <PortfolioWealthGrowth />
+    <PortfolioAssetPanels />
+    <PortfolioBalanceSheet />
   </Stack>
 );
 

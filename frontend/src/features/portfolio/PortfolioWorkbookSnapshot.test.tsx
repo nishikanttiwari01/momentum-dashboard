@@ -1,7 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import PortfolioWorkbookSnapshot from './PortfolioWorkbookSnapshot';
+import PortfolioWorkbookSnapshot, { PortfolioWealthGrowth } from './PortfolioWorkbookSnapshot';
 
 describe('PortfolioWorkbookSnapshot', () => {
   it('renders wealth growth, asset groups and the year-wise balance sheet', () => {
@@ -16,5 +16,12 @@ describe('PortfolioWorkbookSnapshot', () => {
     expect(html).toContain('₹8.31 Cr');
     expect(html).toContain('Gera office');
     expect(html).toContain('Brigade land');
+  });
+
+  it('exposes wealth growth as a standalone dashboard panel', () => {
+    const html = renderToStaticMarkup(<PortfolioWealthGrowth />);
+    expect(html).toContain('data-testid="portfolio-wealth-growth"');
+    expect(html).toContain('Wealth growth over years');
+    expect(html).not.toContain('Stocks &amp; current assets');
   });
 });

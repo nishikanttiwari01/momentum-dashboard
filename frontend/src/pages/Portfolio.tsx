@@ -37,7 +37,7 @@ import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
 import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
 import PortfolioAllocation from '../features/portfolio/PortfolioAllocation';
 import PortfolioWorkbookPreview from '../features/portfolio/PortfolioWorkbookPreview';
-import PortfolioWorkbookSnapshot from '../features/portfolio/PortfolioWorkbookSnapshot';
+import { PortfolioAssetPanels, PortfolioBalanceSheet, PortfolioWealthGrowth } from '../features/portfolio/PortfolioWorkbookSnapshot';
 import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
 
 type Holding = {
@@ -334,18 +334,30 @@ const Portfolio: React.FC = () => {
         ) : null}
       </Paper>
 
-      {/* Allocation */}
-      {data.allocation.length ? (
-        <Paper variant="outlined" sx={{ p: 2 }}>
+      <Box
+        data-testid="portfolio-overview-grid"
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', lg: 'minmax(390px, 0.72fr) minmax(0, 1.28fr)' },
+          gap: 2,
+          alignItems: 'stretch',
+        }}
+      >
+        {data.allocation.length ? (
+        <Paper variant="outlined" sx={{ p: 2, minWidth: 0 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
             Allocation by category
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>Invested amount across mutual-fund categories</Typography>
           <PortfolioAllocation allocation={data.allocation} />
         </Paper>
-      ) : null}
+        ) : <Box />}
 
-      <PortfolioWorkbookSnapshot />
+        <PortfolioWealthGrowth />
+      </Box>
+
+      <PortfolioAssetPanels />
+      <PortfolioBalanceSheet />
 
       {/* Accumulation opportunities */}
       <Paper sx={{ p: 2 }}>

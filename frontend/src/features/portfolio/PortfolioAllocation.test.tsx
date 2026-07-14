@@ -15,6 +15,8 @@ describe('PortfolioAllocation', () => {
     );
 
     expect(html).toContain('aria-label="Allocation by category"');
+    expect(html).toContain('data-testid="portfolio-allocation-compact"');
+    expect(html).toContain('width="150"');
     expect(html).toContain('Small cap');
     expect(html).toContain('75.8%');
     expect(html).toContain('₹23,93,33,428');
