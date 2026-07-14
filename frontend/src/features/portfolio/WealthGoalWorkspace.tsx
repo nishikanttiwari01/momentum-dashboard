@@ -38,7 +38,9 @@ export function applyGoalFormChange(form: GoalForm, change: GoalFormChange): Goa
   return { ...form, scenarios: form.scenarios.map((item, index) => index === change.index ? { ...item, [change.field]: change.value } : item) };
 }
 const formsEqual = (left: GoalForm, right: GoalForm) => JSON.stringify(left) === JSON.stringify(right);
-export function createGoalFormState(form: GoalForm): GoalFormState { return { accepted: form, draft: form, dirty: false, saved: false, saveError: null }; }
+export function createGoalFormState(accepted: GoalForm, draft: GoalForm = accepted, saved = false): GoalFormState {
+  return { accepted, draft, dirty: !formsEqual(draft, accepted), saved, saveError: null };
+}
 export function goalFormReducer(state: GoalFormState, action: GoalFormAction): GoalFormState {
   if (action.type === 'change') {
     const draft = applyGoalFormChange(state.draft, action.change);
@@ -75,7 +77,11 @@ export function EmptyWealthGoalAlert({ onOpenDataImport }: { onOpenDataImport?: 
 
 export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSave: (update: GoalConfigurationUpdate) => void; isSaving: boolean; initialForm?: GoalForm; fieldErrors?: FieldErrors; saved?: boolean; saveError?: string | null; onRetrySave?: () => void; onOpenDataImport?: () => void }> = ({ data, onSave, isSaving, initialForm, fieldErrors = {}, saved: savedProp, saveError = null, onRetrySave, onOpenDataImport }) => {
   const responseForm = useMemo(() => goalFormFromResponse(data), [data]);
-  const [formState, dispatchForm] = useReducer(goalFormReducer, initialForm ?? responseForm, (form) => ({ ...createGoalFormState(form), saved: Boolean(savedProp) }));
+  const [formState, dispatchForm] = useReducer(
+    goalFormReducer,
+    { accepted: responseForm, draft: initialForm ?? responseForm, saved: Boolean(savedProp) },
+    (seed) => createGoalFormState(seed.accepted, seed.draft, seed.saved),
+  );
   const previousSaved = useRef(savedProp);
   useEffect(() => { if (!initialForm) dispatchForm({ type: 'serverSync', form: responseForm }); }, [responseForm, initialForm]);
   useEffect(() => {

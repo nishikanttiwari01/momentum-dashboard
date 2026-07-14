@@ -111,6 +111,12 @@ describe('WealthGoalWorkspace', () => {
     expect(synced.dirty).toBe(false);
   });
 
+  it('treats a supplied initial form as a draft against the server baseline', () => {
+    const accepted = goalFormFromResponse(response);
+    const draft = applyGoalFormChange(accepted, { type: 'scenario', index: 1, field: 'annual_return_pct', value: '11.5' });
+    expect(createGoalFormState(accepted, draft)).toMatchObject({ accepted, draft, dirty: true, saved: false });
+  });
+
   it('restores visible default inputs without saving until submit', () => {
     const onSave = vi.fn();
     const restored = applyGoalFormChange(goalFormFromResponse(response), { type: 'restore' });
