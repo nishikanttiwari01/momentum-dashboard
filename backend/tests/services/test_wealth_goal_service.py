@@ -2,13 +2,18 @@ from datetime import date
 import math
 
 import pytest
+from sqlalchemy import select
 
+from app.repos.models import WealthGoal, WealthGoalScenario
+from app.schemas.wealth_portfolio import GoalConfigurationUpdate
+from app.services import wealth_goal_service
 from app.services.wealth_goal_service import (
     monthly_trajectory,
     project_balance,
     projected_completion_date,
     required_monthly_contribution,
     whole_months_between,
+    update_primary_goal,
 )
 
 
@@ -113,3 +118,57 @@ def test_calendar_helpers_reject_reversed_dates_and_invalid_trajectory_inputs():
         whole_months_between(date(2024, 2, 1), date(2024, 1, 31))
     with pytest.raises(ValueError):
         monthly_trajectory(date(2024, 1, 1), 100, 5, -1, 12)
+
+
+def test_update_rolls_back_when_recalculation_fails_after_mutation(
+    session, monkeypatch
+):
+    payload = GoalConfigurationUpdate.model_validate(
+        {
+            "goal": {
+                "name": "Changed goal",
+                "target_amount_inr": 200_000_000,
+                "deadline": "2035-12-31",
+            },
+            "scenarios": [
+                {
+                    "scenario_key": "conservative",
+                    "annual_return_pct": 8,
+                    "monthly_contribution_inr": 1,
+                },
+                {
+                    "scenario_key": "expected",
+                    "annual_return_pct": 11,
+                    "monthly_contribution_inr": 2,
+                },
+                {
+                    "scenario_key": "optimistic",
+                    "annual_return_pct": 14,
+                    "monthly_contribution_inr": 3,
+                },
+            ],
+        }
+    )
+
+    def fail_recalculation(*args, **kwargs):
+        raise RuntimeError("forced recalculation failure")
+
+    monkeypatch.setattr(
+        wealth_goal_service, "get_primary_goal_response", fail_recalculation
+    )
+
+    with pytest.raises(RuntimeError, match="forced recalculation failure"):
+        update_primary_goal(session, payload, today=date(2026, 7, 14))
+
+    session.expire_all()
+    goal = session.scalar(select(WealthGoal).where(WealthGoal.is_primary.is_(True)))
+    scenarios = list(
+        session.scalars(
+            select(WealthGoalScenario)
+            .where(WealthGoalScenario.goal_id == goal.id)
+            .order_by(WealthGoalScenario.display_order)
+        )
+    )
+    assert goal.name == "₹15 Cr by 2029"
+    assert goal.target_amount_inr == 150_000_000
+    assert [scenario.annual_return_pct for scenario in scenarios] == [7, 10, 13]

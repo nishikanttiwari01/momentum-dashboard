@@ -100,8 +100,31 @@ class GoalConfigurationUpdate(BaseModel):
         keys = [scenario.scenario_key for scenario in self.scenarios]
         expected_keys = ["conservative", "expected", "optimistic"]
         if keys != expected_keys:
-            raise ValueError(
+            message = (
                 "scenarios must be conservative, expected, optimistic in that order"
+            )
+            mismatch = next(
+                (
+                    index
+                    for index, (actual, expected) in enumerate(zip(keys, expected_keys))
+                    if actual != expected
+                ),
+                None,
+            )
+            loc = (
+                ("scenarios", mismatch, "scenario_key")
+                if mismatch is not None
+                else ("scenarios",)
+            )
+            raise ValidationError.from_exception_data(
+                self.__class__.__name__,
+                [
+                    {
+                        "type": PydanticCustomError("scenario_key_order", message),
+                        "loc": loc,
+                        "input": keys,
+                    }
+                ],
             )
         rates = [scenario.annual_return_pct for scenario in self.scenarios]
         for index in range(1, len(rates)):

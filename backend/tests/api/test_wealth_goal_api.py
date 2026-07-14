@@ -234,6 +234,42 @@ def test_scenario_return_order_validation_identifies_offending_rate(client):
     assert reloaded["scenario_projections"][1]["settings"]["annual_return_pct"] == 10
 
 
+@pytest.mark.parametrize(
+    ("scenario_transform", "expected_loc"),
+    [
+        (
+            lambda scenarios: list(reversed(scenarios)),
+            ["body", "scenarios", 0, "scenario_key"],
+        ),
+        (
+            lambda scenarios: [
+                scenarios[0],
+                {**scenarios[1], "scenario_key": "conservative"},
+                scenarios[2],
+            ],
+            ["body", "scenarios", 1, "scenario_key"],
+        ),
+        (lambda scenarios: scenarios[:2], ["body", "scenarios"]),
+    ],
+)
+def test_exact_scenario_set_validation_has_field_location(
+    client, scenario_transform, expected_loc
+):
+    payload = configuration()
+    payload["scenarios"] = scenario_transform(payload["scenarios"])
+
+    response = client.put("/api/v1/wealth-portfolio/goals/primary", json=payload)
+
+    assert response.status_code == 422
+    issue = response.json()["errors"][0]
+    assert issue["loc"] == expected_loc
+    assert issue["msg"] == (
+        "scenarios must be conservative, expected, optimistic in that order"
+    )
+    reloaded = client.get("/api/v1/wealth-portfolio/goals/primary").json()
+    assert reloaded["scenario_projections"][1]["settings"]["annual_return_pct"] == 10
+
+
 def test_deadline_beyond_fifty_year_horizon_is_rejected_before_mutation(client):
     payload = configuration(deadline="9999-12-31")
     payload["scenarios"][2]["annual_return_pct"] = 50
