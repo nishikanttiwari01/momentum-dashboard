@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Index,
     JSON,
+    ForeignKey,
     func,
     MetaData,
 )
@@ -199,3 +200,87 @@ class CandidatePool(Base):
     __table_args__ = (
         Index("ix_candidate_pool_status_rank", "status", "rank_ord"),
     )
+
+
+class PortfolioImport(Base):
+    __tablename__ = "portfolio_imports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16), index=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), nullable=False)
+    issue_counts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class PortfolioSnapshot(Base):
+    __tablename__ = "portfolio_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    import_id: Mapped[str] = mapped_column(ForeignKey("portfolio_imports.id"), unique=True, index=True)
+    as_of: Mapped[date] = mapped_column(Date, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), nullable=False)
+
+
+class PortfolioAsset(Base):
+    __tablename__ = "portfolio_assets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("portfolio_snapshots.id"), index=True)
+    source_key: Mapped[str] = mapped_column(String(64))
+    asset_type: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    market: Mapped[str] = mapped_column(String(16), index=True)
+    currency: Mapped[str] = mapped_column(String(3))
+    invested_amount: Mapped[Optional[float]] = mapped_column(Float)
+    market_value: Mapped[Optional[float]] = mapped_column(Float)
+    source_ref: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+    __table_args__ = (UniqueConstraint("snapshot_id", "source_key"),)
+
+
+class PortfolioTransaction(Base):
+    __tablename__ = "portfolio_transactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("portfolio_snapshots.id"), index=True)
+    source_key: Mapped[str] = mapped_column(String(64))
+    asset_id: Mapped[str] = mapped_column(ForeignKey("portfolio_assets.id"), index=True)
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    amount: Mapped[float] = mapped_column(Float)
+    units: Mapped[Optional[float]] = mapped_column(Float)
+    unit_price: Mapped[Optional[float]] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3))
+    source_ref: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+    __table_args__ = (UniqueConstraint("snapshot_id", "source_key"),)
+
+
+class PortfolioValuation(Base):
+    __tablename__ = "portfolio_valuations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    snapshot_id: Mapped[str] = mapped_column(ForeignKey("portfolio_snapshots.id"), index=True)
+    source_key: Mapped[str] = mapped_column(String(64))
+    asset_id: Mapped[str] = mapped_column(ForeignKey("portfolio_assets.id"), index=True)
+    valued_on: Mapped[date] = mapped_column(Date, index=True)
+    market_value: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3))
+    source_ref: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+    __table_args__ = (UniqueConstraint("snapshot_id", "source_key"),)
+
+
+class PortfolioFxRate(Base):
+    __tablename__ = "portfolio_fx_rates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    base_currency: Mapped[str] = mapped_column(String(3))
+    quote_currency: Mapped[str] = mapped_column(String(3))
+    effective_on: Mapped[date] = mapped_column(Date)
+    rate: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(64))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime)
+
+    __table_args__ = (UniqueConstraint("base_currency", "quote_currency", "effective_on"),)
