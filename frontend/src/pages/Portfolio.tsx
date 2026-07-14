@@ -35,6 +35,7 @@ import {
 } from 'recharts';
 import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
 import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
+import { buildFundChartSeries } from '../features/portfolio/fundChartData';
 
 type Holding = {
   account_id: string;
@@ -163,12 +164,9 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
   const spanDays =
     points.length > 1 ? Math.abs(dayjs(points[points.length - 1].date).diff(dayjs(points[0].date), 'day')) : 0;
   const labelFmt = spanDays > 365 ? 'MMM YY' : spanDays > 180 ? 'DD MMM YY' : 'DD MMM';
-  const chartData = points.map((p) => ({
-    label: dayjs(p.date).format(labelFmt),
-    fullDate: dayjs(p.date).format('DD MMM YYYY'),
-    nav: p.nav,
-  }));
-  const purchaseData = (data?.purchases ?? []).map((p) => ({ label: dayjs(p.date).format(labelFmt), fullDate: dayjs(p.date).format('DD MMM YYYY'), purchaseNav: p.nav, purchase: p }));
+  const series = buildFundChartSeries(points, data?.purchases ?? []);
+  const chartData = series.prices;
+  const purchaseData = series.purchases;
   const changeColor = tone(data?.change_pct);
 
   return (
@@ -214,7 +212,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e6e8ee" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 11 }} minTickGap={40} tickMargin={6} />
+              <XAxis dataKey="time" type="number" scale="time" domain={['dataMin', 'dataMax']} tick={{ fontSize: 11 }} minTickGap={40} tickMargin={6} tickFormatter={(value: number) => dayjs(value).format(labelFmt)} />
               <YAxis
                 tick={{ fontSize: 11 }}
                 width={64}
@@ -223,7 +221,7 @@ const FundNavChart: React.FC<{ schemeCode: string; fundName: string; instrumentI
               />
               <ReTooltip
                 formatter={(v: any) => [Number(v).toFixed(2), 'NAV']}
-                labelFormatter={(_, payload: any) => payload?.[0]?.payload?.fullDate ?? ''}
+                labelFormatter={(value: any) => dayjs(Number(value)).format('DD MMM YYYY')}
               />
               <Line type="monotone" dataKey="nav" stroke="#2f80ed" strokeWidth={1.6} dot={false} isAnimationActive={false} />
               <Scatter data={purchaseData} dataKey="purchaseNav" fill="#f59e0b" />
