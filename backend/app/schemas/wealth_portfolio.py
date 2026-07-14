@@ -73,3 +73,65 @@ class WealthSummary(BaseModel):
     market_exposure: list[MarketExposure] = Field(default_factory=list)
     fx: FxMetadata | None = None
     data_health: Literal["empty", "fresh", "warning", "unavailable"] = "empty"
+
+
+ScenarioKey = Literal["conservative", "expected", "optimistic"]
+
+
+class GoalSettings(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    target_amount_inr: float = Field(gt=0)
+    deadline: date
+
+
+class GoalScenarioSettings(BaseModel):
+    scenario_key: ScenarioKey
+    annual_return_pct: float = Field(ge=-25, le=50)
+    monthly_contribution_inr: float = Field(ge=0)
+
+
+class GoalConfigurationUpdate(BaseModel):
+    goal: GoalSettings
+    scenarios: list[GoalScenarioSettings]
+
+    @model_validator(mode="after")
+    def validate_scenarios(self):
+        keys = [scenario.scenario_key for scenario in self.scenarios]
+        expected_keys = ["conservative", "expected", "optimistic"]
+        if keys != expected_keys:
+            raise ValueError(
+                "scenarios must be conservative, expected, optimistic in that order"
+            )
+        rates = [scenario.annual_return_pct for scenario in self.scenarios]
+        if rates != sorted(rates):
+            raise ValueError(
+                "scenario returns must satisfy conservative <= expected <= optimistic"
+            )
+        return self
+
+
+class GoalTrajectoryPoint(BaseModel):
+    on: date
+    balance_inr: float
+
+
+class GoalScenarioProjection(BaseModel):
+    settings: GoalScenarioSettings
+    projected_deadline_value_inr: float | None = None
+    surplus_or_shortfall_inr: float | None = None
+    on_track: bool | None = None
+    projected_completion_date: date | None = None
+    trajectory: list[GoalTrajectoryPoint] = Field(default_factory=list)
+
+
+class PrimaryGoalResponse(BaseModel):
+    goal: GoalSettings
+    scenario_projections: list[GoalScenarioProjection]
+    calculated_on: date
+    snapshot_id: str | None = None
+    current_value_inr: float | None = None
+    achieved_pct: float | None = None
+    remaining_inr: float | None = None
+    required_monthly_contribution_inr: float | None = None
+    required_trajectory: list[GoalTrajectoryPoint] = Field(default_factory=list)
+    data_health: Literal["empty", "fresh", "warning", "unavailable"] = "empty"

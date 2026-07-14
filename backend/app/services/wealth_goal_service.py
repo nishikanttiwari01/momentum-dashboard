@@ -6,6 +6,20 @@ import calendar
 import math
 from numbers import Integral, Real
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.repos.models import WealthGoal, WealthGoalScenario
+from app.schemas.wealth_portfolio import (
+    GoalConfigurationUpdate,
+    GoalScenarioProjection,
+    GoalScenarioSettings,
+    GoalSettings,
+    GoalTrajectoryPoint,
+    PrimaryGoalResponse,
+)
+from app.services.wealth_summary_service import build_summary
+
 
 @dataclass(frozen=True)
 class TrajectoryPoint:
@@ -14,7 +28,11 @@ class TrajectoryPoint:
 
 
 def _finite_number(value: Real, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+        or not math.isfinite(value)
+    ):
         raise ValueError(f"{name} must be a finite number")
     return float(value)
 
@@ -143,3 +161,173 @@ def projected_completion_date(
         if point.balance >= target:
             return point.on
     return None
+
+
+class PrimaryGoalNotFound(LookupError):
+    pass
+
+
+class InvalidGoalConfiguration(ValueError):
+    pass
+
+
+def _primary_goal(session: Session) -> WealthGoal:
+    goal = session.scalar(
+        select(WealthGoal)
+        .where(WealthGoal.is_primary.is_(True))
+        .order_by(WealthGoal.id)
+        .limit(1)
+    )
+    if goal is None:
+        raise PrimaryGoalNotFound("Primary wealth goal seed is missing")
+    return goal
+
+
+def _trajectory(points: tuple[TrajectoryPoint, ...]) -> list[GoalTrajectoryPoint]:
+    return [
+        GoalTrajectoryPoint(on=point.on, balance_inr=point.balance) for point in points
+    ]
+
+
+def get_primary_goal_response(
+    session: Session, today: date | None = None
+) -> PrimaryGoalResponse:
+    calculated_on = today or date.today()
+    goal = _primary_goal(session)
+    scenarios = list(
+        session.scalars(
+            select(WealthGoalScenario)
+            .where(WealthGoalScenario.goal_id == goal.id)
+            .order_by(WealthGoalScenario.display_order, WealthGoalScenario.id)
+        )
+    )
+    if [row.scenario_key for row in scenarios] != [
+        "conservative",
+        "expected",
+        "optimistic",
+    ]:
+        raise InvalidGoalConfiguration(
+            "Primary goal must have exactly three ordered scenarios"
+        )
+
+    settings = GoalSettings(
+        name=goal.name,
+        target_amount_inr=goal.target_amount_inr,
+        deadline=goal.deadline,
+    )
+    scenario_settings = [
+        GoalScenarioSettings(
+            scenario_key=row.scenario_key,
+            annual_return_pct=row.annual_return_pct,
+            monthly_contribution_inr=row.monthly_contribution_inr,
+        )
+        for row in scenarios
+    ]
+    summary = build_summary(session)
+    if summary.net_worth_market_value_inr is None:
+        return PrimaryGoalResponse(
+            goal=settings,
+            scenario_projections=[
+                GoalScenarioProjection(settings=item) for item in scenario_settings
+            ],
+            calculated_on=calculated_on,
+            data_health=summary.data_health,
+        )
+
+    months = whole_months_between(calculated_on, goal.deadline)
+    if months <= 0:
+        raise InvalidGoalConfiguration(
+            "Goal deadline must include a future monthly period"
+        )
+    current = summary.net_worth_market_value_inr
+    expected = scenario_settings[1]
+    required = required_monthly_contribution(
+        current, goal.target_amount_inr, months, expected.annual_return_pct
+    )
+    required_points = monthly_trajectory(
+        calculated_on, current, expected.annual_return_pct, required, months
+    )
+    projections = []
+    for item in scenario_settings:
+        projected = project_balance(
+            current, item.annual_return_pct, item.monthly_contribution_inr, months
+        )
+        projections.append(
+            GoalScenarioProjection(
+                settings=item,
+                projected_deadline_value_inr=projected,
+                surplus_or_shortfall_inr=projected - goal.target_amount_inr,
+                on_track=projected >= goal.target_amount_inr,
+                projected_completion_date=projected_completion_date(
+                    calculated_on,
+                    current,
+                    goal.target_amount_inr,
+                    item.annual_return_pct,
+                    item.monthly_contribution_inr,
+                ),
+                trajectory=_trajectory(
+                    monthly_trajectory(
+                        calculated_on,
+                        current,
+                        item.annual_return_pct,
+                        item.monthly_contribution_inr,
+                        months,
+                    )
+                ),
+            )
+        )
+    return PrimaryGoalResponse(
+        goal=settings,
+        scenario_projections=projections,
+        calculated_on=calculated_on,
+        snapshot_id=summary.snapshot_id,
+        current_value_inr=current,
+        achieved_pct=current * 100 / goal.target_amount_inr,
+        remaining_inr=max(0, goal.target_amount_inr - current),
+        required_monthly_contribution_inr=required,
+        required_trajectory=_trajectory(required_points),
+        data_health=summary.data_health,
+    )
+
+
+def update_primary_goal(
+    session: Session,
+    payload: GoalConfigurationUpdate,
+    today: date | None = None,
+) -> PrimaryGoalResponse:
+    calculated_on = today or date.today()
+    if payload.goal.deadline <= calculated_on:
+        raise InvalidGoalConfiguration(
+            "Goal deadline must be after the calculation date"
+        )
+    if whole_months_between(calculated_on, payload.goal.deadline) <= 0:
+        raise InvalidGoalConfiguration(
+            "Goal deadline must include a future monthly period"
+        )
+
+    try:
+        goal = _primary_goal(session)
+        goal.name = payload.goal.name
+        goal.target_amount_inr = payload.goal.target_amount_inr
+        goal.deadline = payload.goal.deadline
+        session.query(WealthGoalScenario).filter(
+            WealthGoalScenario.goal_id == goal.id
+        ).delete(synchronize_session=False)
+        for order, item in enumerate(payload.scenarios):
+            session.add(
+                WealthGoalScenario(
+                    id=f"{goal.id[:-3]}{order + 200:03d}",
+                    goal_id=goal.id,
+                    scenario_key=item.scenario_key,
+                    annual_return_pct=item.annual_return_pct,
+                    monthly_contribution_inr=item.monthly_contribution_inr,
+                    display_order=order,
+                )
+            )
+        session.flush()
+        response = get_primary_goal_response(session, today=calculated_on)
+        session.commit()
+        return response
+    except Exception:
+        session.rollback()
+        raise
