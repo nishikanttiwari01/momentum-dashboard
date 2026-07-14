@@ -35,6 +35,22 @@ def test_required_contribution_reproduces_target():
     assert project_balance(25_000, 7.5, monthly, 24) == pytest.approx(75_000)
 
 
+@pytest.mark.parametrize("annual_return_pct", [1e-12, -1e-12])
+def test_tiny_return_projection_converges_to_zero_rate_limit(annual_return_pct):
+    assert project_balance(0, annual_return_pct, 1, 600) == pytest.approx(
+        600, rel=1e-12
+    )
+
+
+@pytest.mark.parametrize("annual_return_pct", [1e-12, -1e-12])
+def test_tiny_return_required_contribution_converges_to_zero_rate_limit(
+    annual_return_pct,
+):
+    assert required_monthly_contribution(
+        0, 600, 600, annual_return_pct
+    ) == pytest.approx(1, rel=1e-12)
+
+
 def test_whole_months_between_uses_complete_calendar_months():
     assert whole_months_between(date(2024, 1, 31), date(2024, 2, 29)) == 0
     assert whole_months_between(date(2024, 1, 15), date(2024, 3, 15)) == 2
