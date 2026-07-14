@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { PrimaryGoalResponse } from './wealthTypes';
-import { GOAL_LINE_COLORS, endpointLabelText, mergeGoalTrajectories } from './WealthGoalChart';
+import { GOAL_LINE_ANIMATION_ACTIVE, GOAL_LINE_COLORS, endpointLabelText, mergeGoalTrajectories } from './WealthGoalChart';
 
 describe('WealthGoalChart', () => {
   it('uses exactly four line colors without area or gradient configuration', () => {
     expect(GOAL_LINE_COLORS).toEqual({ required: '#64748B', conservative: '#F59E0B', expected: '#2563EB', optimistic: '#059669' });
     expect(Object.keys(GOAL_LINE_COLORS)).toHaveLength(4);
     expect(JSON.stringify(GOAL_LINE_COLORS)).not.toMatch(/area|gradient/i);
+  });
+  it('disables animation for all four trajectory lines', () => {
+    expect(Object.keys(GOAL_LINE_COLORS)).toHaveLength(4);
+    expect(GOAL_LINE_ANIMATION_ACTIVE).toBe(false);
   });
   it('merges and sorts required and scenario trajectories by date', () => {
     const data = {

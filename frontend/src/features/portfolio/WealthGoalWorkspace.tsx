@@ -70,6 +70,7 @@ export function applyGoalMutationSuccess(client: GoalCacheClient, next: PrimaryG
 
 const cardSx = { borderRadius: 3, borderColor: '#DDE6F0', boxShadow: '0 12px 32px rgba(22,34,58,.055)' };
 const completion = (value: string | null) => value ?? 'Beyond projection horizon';
+export const formatGoalPercentage = (value: number) => Number(value.toFixed(2)).toString();
 
 function Metric({ label, value }: { label: string; value: string }) { return <Paper variant="outlined" sx={{ ...cardSx, p: 1.75 }}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography variant="h6" fontWeight={850}>{value}</Typography></Paper>; }
 
@@ -97,6 +98,7 @@ export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSa
   const saved = formState.saved;
   const changeForm = (change: GoalFormChange) => applyUserGoalFormChange(change, onDraftChange, dispatchForm);
   const achieved = data.achieved_pct;
+  const achievedText = achieved == null ? null : formatGoalPercentage(achieved);
   const expected = data.scenario_projections.find((item) => item.settings.scenario_key === 'expected');
   return <Stack data-testid="wealth-goal-workspace" spacing={2.25}>
     {data.data_health === 'warning' && <Alert severity="warning">Attention needed — projections use the latest available portfolio snapshot.</Alert>}
@@ -105,10 +107,10 @@ export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSa
       <Stack direction="row" alignItems="center" spacing={1}><FlagRoundedIcon color="primary" /><Typography variant="overline" fontWeight={900}>Finish line</Typography></Stack>
       <Typography variant="h4" fontWeight={900}>{data.goal.name}</Typography>
       <Typography color="text.secondary">Target {formatCompactCrore(data.goal.target_amount_inr)} · deadline {data.goal.deadline} · current {formatCompactCrore(data.current_value_inr)}</Typography>
-      <Box sx={{ mt: 2, p: 0.6, bgcolor: '#E8EEF5', borderRadius: 8 }} aria-label={`Goal progress ${achieved == null ? 'unavailable' : `${achieved}%`}`}>
+      <Box sx={{ mt: 2, p: 0.6, bgcolor: '#E8EEF5', borderRadius: 8 }} aria-label={`Goal progress ${achievedText == null ? 'unavailable' : `${achievedText}%`}`}>
         <LinearProgress data-progress-fill={progressFill(achieved ?? 0)} variant="determinate" value={progressFill(achieved ?? 0)} sx={{ height: 16, borderRadius: 8, '& .MuiLinearProgress-bar': { borderRadius: 8, background: 'repeating-linear-gradient(90deg,#2563EB 0,#2563EB 28px,#3B82F6 28px,#3B82F6 31px)' } }} />
       </Box>
-      <Stack direction="row" justifyContent="space-between" mt={1}><Typography fontWeight={800}>{achieved == null ? 'Progress unavailable' : `${achieved}% achieved`}</Typography><Typography>Remaining {formatCompactCrore(data.remaining_inr)}</Typography></Stack>
+      <Stack direction="row" justifyContent="space-between" mt={1}><Typography fontWeight={800}>{achievedText == null ? 'Progress unavailable' : `${achievedText}% achieved`}</Typography><Typography>Remaining {formatCompactCrore(data.remaining_inr)}</Typography></Stack>
     </Paper>
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', lg: 'repeat(4,1fr)' }, gap: 1.5 }}>
       <Metric label="Remaining" value={formatCompactCrore(data.remaining_inr)} />

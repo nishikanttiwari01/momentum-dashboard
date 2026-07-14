@@ -55,6 +55,14 @@ describe('WealthGoalWorkspace', () => {
     for (const label of ['Conservative', 'Expected', 'Optimistic']) expect(html).toContain(label);
   });
 
+  it('formats achieved progress to at most two decimals without changing the raw progress fill', () => {
+    const html = renderView({ ...response, achieved_pct: 0.32866666666666666 });
+    expect(html).toContain('0.33% achieved');
+    expect(html).toContain('aria-label="Goal progress 0.33%"');
+    expect(html).toContain('data-progress-fill="0.32866666666666666"');
+    expect(html).not.toContain('0.32866666666666666%');
+  });
+
   it('keeps an empty snapshot editable and opens workbook import from its CTA', () => {
     const onOpenDataImport = vi.fn();
     const alert = EmptyWealthGoalAlert({ onOpenDataImport });

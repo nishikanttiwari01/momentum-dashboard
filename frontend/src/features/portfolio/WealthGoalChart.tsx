@@ -1,10 +1,11 @@
 import React from 'react';
-import { Box, useMediaQuery } from '@mui/material';
+import { Box } from '@mui/material';
 import { CartesianGrid, LabelList, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { PrimaryGoalResponse } from './wealthTypes';
 import { formatCompactCrore } from './wealthGoalMath';
 
 export const GOAL_LINE_COLORS = { required: '#64748B', conservative: '#F59E0B', expected: '#2563EB', optimistic: '#059669' } as const;
+export const GOAL_LINE_ANIMATION_ACTIVE = false;
 export const endpointLabelText = (series: string, value: number) => `${series[0].toUpperCase() + series.slice(1)} ${formatCompactCrore(value)}`;
 
 export const mergeGoalTrajectories = (data: PrimaryGoalResponse) => {
@@ -25,7 +26,6 @@ const EndpointLabel = ({ x, y, value, series }: { x?: number; y?: number; value?
 
 export const WealthGoalChart: React.FC<{ data: PrimaryGoalResponse }> = ({ data }) => {
   const rows = mergeGoalTrajectories(data);
-  const reduced = useMediaQuery('(prefers-reduced-motion: reduce)');
   return <Box sx={{ height: { xs: 300, md: 350 }, width: '100%', minWidth: 0 }} role="img" aria-label="Required and scenario wealth trajectories" aria-description="Required path compared with conservative, expected, and optimistic projected wealth paths.">
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={rows} margin={{ top: 20, right: 70, bottom: 8, left: 8 }}>
@@ -33,7 +33,7 @@ export const WealthGoalChart: React.FC<{ data: PrimaryGoalResponse }> = ({ data 
         <XAxis dataKey="on" tick={{ fontSize: 11 }} tickFormatter={(value) => String(value).slice(0, 7)} />
         <YAxis width={62} tick={{ fontSize: 10 }} tickFormatter={(value) => formatCompactCrore(Number(value))} />
         <Tooltip formatter={(value: number) => formatCompactCrore(value)} labelFormatter={(label) => `Date ${label}`} />
-        {(Object.keys(GOAL_LINE_COLORS) as (keyof typeof GOAL_LINE_COLORS)[]).map((key) => <Line key={key} type="monotone" dataKey={key} name={key[0].toUpperCase() + key.slice(1)} stroke={GOAL_LINE_COLORS[key]} strokeWidth={key === 'required' ? 2 : 3} strokeDasharray={key === 'required' ? '6 5' : undefined} dot={false} connectNulls isAnimationActive={!reduced}>
+        {(Object.keys(GOAL_LINE_COLORS) as (keyof typeof GOAL_LINE_COLORS)[]).map((key) => <Line key={key} type="monotone" dataKey={key} name={key[0].toUpperCase() + key.slice(1)} stroke={GOAL_LINE_COLORS[key]} strokeWidth={key === 'required' ? 2 : 3} strokeDasharray={key === 'required' ? '6 5' : undefined} dot={false} connectNulls isAnimationActive={GOAL_LINE_ANIMATION_ACTIVE}>
           <LabelList dataKey={key} content={(props) => {
             const index = Number(props.index);
             return index === rows.length - 1 ? <EndpointLabel x={Number(props.x)} y={Number(props.y)} value={Number(props.value)} series={key} /> : null;
