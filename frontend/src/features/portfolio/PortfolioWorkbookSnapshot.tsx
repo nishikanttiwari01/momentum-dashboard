@@ -1,6 +1,10 @@
 import React from 'react';
 import { Box, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import AutoGraphRoundedIcon from '@mui/icons-material/AutoGraphRounded';
+import BalanceRoundedIcon from '@mui/icons-material/BalanceRounded';
+import DonutLargeRoundedIcon from '@mui/icons-material/DonutLargeRounded';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, LabelList, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { PortfolioSectionHeader, assetIconFor } from './PortfolioVisuals';
 
 const history = [
   { year: 'FY-24', principal: 4.92, market: 5.82, savings: 0.51, profit: 2.4 },
@@ -20,46 +24,44 @@ const fixedAssets = [
   { name: 'Gera office', type: 'Office', principal: '₹57.00 L', market: '₹1.00 Cr' },
 ];
 
-const heading = (color: string, title: string, detail?: string) => (
-  <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 1.25 }}>
-    <Box sx={{ width: 8, height: 8, borderRadius: 0.5, bgcolor: color }} />
-    <Typography variant="overline" fontWeight={700} letterSpacing="0.12em">{title}</Typography>
-    {detail ? <Typography variant="caption" color="text.secondary">{detail}</Typography> : null}
-  </Stack>
-);
+const croreLabel = (value: number) => `₹${value.toFixed(2)} Cr`;
 
 export const PortfolioWealthGrowth: React.FC = () => (
-    <Paper data-testid="portfolio-wealth-growth" variant="outlined" sx={{ p: 2, height: '100%', boxSizing: 'border-box' }}>
-      {heading('#06aed4', 'Wealth growth over years', '₹ Cr · workbook snapshots')}
-      <Box sx={{ height: 210 }}>
+    <Paper data-testid="portfolio-wealth-growth" variant="outlined" sx={{ p: 2.25, height: '100%', boxSizing: 'border-box', borderRadius: 3, borderColor: '#E4EAF3', boxShadow: '0 10px 28px rgba(20,33,61,0.055)' }}>
+      <PortfolioSectionHeader icon={<AutoGraphRoundedIcon fontSize="small" />} title="Wealth growth over years" detail="Market value compared with principal · ₹ Cr" />
+      <Stack direction="row" spacing={1} sx={{ mb: 0.5, flexWrap: 'wrap' }}>
+        {history.map((item) => <Box key={item.year} sx={{ px: 1, py: 0.35, borderRadius: 1.5, bgcolor: '#EFF6FF', color: '#175CD3', fontSize: 11, fontWeight: 800 }}>{item.year} · {croreLabel(item.market)}</Box>)}
+      </Stack>
+      <Box data-chart-type="wealth-area" sx={{ height: 210 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={history} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="#eef1f5" vertical={false} />
+          <AreaChart data={history} margin={{ top: 28, right: 30, left: 0, bottom: 0 }}>
+            <defs><linearGradient id="wealthMarketFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2E7CF6" stopOpacity={0.34} /><stop offset="100%" stopColor="#12B76A" stopOpacity={0.04} /></linearGradient></defs>
+            <CartesianGrid stroke="#E9EEF5" vertical={false} strokeDasharray="3 4" />
             <XAxis dataKey="year" tick={{ fontSize: 11 }} />
             <YAxis domain={[4, 9]} tick={{ fontSize: 11 }} tickFormatter={(value) => `₹${value} Cr`} width={58} />
-            <Tooltip formatter={(value: number) => [`₹${value.toFixed(2)} Cr`]} />
+            <Tooltip formatter={(value: number, name: string) => [croreLabel(value), name]} contentStyle={{ borderRadius: 10, borderColor: '#E4E7EC', boxShadow: '0 8px 24px rgba(20,33,61,.12)' }} />
             <Legend />
-            <Line type="monotone" dataKey="principal" name="Principal" stroke="#98a2b3" strokeWidth={2} />
-            <Line type="monotone" dataKey="market" name="Market value" stroke="#2e90fa" strokeWidth={2.5} />
-          </LineChart>
+            <Area type="monotone" dataKey="market" name="Market value" stroke="#2E7CF6" strokeWidth={3} fill="url(#wealthMarketFill)" activeDot={{ r: 6 }} isAnimationActive={false}><LabelList dataKey="market" position="top" formatter={(value: number) => croreLabel(value)} style={{ fill: '#175CD3', fontSize: 11, fontWeight: 800 }} /></Area>
+            <Line type="monotone" dataKey="principal" name="Principal" stroke="#98A2B3" strokeWidth={2} strokeDasharray="6 5" dot={{ r: 3 }} isAnimationActive={false} />
+          </AreaChart>
         </ResponsiveContainer>
       </Box>
-      <Stack direction="row" justifyContent="flex-end"><Typography variant="caption" color="text.secondary">Latest market value <b>₹8.31 Cr</b></Typography></Stack>
+      <Stack direction="row" justifyContent="flex-end"><Typography variant="caption" color="text.secondary">Latest market value <b style={{ color: '#175CD3' }}>₹8.31 Cr</b></Typography></Stack>
     </Paper>
 );
 
 export const PortfolioAssetPanels: React.FC = () => (
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1.2fr 1fr' }, gap: 2 }}>
       <Paper variant="outlined" sx={{ p: 2, overflowX: 'auto' }}>
-        {heading('#00b386', 'Stocks & current assets')}
+        <PortfolioSectionHeader icon={<DonutLargeRoundedIcon fontSize="small" />} title="Stocks & current assets" detail="Liquid and market-linked holdings" />
         <Table size="small"><TableHead><TableRow><TableCell>Asset</TableCell><TableCell align="right">Principal</TableCell><TableCell align="right">Market</TableCell><TableCell align="right">Gain</TableCell></TableRow></TableHead><TableBody>
-          {currentAssets.map((asset) => <TableRow key={asset.name}><TableCell><Typography variant="body2" fontWeight={700}>{asset.name}</Typography><Typography variant="caption" color="text.secondary">{asset.detail}</Typography></TableCell><TableCell align="right">{asset.principal}</TableCell><TableCell align="right">{asset.market}</TableCell><TableCell align="right" sx={{ color: asset.gain.startsWith('+') ? 'success.main' : 'text.secondary' }}>{asset.gain}</TableCell></TableRow>)}
+          {currentAssets.map((asset) => <TableRow key={asset.name}><TableCell><Stack direction="row" gap={1.25} alignItems="center">{assetIconFor(asset.name)}<Box><Typography variant="body2" fontWeight={700}>{asset.name}</Typography><Typography variant="caption" color="text.secondary">{asset.detail}</Typography></Box></Stack></TableCell><TableCell align="right">{asset.principal}</TableCell><TableCell align="right">{asset.market}</TableCell><TableCell align="right" sx={{ color: asset.gain.startsWith('+') ? 'success.main' : 'text.secondary', fontWeight: 700 }}>{asset.gain}</TableCell></TableRow>)}
         </TableBody></Table>
       </Paper>
       <Paper variant="outlined" sx={{ p: 2, overflowX: 'auto' }}>
-        {heading('#f79009', 'Fixed assets', '46% of workbook net worth')}
+        <PortfolioSectionHeader icon={assetIconFor('Property')} title="Fixed assets" detail="46% of workbook net worth" />
         <Table size="small"><TableHead><TableRow><TableCell>Asset</TableCell><TableCell align="right">Principal</TableCell><TableCell align="right">Market</TableCell></TableRow></TableHead><TableBody>
-          {fixedAssets.map((asset) => <TableRow key={asset.name}><TableCell><Typography variant="body2" fontWeight={700}>{asset.name}</Typography><Typography variant="caption" color="text.secondary">{asset.type}</Typography></TableCell><TableCell align="right">{asset.principal}</TableCell><TableCell align="right">{asset.market}</TableCell></TableRow>)}
+          {fixedAssets.map((asset) => <TableRow key={asset.name}><TableCell><Stack direction="row" gap={1.25} alignItems="center">{assetIconFor(asset.type === 'Office' ? 'Office' : 'Property')}<Box><Typography variant="body2" fontWeight={700}>{asset.name}</Typography><Typography variant="caption" color="text.secondary">{asset.type}</Typography></Box></Stack></TableCell><TableCell align="right">{asset.principal}</TableCell><TableCell align="right">{asset.market}</TableCell></TableRow>)}
         </TableBody></Table>
       </Paper>
     </Box>
@@ -67,7 +69,7 @@ export const PortfolioAssetPanels: React.FC = () => (
 
 export const PortfolioBalanceSheet: React.FC = () => (
     <Paper variant="outlined" sx={{ p: 2 }}>
-      {heading('#06aed4', 'Balance sheet — year wise', 'all values ₹ Cr')}
+      <PortfolioSectionHeader icon={<BalanceRoundedIcon fontSize="small" />} title="Balance sheet — year wise" detail="All values ₹ Cr" />
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1.35fr 1fr' }, gap: 3, alignItems: 'center' }}>
         <Box sx={{ overflowX: 'auto' }}><Table size="small"><TableHead><TableRow><TableCell>Measure</TableCell>{history.map((item) => <TableCell key={item.year} align="right">{item.year}</TableCell>)}</TableRow></TableHead><TableBody>
           <TableRow><TableCell>Total principal</TableCell>{history.map((item) => <TableCell key={item.year} align="right">{item.principal.toFixed(2)}</TableCell>)}</TableRow>
@@ -75,7 +77,7 @@ export const PortfolioBalanceSheet: React.FC = () => (
           <TableRow><TableCell>Savings added</TableCell>{history.map((item) => <TableCell key={item.year} align="right">{item.savings.toFixed(2)}</TableCell>)}</TableRow>
           <TableRow><TableCell>Profit % (current assets)</TableCell>{history.map((item) => <TableCell key={item.year} align="right" sx={{ color: 'success.main' }}>{item.profit.toFixed(1)}%</TableCell>)}</TableRow>
         </TableBody></Table></Box>
-        <Box sx={{ height: 210 }}><ResponsiveContainer width="100%" height="100%"><BarChart data={history}><CartesianGrid stroke="#eef1f5" vertical={false} /><XAxis dataKey="year" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 10 }} tickFormatter={(value) => `${value} Cr`} /><Tooltip /><Legend /><Bar dataKey="principal" name="Principal" fill="#c8cdd6" radius={[3, 3, 0, 0]} /><Bar dataKey="market" name="Market value" fill="#2e90fa" radius={[3, 3, 0, 0]} /></BarChart></ResponsiveContainer></Box>
+        <Box sx={{ height: 210 }}><ResponsiveContainer width="100%" height="100%"><BarChart data={history} margin={{ top: 22 }}><CartesianGrid stroke="#E9EEF5" vertical={false} strokeDasharray="3 4" /><XAxis dataKey="year" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 10 }} tickFormatter={(value) => `${value} Cr`} /><Tooltip formatter={(value: number) => croreLabel(value)} /><Legend /><Bar dataKey="principal" name="Principal" fill="#C8CDD6" radius={[4, 4, 0, 0]} isAnimationActive={false} /><Bar dataKey="market" name="Market value" fill="#2E7CF6" radius={[4, 4, 0, 0]} isAnimationActive={false}><LabelList dataKey="market" position="top" formatter={(value: number) => `₹${value.toFixed(1)} Cr`} style={{ fill: '#175CD3', fontSize: 10, fontWeight: 700 }} /></Bar></BarChart></ResponsiveContainer></Box>
       </Box>
     </Paper>
 );

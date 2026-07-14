@@ -21,7 +21,19 @@ describe('PortfolioWorkbookSnapshot', () => {
   it('exposes wealth growth as a standalone dashboard panel', () => {
     const html = renderToStaticMarkup(<PortfolioWealthGrowth />);
     expect(html).toContain('data-testid="portfolio-wealth-growth"');
+    expect(html).toContain('data-chart-type="wealth-area"');
     expect(html).toContain('Wealth growth over years');
+    expect(html).toContain('₹5.82 Cr');
+    expect(html).toContain('₹8.25 Cr');
+    expect(html).toContain('₹8.31 Cr');
     expect(html).not.toContain('Stocks &amp; current assets');
+  });
+
+  it('uses meaningful icons for asset rows', () => {
+    const html = renderToStaticMarkup(<PortfolioWorkbookSnapshot />);
+    expect(html).toContain('data-portfolio-icon="mutual-funds"');
+    expect(html).toContain('data-portfolio-icon="stocks"');
+    expect(html).toContain('data-portfolio-icon="property"');
+    expect(html).toContain('data-portfolio-icon="office"');
   });
 });

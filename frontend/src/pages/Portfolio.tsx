@@ -19,6 +19,11 @@ import {
 } from '@mui/material';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import AccountBalanceWalletRoundedIcon from '@mui/icons-material/AccountBalanceWalletRounded';
+import AutoGraphRoundedIcon from '@mui/icons-material/AutoGraphRounded';
+import DonutLargeRoundedIcon from '@mui/icons-material/DonutLargeRounded';
+import LightbulbRoundedIcon from '@mui/icons-material/LightbulbRounded';
+import PercentRoundedIcon from '@mui/icons-material/PercentRounded';
 import axios from 'axios';
 import dayjs from 'dayjs';
 import { useQuery } from '@tanstack/react-query';
@@ -39,6 +44,7 @@ import PortfolioAllocation from '../features/portfolio/PortfolioAllocation';
 import PortfolioWorkbookPreview from '../features/portfolio/PortfolioWorkbookPreview';
 import { PortfolioAssetPanels, PortfolioBalanceSheet, PortfolioWealthGrowth } from '../features/portfolio/PortfolioWorkbookSnapshot';
 import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
+import { PortfolioMetricTile, PortfolioSectionHeader } from '../features/portfolio/PortfolioVisuals';
 
 type Holding = {
   account_id: string;
@@ -307,20 +313,16 @@ const Portfolio: React.FC = () => {
   return (
     <Stack spacing={2} sx={{ px: 2 }}>
       {/* Summary strip */}
-      <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
+      <Paper variant="outlined" sx={{ overflow: 'hidden', borderRadius: 3, borderColor: '#E4EAF3', boxShadow: '0 10px 28px rgba(20,33,61,0.055)' }}>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={2.5} alignItems={{ md: 'center' }} flexWrap="wrap" useFlexGap sx={{ px: 2, py: 1.5 }}>
           <Box sx={{ minWidth: 190 }}>
             <Typography variant="h6" sx={{ fontWeight: 800 }}>Portfolio</Typography>
             <Typography variant="caption" color="text.secondary">Maintain, compare and grow</Typography>
           </Box>
-          <SummaryItem label="Principal invested" value={money(data.summary.total_invested)} />
-          <SummaryItem label="Current market value" value={money(data.summary.total_value)} />
-          <SummaryItem
-            label="Absolute return"
-            value={pct(data.summary.abs_return_pct)}
-            color={tone(data.summary.abs_return_pct)}
-          />
-          <SummaryItem label="XIRR" value={pct(data.summary.xirr_pct)} color={tone(data.summary.xirr_pct)} />
+          <PortfolioMetricTile icon={<AccountBalanceWalletRoundedIcon fontSize="small" />} label="Principal invested" value={money(data.summary.total_invested)} />
+          <PortfolioMetricTile icon={<AutoGraphRoundedIcon fontSize="small" />} label="Market value" value={money(data.summary.total_value)} />
+          <PortfolioMetricTile icon={<AutoGraphRoundedIcon fontSize="small" />} label="Absolute return" value={pct(data.summary.abs_return_pct)} tone={(data.summary.abs_return_pct ?? 0) >= 0 ? 'positive' : 'neutral'} />
+          <PortfolioMetricTile icon={<PercentRoundedIcon fontSize="small" />} label="XIRR" value={pct(data.summary.xirr_pct)} tone={(data.summary.xirr_pct ?? 0) >= 0 ? 'positive' : 'neutral'} />
           <Box sx={{ flexGrow: 1 }} />
           <Button size="small" startIcon={<RefreshIcon />} onClick={forceRefresh} disabled={refreshing}>
             {refreshing ? 'Refreshing NAVs…' : 'Refresh NAVs'}
@@ -344,11 +346,8 @@ const Portfolio: React.FC = () => {
         }}
       >
         {data.allocation.length ? (
-        <Paper variant="outlined" sx={{ p: 2, minWidth: 0 }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
-            Allocation by category
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>Invested amount across mutual-fund categories</Typography>
+        <Paper variant="outlined" sx={{ p: 2.25, minWidth: 0, borderRadius: 3, borderColor: '#E4EAF3', boxShadow: '0 10px 28px rgba(20,33,61,0.055)' }}>
+          <PortfolioSectionHeader icon={<DonutLargeRoundedIcon fontSize="small" />} title="Allocation by category" detail="Invested amount across mutual-fund categories" />
           <PortfolioAllocation allocation={data.allocation} />
         </Paper>
         ) : <Box />}
@@ -360,10 +359,8 @@ const Portfolio: React.FC = () => {
       <PortfolioBalanceSheet />
 
       {/* Accumulation opportunities */}
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-          Accumulation signals (dip / underweight)
-        </Typography>
+      <Paper data-testid="portfolio-signals" variant="outlined" sx={{ p: 2.25, borderRadius: 3, borderColor: '#E4EAF3', boxShadow: '0 10px 28px rgba(20,33,61,0.055)' }}>
+        <PortfolioSectionHeader icon={<LightbulbRoundedIcon fontSize="small" />} title="Accumulation signals" detail="Dip and underweight opportunities" />
         {opportunities.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             No funds currently in the configured dip zone.
@@ -371,7 +368,7 @@ const Portfolio: React.FC = () => {
         ) : (
           <Stack spacing={1}>
             {opportunities.map((f) => (
-              <Box key={f.id} sx={{ display: 'flex', gap: 1, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <Box key={f.id} sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', px: 1.25, py: 0.85, borderRadius: 2, bgcolor: '#F8FAFD', border: '1px solid #EEF1F5' }}>
                 <Chip
                   size="small"
                   color={ACCUM_META[f.accumulation!.status]?.color ?? 'default'}
@@ -393,10 +390,8 @@ const Portfolio: React.FC = () => {
       </Paper>
 
       {/* Funds table */}
-      <Paper sx={{ p: 2, overflowX: 'auto' }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
-          Funds
-        </Typography>
+      <Paper data-testid="portfolio-funds" variant="outlined" sx={{ p: 2.25, overflowX: 'auto', borderRadius: 3, borderColor: '#E4EAF3', boxShadow: '0 10px 28px rgba(20,33,61,0.055)' }}>
+        <PortfolioSectionHeader icon={<AccountBalanceWalletRoundedIcon fontSize="small" />} title="Mutual funds" detail="Holdings, returns, average NAV and transactions" />
         <Table size="small">
           <TableHead>
             <TableRow>
@@ -527,16 +522,5 @@ const Portfolio: React.FC = () => {
     </Stack>
   );
 };
-
-const SummaryItem: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color }) => (
-  <Box sx={{ minWidth: 130 }}>
-    <Typography variant="overline" color="text.secondary" display="block" lineHeight={1.2}>
-      {label}
-    </Typography>
-    <Typography variant="h6" fontWeight={700} color={color}>
-      {value}
-    </Typography>
-  </Box>
-);
 
 export default Portfolio;

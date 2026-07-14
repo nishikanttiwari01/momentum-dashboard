@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { Alert, Button, CircularProgress, Paper, Stack, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
+import { Alert, Button, CircularProgress, Paper, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import LanguageRoundedIcon from '@mui/icons-material/LanguageRounded';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import AddUsTransactionDialog from './AddUsTransactionDialog';
 import UsInvestmentChart from './UsInvestmentChart';
 import { UsOverview, usd } from './usPortfolioTypes';
+import { PortfolioSectionHeader } from './PortfolioVisuals';
 
 export default function UsInvestmentsSection() {
   const [expanded, setExpanded] = React.useState(false), [dialog, setDialog] = React.useState(false);
@@ -13,8 +15,8 @@ export default function UsInvestmentsSection() {
   const query = useQuery({ queryKey: ['us-portfolio-overview'], queryFn: async () => (await axios.get<UsOverview>('/api/v1/portfolio/us/overview')).data, retry: 1 });
   const row = query.data?.instruments[0];
   const saved = async () => { await client.invalidateQueries({ queryKey: ['us-portfolio-overview'] }); await client.invalidateQueries({ queryKey: ['us-portfolio-history', 'qqq'] }); };
-  return <Paper sx={{ p: 2, overflowX: 'auto' }}>
-    <Stack direction="row" alignItems="center" sx={{ mb: 1 }}><Typography variant="subtitle1" fontWeight={700}>US Investments</Typography><Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>USD · separate from INR totals</Typography></Stack>
+  return <Paper data-testid="portfolio-qqq" variant="outlined" sx={{ p: 2.25, overflowX: 'auto', borderRadius: 3, borderColor: '#E4EAF3', boxShadow: '0 10px 28px rgba(20,33,61,0.055)' }}>
+    <PortfolioSectionHeader icon={<LanguageRoundedIcon fontSize="small" />} title="US investments · QQQ" detail="USD holdings · separate from INR totals" />
     {query.isLoading ? <CircularProgress size={24} /> : query.isError || !row ? <Alert severity="error">Could not load US investments.</Alert> : <>
       {row.market_data_error && <Alert severity="warning" sx={{ mb: 1 }}>{row.market_data_error}. Your purchases remain available.</Alert>}
       <Table size="small"><TableHead><TableRow><TableCell>Fund</TableCell><TableCell align="right">Latest price</TableCell><TableCell align="right">Units</TableCell><TableCell align="right">Invested</TableCell><TableCell align="right">Average price</TableCell><TableCell align="right">Current value</TableCell><TableCell align="right">Gain / loss</TableCell><TableCell align="right">Action</TableCell></TableRow></TableHead>
