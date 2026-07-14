@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, ValidationError, computed_field, model_validator
+from pydantic_core import PydanticCustomError
 
 
 IGNORED_SHEETS = frozenset({"MF discont.", "Property Cal.", "REMIT", "STOCKS RECMDN"})
@@ -103,9 +104,22 @@ class GoalConfigurationUpdate(BaseModel):
                 "scenarios must be conservative, expected, optimistic in that order"
             )
         rates = [scenario.annual_return_pct for scenario in self.scenarios]
-        if rates != sorted(rates):
-            raise ValueError(
-                "scenario returns must satisfy conservative <= expected <= optimistic"
+        for index in range(1, len(rates)):
+            if rates[index - 1] <= rates[index]:
+                continue
+            message = (
+                "scenario returns must satisfy "
+                "conservative <= expected <= optimistic"
+            )
+            raise ValidationError.from_exception_data(
+                self.__class__.__name__,
+                [
+                    {
+                        "type": PydanticCustomError("scenario_return_order", message),
+                        "loc": ("scenarios", index, "annual_return_pct"),
+                        "input": rates[index],
+                    }
+                ],
             )
         return self
 

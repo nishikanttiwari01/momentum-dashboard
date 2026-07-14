@@ -207,6 +207,48 @@ def test_put_rejects_invalid_configuration_without_partial_update(client, mutate
     assert body["scenario_projections"][1]["settings"]["annual_return_pct"] == 10
 
 
+def test_deadline_validation_has_field_location_and_rolls_back(client):
+    payload = configuration(deadline="2020-01-01")
+
+    response = client.put("/api/v1/wealth-portfolio/goals/primary", json=payload)
+
+    assert response.status_code == 422
+    issue = response.json()["errors"][0]
+    assert issue["loc"] == ["body", "goal", "deadline"]
+    assert issue["msg"] == "Goal deadline must be after the calculation date"
+    reloaded = client.get("/api/v1/wealth-portfolio/goals/primary").json()
+    assert reloaded["goal"]["target_amount_inr"] == 150_000_000
+
+
+def test_scenario_return_order_validation_identifies_offending_rate(client):
+    payload = configuration()
+    payload["scenarios"][1]["annual_return_pct"] = 7
+
+    response = client.put("/api/v1/wealth-portfolio/goals/primary", json=payload)
+
+    assert response.status_code == 422
+    issue = response.json()["errors"][0]
+    assert issue["loc"] == ["body", "scenarios", 1, "annual_return_pct"]
+    assert "conservative <= expected <= optimistic" in issue["msg"]
+    reloaded = client.get("/api/v1/wealth-portfolio/goals/primary").json()
+    assert reloaded["scenario_projections"][1]["settings"]["annual_return_pct"] == 10
+
+
+def test_deadline_beyond_fifty_year_horizon_is_rejected_before_mutation(client):
+    payload = configuration(deadline="9999-12-31")
+    payload["scenarios"][2]["annual_return_pct"] = 50
+
+    response = client.put("/api/v1/wealth-portfolio/goals/primary", json=payload)
+
+    assert response.status_code == 422
+    issue = response.json()["errors"][0]
+    assert issue["loc"] == ["body", "goal", "deadline"]
+    assert issue["msg"] == "Goal deadline cannot exceed 600 monthly periods"
+    reloaded = client.get("/api/v1/wealth-portfolio/goals/primary").json()
+    assert reloaded["goal"]["name"] == "₹15 Cr by 2029"
+    assert reloaded["goal"]["target_amount_inr"] == 150_000_000
+
+
 def test_already_funded_goal_requires_no_monthly_contribution(client):
     seed_inr_snapshot(250_000_000)
 

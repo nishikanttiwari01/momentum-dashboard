@@ -11,6 +11,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -40,6 +41,20 @@ from app.services.wealth_goal_service import (
 
 MAX_WORKBOOK_BYTES = 20 * 1024 * 1024
 router = APIRouter(prefix="/wealth-portfolio", tags=["Wealth Portfolio"])
+
+
+def _goal_validation_error(exc: InvalidGoalConfiguration) -> RequestValidationError:
+    return RequestValidationError(
+        [
+            {
+                "type": exc.issue.error_type,
+                "loc": ("body", *exc.issue.loc),
+                "msg": exc.issue.message,
+                "input": None,
+                "ctx": {"error": exc},
+            }
+        ]
+    )
 
 
 @router.post("/imports/preview", response_model=ImportPreview)
@@ -117,7 +132,7 @@ def primary_goal(session: Session = Depends(get_session)) -> PrimaryGoalResponse
     except PrimaryGoalNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidGoalConfiguration as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _goal_validation_error(exc) from exc
 
 
 @router.put("/goals/primary", response_model=PrimaryGoalResponse)
@@ -130,4 +145,4 @@ def replace_primary_goal(
     except PrimaryGoalNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidGoalConfiguration as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise _goal_validation_error(exc) from exc

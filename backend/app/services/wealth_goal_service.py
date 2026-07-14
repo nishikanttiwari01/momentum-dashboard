@@ -167,8 +167,21 @@ class PrimaryGoalNotFound(LookupError):
     pass
 
 
+@dataclass(frozen=True)
+class GoalValidationIssue:
+    loc: tuple[str | int, ...]
+    message: str
+    error_type: str = "value_error"
+
+
 class InvalidGoalConfiguration(ValueError):
-    pass
+    def __init__(self, issue: GoalValidationIssue):
+        super().__init__(issue.message)
+        self.issue = issue
+
+
+def _invalid(loc: tuple[str | int, ...], message: str) -> InvalidGoalConfiguration:
+    return InvalidGoalConfiguration(GoalValidationIssue(loc=loc, message=message))
 
 
 def _primary_goal(session: Session) -> WealthGoal:
@@ -206,8 +219,8 @@ def get_primary_goal_response(
         "expected",
         "optimistic",
     ]:
-        raise InvalidGoalConfiguration(
-            "Primary goal must have exactly three ordered scenarios"
+        raise _invalid(
+            ("scenarios",), "Primary goal must have exactly three ordered scenarios"
         )
 
     settings = GoalSettings(
@@ -236,8 +249,14 @@ def get_primary_goal_response(
 
     months = whole_months_between(calculated_on, goal.deadline)
     if months <= 0:
-        raise InvalidGoalConfiguration(
-            "Goal deadline must include a future monthly period"
+        raise _invalid(
+            ("goal", "deadline"),
+            "Goal deadline must include a future monthly period",
+        )
+    if months > 600:
+        raise _invalid(
+            ("goal", "deadline"),
+            "Goal deadline cannot exceed 600 monthly periods",
         )
     current = summary.net_worth_market_value_inr
     expected = scenario_settings[1]
@@ -297,12 +316,20 @@ def update_primary_goal(
 ) -> PrimaryGoalResponse:
     calculated_on = today or date.today()
     if payload.goal.deadline <= calculated_on:
-        raise InvalidGoalConfiguration(
-            "Goal deadline must be after the calculation date"
+        raise _invalid(
+            ("goal", "deadline"),
+            "Goal deadline must be after the calculation date",
         )
-    if whole_months_between(calculated_on, payload.goal.deadline) <= 0:
-        raise InvalidGoalConfiguration(
-            "Goal deadline must include a future monthly period"
+    months = whole_months_between(calculated_on, payload.goal.deadline)
+    if months <= 0:
+        raise _invalid(
+            ("goal", "deadline"),
+            "Goal deadline must include a future monthly period",
+        )
+    if months > 600:
+        raise _invalid(
+            ("goal", "deadline"),
+            "Goal deadline cannot exceed 600 monthly periods",
         )
 
     try:
