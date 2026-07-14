@@ -1,5 +1,11 @@
 import axios from 'axios';
-import type { ImportCommitResult, ImportPreview, WealthSummary } from './wealthTypes';
+import type {
+  GoalConfigurationUpdate,
+  ImportCommitResult,
+  ImportPreview,
+  PrimaryGoalResponse,
+  WealthSummary,
+} from './wealthTypes';
 
 export async function previewWorkbook(file: File): Promise<ImportPreview> {
   const form = new FormData();
@@ -13,4 +19,16 @@ export async function commitWorkbook(token: string): Promise<ImportCommitResult>
 
 export async function fetchWealthSummary(): Promise<WealthSummary> {
   return (await axios.get<WealthSummary>('/api/v1/wealth-portfolio/summary')).data;
+}
+
+const PRIMARY_GOAL_URL = '/api/v1/wealth-portfolio/goals/primary';
+
+export async function fetchPrimaryGoal(): Promise<PrimaryGoalResponse> {
+  return (await axios.get<PrimaryGoalResponse>(PRIMARY_GOAL_URL)).data;
+}
+
+export async function updatePrimaryGoal(
+  configuration: GoalConfigurationUpdate,
+): Promise<PrimaryGoalResponse> {
+  return (await axios.put<PrimaryGoalResponse>(PRIMARY_GOAL_URL, configuration)).data;
 }
