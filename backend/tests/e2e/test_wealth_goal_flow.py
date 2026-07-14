@@ -1,3 +1,4 @@
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -5,7 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
-from app.core.db import dispose_engine, get_session, get_sessionmaker, init_sqlite
+from app.core.db import (
+    dispose_engine,
+    get_engine,
+    get_session,
+    get_sessionmaker,
+    init_sqlite,
+)
 from app.main import app
 from tests.fixtures.wealth_workbook_factory import make_real_layout_workbook_bytes
 
@@ -16,23 +23,62 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 @pytest.fixture
 def isolated_client(tmp_path: Path):
     original_db_path = get_settings().storage.sqlite_path
-    dispose_engine()
-    init_sqlite(str(tmp_path / "wealth-goal-flow.db"))
-    isolated_sessionmaker = get_sessionmaker()
-
-    def isolated_session():
-        with isolated_sessionmaker() as session:
-            yield session
-
-    app.dependency_overrides[get_session] = isolated_session
-    test_client = TestClient(app)
+    missing_override = object()
+    previous_override = app.dependency_overrides.get(get_session, missing_override)
+    isolated_engine = None
+    isolated_session = None
+    override_installed = False
+    test_client = None
     try:
-        yield test_client
-    finally:
-        test_client.close()
-        app.dependency_overrides.pop(get_session, None)
+        dispose_engine()
+        isolated_engine = init_sqlite(str(tmp_path / "wealth-goal-flow.db"))
+        isolated_sessionmaker = get_sessionmaker()
+
         dispose_engine()
         init_sqlite(str(original_db_path))
+
+        def isolated_session():
+            with isolated_sessionmaker() as session:
+                yield session
+
+        app.dependency_overrides[get_session] = isolated_session
+        override_installed = True
+        test_client = TestClient(app)
+        yield test_client
+    finally:
+        if test_client is not None:
+            test_client.close()
+        if (
+            override_installed
+            and app.dependency_overrides.get(get_session) is isolated_session
+        ):
+            if previous_override is missing_override:
+                app.dependency_overrides.pop(get_session, None)
+            else:
+                app.dependency_overrides[get_session] = previous_override
+        if isolated_engine is not None:
+            isolated_engine.dispose()
+        dispose_engine()
+        init_sqlite(str(original_db_path))
+
+
+def test_isolated_client_restores_global_state_when_client_setup_fails(
+    monkeypatch, request
+):
+    original_db_path = get_settings().storage.sqlite_path
+    missing_override = object()
+    original_override = app.dependency_overrides.get(get_session, missing_override)
+
+    def fail_client_setup(*args, **kwargs):
+        raise RuntimeError("client setup failed")
+
+    monkeypatch.setattr(sys.modules[__name__], "TestClient", fail_client_setup)
+    with pytest.raises(RuntimeError, match="client setup failed"):
+        request.getfixturevalue("isolated_client")
+
+    assert get_engine().url.database == str(original_db_path)
+    restored_override = app.dependency_overrides.get(get_session, missing_override)
+    assert restored_override is original_override
 
 
 def test_imported_wealth_drives_persisted_goal_projections(isolated_client):
