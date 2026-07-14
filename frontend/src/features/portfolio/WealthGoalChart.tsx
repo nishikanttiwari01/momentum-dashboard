@@ -20,7 +20,7 @@ export const mergeGoalTrajectories = (data: PrimaryGoalResponse) => {
 };
 
 const EndpointLabel = ({ x, y, value, series }: { x?: number; y?: number; value?: number; series: string }) => value == null ? null : (
-  <text x={x} y={y} dx={7} dy={4} fontSize={10} fontWeight={700} fill="currentColor" aria-label={endpointLabelText(series, value)}>{formatCompactCrore(value)}</text>
+  <text x={x} y={y} dx={7} dy={4} fontSize={10} fontWeight={700} fill="currentColor" aria-label={endpointLabelText(series, value)}>{endpointLabelText(series, value)}</text>
 );
 
 export const WealthGoalChart: React.FC<{ data: PrimaryGoalResponse }> = ({ data }) => {

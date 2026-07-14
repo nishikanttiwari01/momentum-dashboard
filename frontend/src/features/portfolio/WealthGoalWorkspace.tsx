@@ -17,12 +17,12 @@ export type GoalFormChange =
   | { type: 'field'; field: 'target' | 'deadline'; value: string }
   | { type: 'scenario'; index: number; field: 'annual_return_pct' | 'monthly_contribution'; value: string }
   | { type: 'restore' };
-export type GoalFormState = { accepted: GoalForm; draft: GoalForm; dirty: boolean; saved: boolean; saveError: { message: string; payload: GoalConfigurationUpdate } | null };
+export type GoalFormState = { accepted: GoalForm; draft: GoalForm; dirty: boolean; saved: boolean };
 export type GoalFormAction =
   | { type: 'change'; change: GoalFormChange }
   | { type: 'serverSync'; form: GoalForm }
-  | { type: 'saveSuccess'; form: GoalForm }
-  | { type: 'saveFailed'; message: string; payload: GoalConfigurationUpdate };
+  | { type: 'saveSuccess'; form: GoalForm };
+export type GoalSaveStatus = { saved: boolean; error: { message: string; payload: GoalConfigurationUpdate } | null };
 
 export const DEFAULT_GOAL_FORM: GoalForm = { name: 'Financial freedom', target: '150000000', deadline: '2029-12-31', scenarios: [
   { scenario_key: 'conservative', annual_return_pct: '7', monthly_contribution: '0' },
@@ -39,23 +39,27 @@ export function applyGoalFormChange(form: GoalForm, change: GoalFormChange): Goa
 }
 const formsEqual = (left: GoalForm, right: GoalForm) => JSON.stringify(left) === JSON.stringify(right);
 export function createGoalFormState(accepted: GoalForm, draft: GoalForm = accepted, saved = false): GoalFormState {
-  return { accepted, draft, dirty: !formsEqual(draft, accepted), saved, saveError: null };
+  return { accepted, draft, dirty: !formsEqual(draft, accepted), saved };
 }
 export function goalFormReducer(state: GoalFormState, action: GoalFormAction): GoalFormState {
   if (action.type === 'change') {
     const draft = applyGoalFormChange(state.draft, action.change);
-    return { ...state, draft, dirty: !formsEqual(draft, state.accepted), saved: false, saveError: null };
+    return { ...state, draft, dirty: !formsEqual(draft, state.accepted), saved: false };
   }
   if (action.type === 'serverSync') {
     const draft = state.dirty ? state.draft : action.form;
     return { ...state, accepted: action.form, draft, dirty: !formsEqual(draft, action.form) };
   }
-  if (action.type === 'saveSuccess') return { accepted: action.form, draft: action.form, dirty: false, saved: true, saveError: null };
-  return { ...state, saved: false, saveError: { message: action.message, payload: action.payload } };
+  return { accepted: action.form, draft: action.form, dirty: false, saved: true };
 }
-export function goalSubmissionFromState(state: GoalFormState): GoalConfigurationUpdate { return state.saveError?.payload ?? goalUpdateFromForm(state.draft); }
+export function goalSubmissionFromState(state: GoalFormState): GoalConfigurationUpdate { return goalUpdateFromForm(state.draft); }
 export function isGoalSaveDisabled(state: Pick<GoalFormState, 'dirty'>, isSaving: boolean): boolean { return !state.dirty || isSaving; }
 export function retryGoalSave(error: { payload: GoalConfigurationUpdate } | null, submit: (payload: GoalConfigurationUpdate) => void): void { if (error) submit(error.payload); }
+export function clearGoalSaveFeedback(): GoalSaveStatus { return { saved: false, error: null }; }
+export function applyUserGoalFormChange(change: GoalFormChange, onDraftChange: (() => void) | undefined, dispatch: (action: GoalFormAction) => void): void {
+  onDraftChange?.();
+  dispatch({ type: 'change', change });
+}
 
 export const wealthGoalQueryOptions = { queryKey: ['wealth-primary-goal'] as const, queryFn: fetchPrimaryGoal, retry: 1 };
 type GoalCacheClient = Pick<ReturnType<typeof useQueryClient>, 'setQueryData' | 'invalidateQueries'>;
@@ -69,13 +73,13 @@ const completion = (value: string | null) => value ?? 'Beyond projection horizon
 
 function Metric({ label, value }: { label: string; value: string }) { return <Paper variant="outlined" sx={{ ...cardSx, p: 1.75 }}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography variant="h6" fontWeight={850}>{value}</Typography></Paper>; }
 
-export function EmptyWealthGoalAlert({ onOpenDataImport }: { onOpenDataImport?: () => void }) { return (
-  <Alert severity="info" action={<Button color="inherit" onClick={onOpenDataImport} disabled={!onOpenDataImport}>Import workbook</Button>}>
+export function EmptyWealthGoalAlert({ onOpenDataImport, disabled = false }: { onOpenDataImport?: () => void; disabled?: boolean }) { return (
+  <Alert severity="info" action={<Button color="inherit" onClick={onOpenDataImport} disabled={disabled || !onOpenDataImport}>Import workbook</Button>}>
     Import investment.xlsx to add your current wealth; goal settings remain editable.
   </Alert>
 ); }
 
-export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSave: (update: GoalConfigurationUpdate) => void; isSaving: boolean; initialForm?: GoalForm; fieldErrors?: FieldErrors; saved?: boolean; saveError?: string | null; onRetrySave?: () => void; onOpenDataImport?: () => void }> = ({ data, onSave, isSaving, initialForm, fieldErrors = {}, saved: savedProp, saveError = null, onRetrySave, onOpenDataImport }) => {
+export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSave: (update: GoalConfigurationUpdate) => void; isSaving: boolean; initialForm?: GoalForm; fieldErrors?: FieldErrors; saved?: boolean; saveError?: string | null; onRetrySave?: () => void; onOpenDataImport?: () => void; onDraftChange?: () => void }> = ({ data, onSave, isSaving, initialForm, fieldErrors = {}, saved: savedProp, saveError = null, onRetrySave, onOpenDataImport, onDraftChange }) => {
   const responseForm = useMemo(() => goalFormFromResponse(data), [data]);
   const [formState, dispatchForm] = useReducer(
     goalFormReducer,
@@ -91,12 +95,12 @@ export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSa
   const form = formState.draft;
   const dirty = formState.dirty;
   const saved = formState.saved;
-  const changeForm = (change: GoalFormChange) => dispatchForm({ type: 'change', change });
+  const changeForm = (change: GoalFormChange) => applyUserGoalFormChange(change, onDraftChange, dispatchForm);
   const achieved = data.achieved_pct;
   const expected = data.scenario_projections.find((item) => item.settings.scenario_key === 'expected');
   return <Stack data-testid="wealth-goal-workspace" spacing={2.25}>
     {data.data_health === 'warning' && <Alert severity="warning">Attention needed — projections use the latest available portfolio snapshot.</Alert>}
-    {data.data_health === 'empty' && <EmptyWealthGoalAlert onOpenDataImport={onOpenDataImport} />}
+    {data.data_health === 'empty' && <EmptyWealthGoalAlert onOpenDataImport={onOpenDataImport} disabled={isSaving} />}
     <Paper variant="outlined" sx={{ ...cardSx, p: { xs: 2, md: 2.5 }, overflow: 'hidden' }}>
       <Stack direction="row" alignItems="center" spacing={1}><FlagRoundedIcon color="primary" /><Typography variant="overline" fontWeight={900}>Finish line</Typography></Stack>
       <Typography variant="h4" fontWeight={900}>{data.goal.name}</Typography>
@@ -116,15 +120,15 @@ export const WealthGoalWorkspaceView: React.FC<{ data: PrimaryGoalResponse; onSa
       <Paper variant="outlined" sx={{ ...cardSx, p: 2, minWidth: 0 }}><Typography variant="h6" fontWeight={850}>Paths to the finish line</Typography><WealthGoalChart data={data} /></Paper>
       <Paper component="form" variant="outlined" sx={{ ...cardSx, p: 2 }} onSubmit={(event) => { event.preventDefault(); onSave(goalUpdateFromForm(form)); }}>
         <Stack spacing={1.5}><Stack direction="row" justifyContent="space-between"><Typography variant="h6" fontWeight={850}>Configuration</Typography>{dirty && <Chip size="small" label="Unsaved changes" color="warning" variant="outlined" />}</Stack>
-          <TextField label="Target amount" type="number" value={form.target} onChange={(e) => changeForm({ type: 'field', field: 'target', value: e.target.value })} inputProps={{ min: 0 }} error={Boolean(fieldErrors.target)} helperText={fieldErrors.target} />
-          <TextField label="Deadline" type="date" value={form.deadline} onChange={(e) => changeForm({ type: 'field', field: 'deadline', value: e.target.value })} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors.deadline)} helperText={fieldErrors.deadline} />
+          <TextField disabled={isSaving} label="Target amount" type="number" value={form.target} onChange={(e) => changeForm({ type: 'field', field: 'target', value: e.target.value })} inputProps={{ min: 0 }} error={Boolean(fieldErrors.target)} helperText={fieldErrors.target} />
+          <TextField disabled={isSaving} label="Deadline" type="date" value={form.deadline} onChange={(e) => changeForm({ type: 'field', field: 'deadline', value: e.target.value })} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors.deadline)} helperText={fieldErrors.deadline} />
           {form.scenarios.map((item, index) => <Box key={item.scenario_key}><Typography fontWeight={800} textTransform="capitalize" mb={1}>{item.scenario_key}</Typography><Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-            <TextField fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} annual return`} type="number" value={item.annual_return_pct} onChange={(e) => changeForm({ type: 'scenario', index, field: 'annual_return_pct', value: e.target.value })} inputProps={{ min: 0, max: 100, step: .1 }} error={Boolean(fieldErrors[`scenarios.${index}.annual_return_pct`])} helperText={fieldErrors[`scenarios.${index}.annual_return_pct`]} />
-            <TextField fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} Monthly contribution`} type="number" value={item.monthly_contribution} onChange={(e) => changeForm({ type: 'scenario', index, field: 'monthly_contribution', value: e.target.value })} inputProps={{ min: 0 }} error={Boolean(fieldErrors[`scenarios.${index}.monthly_contribution`])} helperText={fieldErrors[`scenarios.${index}.monthly_contribution`]} />
+            <TextField disabled={isSaving} fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} annual return`} type="number" value={item.annual_return_pct} onChange={(e) => changeForm({ type: 'scenario', index, field: 'annual_return_pct', value: e.target.value })} inputProps={{ min: 0, max: 100, step: .1 }} error={Boolean(fieldErrors[`scenarios.${index}.annual_return_pct`])} helperText={fieldErrors[`scenarios.${index}.annual_return_pct`]} />
+            <TextField disabled={isSaving} fullWidth label={`${item.scenario_key[0].toUpperCase() + item.scenario_key.slice(1)} Monthly contribution`} type="number" value={item.monthly_contribution} onChange={(e) => changeForm({ type: 'scenario', index, field: 'monthly_contribution', value: e.target.value })} inputProps={{ min: 0 }} error={Boolean(fieldErrors[`scenarios.${index}.monthly_contribution`])} helperText={fieldErrors[`scenarios.${index}.monthly_contribution`]} />
           </Stack></Box>)}
           {saved && <Alert severity="success">Goal settings saved</Alert>}
           {saveError && <Alert severity="error" action={onRetrySave && <Button color="inherit" onClick={onRetrySave}>Retry</Button>}>{saveError}</Alert>}
-          <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={isGoalSaveDisabled(formState, isSaving)}>{isSaving ? 'Saving…' : 'Save changes'}</Button><Button type="button" onClick={() => changeForm({ type: 'restore' })}>Restore defaults</Button></Stack>
+          <Stack direction="row" spacing={1}><Button type="submit" variant="contained" disabled={isGoalSaveDisabled(formState, isSaving)}>{isSaving ? 'Saving…' : 'Save changes'}</Button><Button type="button" disabled={isSaving} onClick={() => changeForm({ type: 'restore' })}>Restore defaults</Button></Stack>
         </Stack>
       </Paper>
     </Box>
@@ -153,10 +157,11 @@ const WealthGoalWorkspace: React.FC<{ onOpenDataImport?: () => void }> = ({ onOp
   const client = useQueryClient();
   const query = useQuery(wealthGoalQueryOptions);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [saveStatus, setSaveStatus] = useState<{ saved: boolean; error: { message: string; payload: GoalConfigurationUpdate } | null }>({ saved: false, error: null });
+  const [saveStatus, setSaveStatus] = useState<GoalSaveStatus>(clearGoalSaveFeedback);
   const mutation = useMutation({ mutationFn: updatePrimaryGoal, onSuccess: (next) => { setFieldErrors({}); setSaveStatus({ saved: true, error: null }); applyGoalMutationSuccess(client, next); }, onError: (error, payload) => { const failure = classifyGoalSaveError(error); if (failure.kind === 'fields') { setFieldErrors(failure.errors); setSaveStatus({ saved: false, error: null }); } else { setSaveStatus({ saved: false, error: { message: failure.message, payload } }); } } });
   if (query.isLoading) return <WealthGoalLoading />;
   if (query.isError || !query.data) return <WealthGoalError retry={() => void query.refetch()} />;
-  return <WealthGoalWorkspaceView data={query.data} onSave={(payload) => { setFieldErrors({}); setSaveStatus({ saved: false, error: null }); mutation.mutate(payload); }} isSaving={mutation.isPending} fieldErrors={fieldErrors} saved={saveStatus.saved} saveError={saveStatus.error?.message} onRetrySave={saveStatus.error ? () => retryGoalSave(saveStatus.error, mutation.mutate) : undefined} onOpenDataImport={onOpenDataImport} />;
+  const clearFeedback = () => { setFieldErrors({}); setSaveStatus(clearGoalSaveFeedback()); };
+  return <WealthGoalWorkspaceView data={query.data} onSave={(payload) => { clearFeedback(); mutation.mutate(payload); }} isSaving={mutation.isPending} fieldErrors={fieldErrors} saved={saveStatus.saved} saveError={saveStatus.error?.message} onRetrySave={saveStatus.error ? () => retryGoalSave(saveStatus.error, mutation.mutate) : undefined} onOpenDataImport={onOpenDataImport} onDraftChange={clearFeedback} />;
 };
 export default WealthGoalWorkspace;

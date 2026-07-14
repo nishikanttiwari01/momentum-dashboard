@@ -10,7 +10,9 @@ import {
   WealthGoalWorkspaceView,
   applyGoalFormChange,
   applyGoalMutationSuccess,
+  applyUserGoalFormChange,
   classifyGoalSaveError,
+  clearGoalSaveFeedback,
   createGoalFormState,
   goalFormReducer,
   goalSubmissionFromState,
@@ -144,12 +146,26 @@ describe('WealthGoalWorkspace', () => {
     expect(isGoalSaveDisabled(dirty, false)).toBe(false);
     expect(isGoalSaveDisabled(dirty, true)).toBe(true);
     const payload = goalSubmissionFromState(dirty);
-    const failed = goalFormReducer(dirty, { type: 'saveFailed', message: 'Could not save goal settings.', payload });
-    expect(failed.saveError).toEqual({ message: 'Could not save goal settings.', payload });
-    expect(goalSubmissionFromState(failed)).toEqual(payload);
     const retry = vi.fn();
-    retryGoalSave(failed.saveError, retry);
+    retryGoalSave({ payload }, retry);
     expect(retry).toHaveBeenCalledWith(payload);
+  });
+
+  it('clears production save feedback before dispatching every user draft change', () => {
+    const onDraftChange = vi.fn(() => expect(clearGoalSaveFeedback()).toEqual({ saved: false, error: null }));
+    const dispatch = vi.fn();
+    const change = { type: 'restore' } as const;
+    applyUserGoalFormChange(change, onDraftChange, dispatch);
+    expect(onDraftChange).toHaveBeenCalledOnce();
+    expect(dispatch).toHaveBeenCalledWith({ type: 'change', change });
+    expect(onDraftChange.mock.invocationCallOrder[0]).toBeLessThan(dispatch.mock.invocationCallOrder[0]);
+  });
+
+  it('disables all editable fields, restore, and import while saving', () => {
+    const html = renderToStaticMarkup(<WealthGoalWorkspaceView data={{ ...response, data_health: 'empty' }} initialForm={applyGoalFormChange(goalFormFromResponse(response), { type: 'field', field: 'deadline', value: '2030-01-01' })} onSave={vi.fn()} isSaving onOpenDataImport={vi.fn()} />);
+    expect(html.match(/<input[^>]*disabled=""/g)).toHaveLength(8);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Restore defaults<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Import workbook<\/button>/);
   });
 
   it('classifies 422 field problems separately from retryable form errors', () => {
