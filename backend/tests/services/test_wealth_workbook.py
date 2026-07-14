@@ -1,4 +1,4 @@
-from tests.fixtures.wealth_workbook_factory import make_workbook_bytes
+from tests.fixtures.wealth_workbook_factory import make_real_layout_workbook_bytes, make_workbook_bytes
 
 from app.services.wealth_workbook import parse_workbook
 
@@ -29,3 +29,37 @@ def test_parser_reports_invalid_transaction_date_as_blocking_error():
     assert issue.severity == "error"
     assert issue.sheet == "Funds XIRR"
     assert issue.row == 2
+
+
+def test_parser_supports_real_multirow_funds_and_paired_xirr_layout():
+    result = parse_workbook(make_real_layout_workbook_bytes(), "investment.xlsx")
+    assert result.counts == {"assets": 1, "transactions": 2, "valuations": 1}
+    assert [item.amount for item in result.transactions] == [5000, 400000]
+    assert result.valuations[0].market_value == 493000
+    assert result.assets[0].account_owner == "Nishi"
+
+
+def test_paired_layout_warns_when_formula_cash_flow_has_no_cached_value():
+    result = parse_workbook(
+        make_real_layout_workbook_bytes(include_incomplete_cash_flow=True),
+        "investment.xlsx",
+    )
+    issue = next(item for item in result.issues if item.code == "incomplete_cash_flow")
+    assert issue.severity == "warning"
+
+
+def test_paired_layout_recovers_cash_flow_from_date_formatted_amount_cell():
+    result = parse_workbook(
+        make_real_layout_workbook_bytes(date_formatted_amount=True),
+        "investment.xlsx",
+    )
+    assert result.transactions[0].amount == 5000
+
+
+def test_paired_layout_warns_when_cash_flow_amount_has_no_date():
+    result = parse_workbook(
+        make_real_layout_workbook_bytes(include_amount_without_date=True),
+        "investment.xlsx",
+    )
+    issues = [item for item in result.issues if item.code == "incomplete_cash_flow"]
+    assert issues[-1].severity == "warning"
