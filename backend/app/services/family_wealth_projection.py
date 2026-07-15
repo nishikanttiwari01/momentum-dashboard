@@ -7,7 +7,7 @@ their boundary types into the frozen value objects below.
 from __future__ import annotations
 
 from calendar import monthrange
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal, InvalidOperation, localcontext
 from typing import Iterable
@@ -69,6 +69,8 @@ class ProjectedGoalResult:
     funded_amount: Decimal
     shortfall: Decimal
     funded_pct: Decimal
+    health_status: str
+    health_reason: str
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,43 @@ def money(value: Decimal) -> Decimal:
         raise UnsafeProjection("projection monetary result is too large") from exc
 
 
+def _as_int(value: object, field: str) -> int:
+    decimal_value = as_decimal(value, field)
+    if decimal_value != decimal_value.to_integral_value():
+        raise UnsafeProjection(f"{field} must be a whole number")
+    try:
+        return int(decimal_value)
+    except (ValueError, OverflowError) as exc:
+        raise UnsafeProjection(f"{field} must be a finite whole number") from exc
+
+
+def _normalize(data: ProjectionInput) -> ProjectionInput:
+    """Copy supported boundary numerics into canonical immutable Decimal values."""
+    decimal_fields = (
+        "opening_financial", "opening_property", "monthly_contribution",
+        "contribution_step_up_pct", "monthly_rent", "rent_growth_pct",
+        "property_growth_pct", "withdrawal_rate_pct", "amber_margin_pct",
+        "annual_financial_return_pct",
+    )
+    normalized_values = {
+        field: as_decimal(getattr(data, field), field) for field in decimal_fields
+    }
+    normalized_goals = tuple(
+        replace(
+            goal,
+            current_value_amount=as_decimal(
+                goal.current_value_amount, f"goal {goal.key} amount"
+            ),
+            inflation_pct=as_decimal(
+                goal.inflation_pct, f"goal {goal.key} inflation_pct"
+            ),
+            priority=_as_int(goal.priority, f"goal {goal.key} priority"),
+        )
+        for goal in data.goals
+    )
+    return replace(data, **normalized_values, goals=normalized_goals)
+
+
 def _month_index(value: date) -> int:
     return value.year * 12 + value.month - 1
 
@@ -187,13 +226,6 @@ def _validate(data: ProjectionInput) -> tuple[int, int]:
     months = end - start + 1
     if months > MAX_MONTHS:
         raise UnsafeProjection("projection horizon cannot exceed 600 months")
-    for field in (
-        "opening_financial", "opening_property", "monthly_contribution",
-        "contribution_step_up_pct", "monthly_rent", "rent_growth_pct",
-        "property_growth_pct", "withdrawal_rate_pct", "amber_margin_pct",
-        "annual_financial_return_pct",
-    ):
-        as_decimal(getattr(data, field), field)
     if data.opening_financial < ZERO or data.opening_property < ZERO:
         raise UnsafeProjection("opening balances cannot be negative")
     if data.monthly_contribution < ZERO or data.monthly_rent < ZERO:
@@ -208,14 +240,32 @@ def _validate(data: ProjectionInput) -> tuple[int, int]:
     if len(keys) != len(set(keys)):
         raise UnsafeProjection("goal keys must be unique")
     for goal in data.goals:
-        amount = as_decimal(goal.current_value_amount, f"goal {goal.key} amount")
+        amount = goal.current_value_amount
         if amount < ZERO:
             raise UnsafeProjection(f"goal {goal.key} amount cannot be negative")
+        expected_treatment = {
+            "house": "asset_conversion",
+            "passive_income": "income_target",
+            "education": "expense",
+            "marriage": "expense",
+        }.get(goal.goal_type)
+        if expected_treatment is None:
+            raise UnsafeProjection(f"goal {goal.key} has an unknown goal_type")
+        if goal.funding_treatment != expected_treatment:
+            raise UnsafeProjection(
+                f"goal {goal.key} requires {expected_treatment} funding treatment"
+            )
         _monthly_rate(goal.inflation_pct, f"goal {goal.key} inflation_pct")
         if goal.enabled and goal.target_date < data.calculated_on:
             raise UnsafeProjection(f"goal {goal.key} target_date precedes calculated_on")
         if goal.enabled and _month_index(goal.target_date) > end:
             raise UnsafeProjection(f"goal {goal.key} falls outside projection horizon")
+    enabled_income_targets = sum(
+        goal.enabled and goal.funding_treatment == "income_target"
+        for goal in data.goals
+    )
+    if enabled_income_targets > 1:
+        raise UnsafeProjection("only one enabled income target is supported")
     return start, end
 
 
@@ -249,7 +299,14 @@ def _annual_points(points: Iterable[MonthlyRunwayPoint]) -> tuple[AnnualRunwayPo
 
 
 def project_family_wealth(data: ProjectionInput) -> ProjectionResult:
-    """Calculate one scenario using growth/inflow/event ordering for every month."""
+    """Calculate one scenario using full month buckets ending at month-end.
+
+    The bucket containing ``calculated_on`` is a full bucket, even for a partial
+    calendar month. Rent follows calendar years and steps every January.
+    Contributions step in January only once at least twelve full plan buckets have
+    elapsed, so a mid-year plan intentionally waits until the following January.
+    """
+    data = _normalize(data)
     start, end = _validate(data)
     financial_rate = _monthly_rate(data.annual_financial_return_pct, "annual_financial_return_pct")
     property_rate = _monthly_rate(data.property_growth_pct, "property_growth_pct")
@@ -270,9 +327,11 @@ def project_family_wealth(data: ProjectionInput) -> ProjectionResult:
 
     for index in range(start, end + 1):
         on = _month_end(index)
+        # Rent is a calendar-year assumption; every January receives its step.
         if on.month == 1 and on.year > data.calculated_on.year:
             if (
                 data.contribution_step_up_enabled
+                # Contribution escalation instead follows completed plan buckets.
                 and index - start >= 12
             ):
                 contribution *= step_factor
@@ -309,11 +368,25 @@ def project_family_wealth(data: ProjectionInput) -> ProjectionResult:
                 property_value = money(property_value + funded)
             goal_outflows += funded
             funded_pct = money((funded / cost * HUNDRED) if cost else HUNDRED)
+            if shortfall > ZERO:
+                health_status = "red"
+                health_reason = "Goal is underfunded in this scenario"
+            else:
+                margin_pct = (
+                    (available - cost) / cost * HUNDRED if cost else HUNDRED
+                )
+                if margin_pct >= data.amber_margin_pct:
+                    health_status = "green"
+                    health_reason = "Funded with the configured safety margin"
+                else:
+                    health_status = "amber"
+                    health_reason = "Funded with less than the configured safety margin"
             event = ProjectedGoalResult(
                 goal_key=goal.key, goal_name=goal.name, goal_type=goal.goal_type,
                 funding_treatment=goal.funding_treatment, target_date=goal.target_date,
                 inflated_cost=cost, available_before=available, funded_amount=funded,
                 shortfall=shortfall, funded_pct=funded_pct,
+                health_status=health_status, health_reason=health_reason,
             )
             month_events.append(event)
             goal_results.append(event)

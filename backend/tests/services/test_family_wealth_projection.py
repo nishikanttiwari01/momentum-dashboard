@@ -77,6 +77,21 @@ def test_december_plan_does_not_step_until_second_january() -> None:
     ]
 
 
+@pytest.mark.parametrize("start_month", [2, 7, 12])
+def test_rent_uses_calendar_year_but_contribution_waits_for_plan_year(
+    start_month: int,
+) -> None:
+    result = project_family_wealth(
+        _input(calculated_on=date(2026, start_month, 15), end_date=date(2028, 1, 31),
+               contribution_step_up_enabled=True, monthly_rent=D("100"))
+    )
+    january = {p.on.year: p for p in result.monthly_points if p.on.month == 1}
+    assert january[2027].projected_monthly_rent == D("110.00")
+    assert january[2027].contribution == D("600000.00")
+    assert january[2028].projected_monthly_rent == D("121.00")
+    assert january[2028].contribution == D("636000.00")
+
+
 def test_rent_growth_and_reinvestment_cutoff() -> None:
     result = project_family_wealth(
         _input(reinvest_rent_until=date(2027, 1, 15))
@@ -141,6 +156,21 @@ def test_same_month_events_use_priority_then_key_order() -> None:
     assert [event.goal_key for event in result.monthly_points[1].events] == [
         "a_first", "b_second", "z_last"
     ]
+
+
+def test_partial_calculation_month_is_full_bucket_and_midmonth_goal_runs_at_end() -> None:
+    goal = _goal("midmonth", target_date=date(2026, 7, 20), current_value_amount=D("50"))
+    result = project_family_wealth(
+        _input(calculated_on=date(2026, 7, 15), end_date=date(2026, 7, 31),
+               opening_financial=D("100"), opening_property=D("0"),
+               monthly_contribution=D("40"), monthly_rent=D("0"), goals=(goal,))
+    )
+    assert len(result.monthly_points) == 1
+    point = result.monthly_points[0]
+    assert point.on == date(2026, 7, 31)
+    assert point.contribution == D("40.00")
+    assert point.events[0].goal_key == "midmonth"
+    assert point.closing_financial == D("90.00")
 
 
 def test_underfunded_event_floors_at_zero_and_later_inflows_rebuild() -> None:
@@ -247,6 +277,69 @@ def test_scenario_returns_produce_separate_outputs() -> None:
     low = project_family_wealth(_input(annual_financial_return_pct=D("0")))
     high = project_family_wealth(_input(annual_financial_return_pct=D("12")))
     assert high.ending_financial > low.ending_financial
+
+
+def test_int_float_and_string_numerics_are_normalized_to_decimal_equivalently() -> None:
+    decimal_result = project_family_wealth(_input())
+    mixed = replace(
+        _input(), opening_financial=1_000_000, opening_property=2_000_000.0,
+        monthly_contribution="600000", contribution_step_up_pct=6.0,
+        monthly_rent="10000", rent_growth_pct=10, property_growth_pct="0",
+        withdrawal_rate_pct=4.0, amber_margin_pct="10",
+        annual_financial_return_pct=0,
+        goals=(replace(_goal("disabled"), enabled=False,
+                       current_value_amount="100", inflation_pct=0.0),),
+    )
+    mixed_result = project_family_wealth(mixed)
+    assert mixed_result.monthly_points == decimal_result.monthly_points
+    assert isinstance(mixed_result.ending_financial, Decimal)
+
+
+@pytest.mark.parametrize("bad", ["junk", float("nan"), float("inf"), object()])
+def test_invalid_numeric_types_always_raise_unsafe_projection(bad) -> None:
+    with pytest.raises(UnsafeProjection):
+        project_family_wealth(replace(_input(), monthly_contribution=bad))
+
+
+@pytest.mark.parametrize(
+    "goal",
+    [
+        _goal("bad_treatment", treatment="transfer"),
+        _goal("bad_type", goal_type="retirement"),
+        _goal("house_expense", goal_type="house", treatment="expense"),
+        _goal("income_expense", goal_type="passive_income", treatment="expense"),
+        _goal("education_asset", goal_type="education", treatment="asset_conversion"),
+        _goal("marriage_income", goal_type="marriage", treatment="income_target"),
+    ],
+)
+def test_unknown_or_mismatched_goal_type_and_treatment_are_rejected(goal) -> None:
+    with pytest.raises(UnsafeProjection):
+        project_family_wealth(_input(goals=(goal,)))
+
+
+def test_more_than_one_enabled_income_target_is_rejected() -> None:
+    goals = (
+        _goal("income_a", goal_type="passive_income", treatment="income_target"),
+        _goal("income_b", goal_type="passive_income", treatment="income_target"),
+    )
+    with pytest.raises(UnsafeProjection):
+        project_family_wealth(_input(goals=goals))
+
+
+@pytest.mark.parametrize(
+    "available,status",
+    [(D("99"), "red"), (D("119.99"), "amber"), (D("120"), "green")],
+)
+def test_goal_health_uses_configured_available_before_margin(available, status) -> None:
+    goal = _goal("health", current_value_amount=D("100"))
+    result = project_family_wealth(
+        _input(opening_financial=available, opening_property=D("0"),
+               monthly_contribution=D("0"), monthly_rent=D("0"),
+               amber_margin_pct=D("20"), goals=(goal,))
+    )
+    health = result.goal_results[0]
+    assert health.health_status == status
+    assert health.health_reason
 
 
 @pytest.mark.parametrize(
