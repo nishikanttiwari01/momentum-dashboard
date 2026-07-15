@@ -315,7 +315,11 @@ def _apply(session, plan, payload, *, base_age: int | None = None):
             session.add(row)
         for field, value in goal.model_dump().items():
             setattr(row, field, value)
-    _, scenarios = _primary_rows(session)
+    primary, scenarios = _primary_rows(session)
+    if payload.primary_goal is not None:
+        primary.name = payload.primary_goal.name
+        primary.target_amount_inr = payload.primary_goal.target_amount_inr
+        primary.deadline = payload.primary_goal.deadline
     for row, scenario in zip(scenarios, payload.scenarios):
         row.annual_return_pct = scenario.annual_return_pct
         row.monthly_contribution_inr = payload.assumptions.monthly_contribution_inr
@@ -353,6 +357,7 @@ def _defaults() -> FamilyPlanUpdate:
         ("child_2_marriage", "Child 2 marriage", "marriage", 5_000_000, date(2044,12,31), 6, "expense"),
     ]
     return FamilyPlanUpdate.model_validate({
+        "primary_goal": {"name": "₹15 Cr by 2029", "target_amount_inr": 150_000_000, "deadline": date(2029,12,31)},
         "assumptions": {"monthly_contribution_inr":600_000,"contribution_step_up_enabled":False,"contribution_step_up_pct":6,"monthly_rent_inr":45_000,"rent_growth_pct":6,"reinvest_rent_until":date(2029,12,31),"property_growth_pct":6,"withdrawal_rate_pct":3.5,"amber_margin_pct":10},
         "scenarios": [{"scenario_key":key,"annual_return_pct":rate} for key,rate in zip(SCENARIO_KEYS,(7,10,13))],
         "goals": [{"goal_key":key,"name":name,"goal_type":kind,"current_value_amount_inr":amount,"target_date":target,"inflation_pct":inflation,"funding_treatment":treatment,"priority":i+1,"enabled":True,"display_order":i} for i,(key,name,kind,amount,target,inflation,treatment) in enumerate(goal_data)],

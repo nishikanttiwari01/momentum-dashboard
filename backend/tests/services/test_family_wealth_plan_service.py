@@ -454,6 +454,25 @@ def test_save_validates_dates_persists_and_synchronizes_primary_scenarios(sessio
 
     assert called == [date(2026, 7, 15)]
     assert response.assumptions.monthly_contribution_inr == 100_000
+
+
+def test_family_save_updates_primary_goal_in_the_same_transaction(session):
+    payload = _payload()
+    payload["primary_goal"] = {
+        "name": "Configurable family target",
+        "target_amount_inr": 175_000_000,
+        "deadline": date(2031, 12, 31),
+    }
+    response = save_family_plan(
+        session, FamilyPlanUpdate.model_validate(payload), today=date(2026, 7, 15),
+    )
+    assert response.primary_goal.goal.name == "Configurable family target"
+    assert response.primary_goal.goal.target_amount_inr == 175_000_000
+    assert response.primary_goal.goal.deadline == date(2031, 12, 31)
+    primary = session.scalar(select(WealthGoal).where(WealthGoal.is_primary.is_(True)))
+    assert (primary.name, primary.target_amount_inr, primary.deadline) == (
+        "Configurable family target", 175_000_000, date(2031, 12, 31),
+    )
     primary = session.scalar(select(WealthGoal).where(WealthGoal.is_primary.is_(True)))
     rows = list(session.scalars(select(WealthGoalScenario).where(WealthGoalScenario.goal_id == primary.id)))
     assert {row.monthly_contribution_inr for row in rows} == {100_000}

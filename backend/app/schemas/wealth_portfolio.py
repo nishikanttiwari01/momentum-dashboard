@@ -280,6 +280,7 @@ def _validate_ordered_scenarios(
 
 
 class FamilyPlanUpdate(BaseModel):
+    primary_goal: GoalSettings | None = None
     assumptions: FamilyPlanAssumptions
     scenarios: list[FamilyScenarioSettings]
     goals: list[LinkedGoalSettings]

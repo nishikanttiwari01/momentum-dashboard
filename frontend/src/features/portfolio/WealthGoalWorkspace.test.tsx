@@ -29,6 +29,9 @@ import {
   wealthGoalQueryOptions,
   familyPlanQueryOptions,
   classifyFamilyPlanSaveError,
+  confirmFamilyPlanRestore,
+  familyPlanFormReducer,
+  retryFamilyPlanSave,
 } from './WealthGoalWorkspace';
 
 const response: PrimaryGoalResponse = {
@@ -337,10 +340,56 @@ describe('family plan assumptions', () => {
     draft.assumptions.monthly_contribution_inr = '650000';
     draft.assumptions.contribution_step_up_enabled = true;
     const payload = familyPlanUpdateFromDraft(draft);
+    expect(payload.primary_goal).toEqual({ name: 'Financial freedom', target_amount_inr: 150_000_000, deadline: '2029-12-31' });
     expect(payload.assumptions.monthly_contribution_inr).toBe(650000);
     expect(payload.assumptions.contribution_step_up_pct).toBe(6);
     expect(payload.scenarios.map(({ scenario_key }) => scenario_key)).toEqual(['conservative', 'expected', 'optimistic']);
     expect(payload.goals).toHaveLength(linkedGoals.length);
+  });
+
+  it('enables step-up through the rendered checkbox change callback', () => {
+    const draft = familyPlanDraftFromResponse(familyPlan);
+    const onChange = vi.fn();
+    const root = FamilyPlanAssumptions({ value: draft, onChange, fieldErrors: {}, disabled: false });
+    const visit = (node: unknown): React.ReactElement | undefined => {
+      if (!React.isValidElement(node)) return undefined;
+      if ((node.props as { label?: string }).label === 'Annual contribution step-up') return node;
+      const children = React.Children.toArray((node.props as { children?: React.ReactNode }).children);
+      return children.map(visit).find(Boolean);
+    };
+    const labelled = visit(root)!;
+    const checkbox = (labelled.props as { control: React.ReactElement }).control;
+    (checkbox.props as { onChange: (event: { target: { checked: boolean } }) => void }).onChange({ target: { checked: true } });
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assumptions: expect.objectContaining({ contribution_step_up_enabled: true }) }));
+    const enabled = onChange.mock.calls[0][0] as typeof draft;
+    expect(renderToStaticMarkup(<FamilyPlanAssumptions value={enabled} onChange={vi.fn()} fieldErrors={{}} disabled={false} />)).toMatch(/<input[^>]*value="6"/);
+  });
+
+  it('preserves a dirty draft when refreshed accepted data arrives', () => {
+    const accepted = familyPlanDraftFromResponse(familyPlan);
+    const dirty = { ...accepted, primary_goal: { ...accepted.primary_goal, target_amount_inr: '175000000' } };
+    const refreshed = familyPlanDraftFromResponse({ ...familyPlan, assumptions: { ...familyPlan.assumptions, monthly_rent_inr: 50000 } });
+    const state = familyPlanFormReducer({ accepted, draft: dirty }, { type: 'load', value: refreshed });
+    expect(state.accepted).toEqual(refreshed);
+    expect(state.draft?.primary_goal.target_amount_inr).toBe('175000000');
+  });
+
+  it('requires restore confirmation and wires retry and empty import callbacks', () => {
+    const restore = vi.fn();
+    confirmFamilyPlanRestore(() => false, restore);
+    expect(restore).not.toHaveBeenCalled();
+    confirmFamilyPlanRestore(() => true, restore);
+    expect(restore).toHaveBeenCalledOnce();
+    const retry = vi.fn();
+    const draft = familyPlanDraftFromResponse({ ...familyPlan, data_health: 'empty' });
+    const payload = familyPlanUpdateFromDraft(draft);
+    retryFamilyPlanSave({ payload }, retry);
+    expect(retry).toHaveBeenCalledWith(payload);
+    const openImport = vi.fn();
+    const empty = EmptyWealthGoalAlert({ onOpenDataImport: openImport });
+    empty.props.action.props.onClick();
+    expect(openImport).toHaveBeenCalledOnce();
+    expect(renderToStaticMarkup(<FamilyPlanWorkspaceView data={{ ...familyPlan, data_health: 'empty' }} draft={draft} onDraftChange={vi.fn()} onSave={vi.fn()} onRestore={vi.fn()} isSaving={false} onOpenDataImport={openImport} />)).toContain('Import workbook');
   });
 
   it('labels draft assumptions honestly before a server calculation is saved', () => {

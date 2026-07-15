@@ -179,6 +179,12 @@ export function familyPlanFormReducer(state: FamilyPlanFormState, action: Family
   const dirty = state.accepted && state.draft && !familyDraftEqual(state.accepted, state.draft);
   return { accepted: action.value, draft: dirty ? state.draft : action.value };
 }
+export function confirmFamilyPlanRestore(confirm: (message: string) => boolean, restore: () => void): void {
+  if (confirm('Restore all family-plan assumptions and linked goals to defaults?')) restore();
+}
+export function retryFamilyPlanSave(error: { payload: FamilyPlanUpdate } | null, submit: (payload: FamilyPlanUpdate) => void): void {
+  if (error) submit(error.payload);
+}
 const scenarioTone = { conservative: '#D98A00', expected: '#2563EB', optimistic: '#7357B6' } as const;
 
 export const FamilyPlanWorkspaceView: React.FC<{
@@ -239,6 +245,6 @@ const WealthGoalWorkspace: React.FC<{ onOpenDataImport?: () => void }> = ({ onOp
   if (query.isLoading || (query.data && !form.draft)) return <WealthGoalLoading />;
   if (query.isError || !query.data || !form.draft) return <WealthGoalError retry={() => void query.refetch()} />;
   const edit = (next: FamilyPlanDraft) => { dispatchForm({ type: 'edit', value: next }); setFieldErrors({}); setSaveStatus({ saved: false, error: null }); };
-  return <FamilyPlanWorkspaceView data={query.data} draft={form.draft} onDraftChange={edit} onSave={(payload) => { setSaveStatus({ saved: false, error: null }); mutation.mutate(payload); }} onRestore={() => { if (window.confirm('Restore all family-plan assumptions and linked goals to defaults?')) restore.mutate(); }} isSaving={mutation.isPending || restore.isPending} fieldErrors={fieldErrors} saved={saveStatus.saved} saveError={saveStatus.error?.message ?? (restore.isError ? 'Could not restore defaults. Your saved plan is unchanged.' : null)} onRetry={saveStatus.error ? () => mutation.mutate(saveStatus.error!.payload) : undefined} onOpenDataImport={onOpenDataImport} />;
+  return <FamilyPlanWorkspaceView data={query.data} draft={form.draft} onDraftChange={edit} onSave={(payload) => { setSaveStatus({ saved: false, error: null }); mutation.mutate(payload); }} onRestore={() => confirmFamilyPlanRestore(window.confirm, () => restore.mutate())} isSaving={mutation.isPending || restore.isPending} fieldErrors={fieldErrors} saved={saveStatus.saved} saveError={saveStatus.error?.message ?? (restore.isError ? 'Could not restore defaults. Your saved plan is unchanged.' : null)} onRetry={saveStatus.error ? () => retryFamilyPlanSave(saveStatus.error, mutation.mutate) : undefined} onOpenDataImport={onOpenDataImport} />;
 };
 export default WealthGoalWorkspace;

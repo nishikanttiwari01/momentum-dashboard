@@ -206,6 +206,7 @@ export type FamilyPlanResponse = {
 };
 
 export type FamilyPlanUpdate = {
+  primary_goal?: GoalSettings;
   assumptions: FamilyPlanAssumptions;
   scenarios: FamilyScenarioSettings[];
   goals: LinkedGoalSettings[];

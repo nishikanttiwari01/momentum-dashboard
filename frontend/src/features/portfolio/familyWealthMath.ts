@@ -68,6 +68,6 @@ export function formatMonthlyIncome(value: number | null | undefined): string {
 
 export function familyPlanProblemField(loc: readonly ProblemLocationPart[]): string | null {
   const path = loc[0] === 'body' ? loc.slice(1) : loc;
-  if (!['assumptions', 'goals', 'scenarios'].includes(String(path[0]))) return null;
+  if (!['primary_goal', 'assumptions', 'goals', 'scenarios'].includes(String(path[0]))) return null;
   return path.map(String).join('.');
 }

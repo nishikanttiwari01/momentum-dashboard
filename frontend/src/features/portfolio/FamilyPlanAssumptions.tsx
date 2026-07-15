@@ -4,6 +4,7 @@ import type { FamilyPlanResponse, FamilyPlanUpdate, FamilyScenarioKey, LinkedGoa
 
 type NumericDraft<T> = { [K in keyof T]: T[K] extends number ? string : T[K] };
 export type FamilyPlanDraft = {
+  primary_goal: { name: string; target_amount_inr: string; deadline: string };
   assumptions: NumericDraft<FamilyPlanResponse['assumptions']>;
   scenarios: { scenario_key: FamilyScenarioKey; annual_return_pct: string }[];
   goals: NumericDraft<LinkedGoalSettings>[];
@@ -15,6 +16,7 @@ export function familyPlanDraftFromResponse(plan: FamilyPlanResponse): FamilyPla
     Object.entries(item).map(([key, value]) => [key, typeof value === 'number' ? String(value) : value]),
   ) as NumericDraft<T>;
   return {
+    primary_goal: { name: plan.primary_goal.goal.name, target_amount_inr: String(plan.primary_goal.goal.target_amount_inr), deadline: plan.primary_goal.goal.deadline },
     assumptions: stringifyNumbers(plan.assumptions),
     scenarios: plan.scenario_projections.map(({ settings }) => ({ scenario_key: settings.scenario_key, annual_return_pct: String(settings.annual_return_pct) })),
     goals: plan.goals.map(stringifyNumbers),
@@ -23,6 +25,7 @@ export function familyPlanDraftFromResponse(plan: FamilyPlanResponse): FamilyPla
 
 export function familyPlanUpdateFromDraft(draft: FamilyPlanDraft): FamilyPlanUpdate {
   return {
+    primary_goal: { ...draft.primary_goal, target_amount_inr: numeric(draft.primary_goal.target_amount_inr) },
     assumptions: {
       ...draft.assumptions,
       monthly_contribution_inr: numeric(draft.assumptions.monthly_contribution_inr),
@@ -45,6 +48,7 @@ export function familyPlanUpdateFromDraft(draft: FamilyPlanDraft): FamilyPlanUpd
 type Props = { value: FamilyPlanDraft; onChange: (value: FamilyPlanDraft) => void; fieldErrors: Partial<Record<string, string>>; disabled: boolean; dirty?: boolean };
 const input = { min: 0, step: 0.1 };
 export const FamilyPlanAssumptions: React.FC<Props> = ({ value, onChange, fieldErrors, disabled, dirty = false }) => {
+  const setPrimary = (key: keyof FamilyPlanDraft['primary_goal'], next: string) => onChange({ ...value, primary_goal: { ...value.primary_goal, [key]: next } });
   const setAssumption = (key: keyof FamilyPlanDraft['assumptions'], next: string | boolean) => onChange({ ...value, assumptions: { ...value.assumptions, [key]: next } });
   const setScenario = (index: number, next: string) => onChange({ ...value, scenarios: value.scenarios.map((item, at) => at === index ? { ...item, annual_return_pct: next } : item) });
   const setGoal = (index: number, key: keyof FamilyPlanDraft['goals'][number], next: string | boolean) => onChange({ ...value, goals: value.goals.map((item, at) => at === index ? { ...item, [key]: next } : item) });
@@ -52,6 +56,7 @@ export const FamilyPlanAssumptions: React.FC<Props> = ({ value, onChange, fieldE
   return <Stack spacing={2.5} sx={{ width: { xs: 'min(92vw, 560px)', sm: 560 }, maxWidth: '100%', p: { xs: 2, sm: 3 }, overflowX: 'hidden' }}>
     <Box><Typography variant="overline" color="primary" fontWeight={900}>Planning controls</Typography><Typography variant="h5" fontWeight={900}>Family plan assumptions</Typography><Typography color="text.secondary">Adjust the inputs, review the draft, then save to calculate a new runway.</Typography></Box>
     {dirty && <Alert severity="warning"><b>Draft assumptions.</b> Charts still show the last saved calculation until you save changes.</Alert>}
+    <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Primary goal</Typography><Stack spacing={1.5}><TextField fullWidth disabled={disabled} label="Goal name" value={value.primary_goal.name} onChange={(event) => setPrimary('name', event.target.value)} error={Boolean(fieldErrors['primary_goal.name'])} helperText={fieldErrors['primary_goal.name']} /><TextField fullWidth disabled={disabled} label="Target amount" type="number" value={value.primary_goal.target_amount_inr} onChange={(event) => setPrimary('target_amount_inr', event.target.value)} inputProps={input} error={Boolean(fieldErrors['primary_goal.target_amount_inr'])} helperText={fieldErrors['primary_goal.target_amount_inr']} /><TextField fullWidth disabled={disabled} label="Target deadline" type="date" value={value.primary_goal.deadline} onChange={(event) => setPrimary('deadline', event.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors['primary_goal.deadline'])} helperText={fieldErrors['primary_goal.deadline']} /></Stack></Box>
     <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Contributions</Typography><Stack spacing={1.5}>{assumptionField('monthly_contribution_inr', 'Monthly investment')}<FormControlLabel control={<Checkbox disabled={disabled} checked={value.assumptions.contribution_step_up_enabled} onChange={(event) => setAssumption('contribution_step_up_enabled', event.target.checked)} />} label="Annual contribution step-up" />{assumptionField('contribution_step_up_pct', 'Annual step-up (%)', { disabled: disabled || !value.assumptions.contribution_step_up_enabled })}</Stack></Box>
     <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Rent and property</Typography><Stack spacing={1.5}>{assumptionField('monthly_rent_inr', 'Monthly rent')}{assumptionField('rent_growth_pct', 'Annual rent growth (%)')}<TextField fullWidth disabled={disabled} label="Reinvest rent until" type="date" value={value.assumptions.reinvest_rent_until} onChange={(event) => setAssumption('reinvest_rent_until', event.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors['assumptions.reinvest_rent_until'])} helperText={fieldErrors['assumptions.reinvest_rent_until']} />{assumptionField('property_growth_pct', 'Annual property growth (%)')}</Stack></Box>
     <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Income safety</Typography><Stack spacing={1.5}>{assumptionField('withdrawal_rate_pct', 'Withdrawal rate (%)')}{assumptionField('amber_margin_pct', 'Amber safety margin (%)')}</Stack></Box>
