@@ -194,6 +194,33 @@ def test_requires_exactly_three_scenarios(scenario_count: int) -> None:
     assert ("scenarios",) in _error_locations(payload)
 
 
+@pytest.mark.parametrize("annual_return_pct", [-25, 50])
+def test_accepts_family_scenario_return_boundaries(
+    annual_return_pct: float,
+) -> None:
+    payload = _payload()
+    payload["scenarios"] = [
+        {"scenario_key": "conservative", "annual_return_pct": annual_return_pct},
+        {"scenario_key": "expected", "annual_return_pct": annual_return_pct},
+        {"scenario_key": "optimistic", "annual_return_pct": annual_return_pct},
+    ]
+
+    assert all(
+        scenario.annual_return_pct == annual_return_pct
+        for scenario in FamilyPlanUpdate.model_validate(payload).scenarios
+    )
+
+
+@pytest.mark.parametrize("annual_return_pct", [-25.01, 50.01])
+def test_rejects_family_scenario_returns_outside_bounds(
+    annual_return_pct: float,
+) -> None:
+    payload = _payload()
+    payload["scenarios"][1]["annual_return_pct"] = annual_return_pct
+
+    assert ("scenarios", 1, "annual_return_pct") in _error_locations(payload)
+
+
 @pytest.mark.parametrize(
     "field,lower,upper",
     [
