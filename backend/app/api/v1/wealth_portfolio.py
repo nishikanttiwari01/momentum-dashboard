@@ -12,6 +12,7 @@ from fastapi import (
     status,
 )
 from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,7 +25,17 @@ from app.schemas.wealth_portfolio import (
     WealthSummary,
     GoalConfigurationUpdate,
     PrimaryGoalResponse,
+    FamilyPlanResponse,
+    FamilyPlanUpdate,
 )
+from app.services.family_wealth_plan_service import (
+    FamilyPlanNotFound,
+    InvalidFamilyPlan,
+    get_family_plan_response,
+    restore_family_plan_defaults,
+    save_family_plan,
+)
+from app.services.family_wealth_projection import UnsafeProjection
 from app.services.wealth_import_service import (
     ImportBlocked,
     PreviewNotFound,
@@ -55,6 +66,40 @@ def _goal_validation_error(exc: InvalidGoalConfiguration) -> RequestValidationEr
             }
         ]
     )
+
+
+def _family_validation_error(
+    exc: InvalidFamilyPlan | ValidationError,
+) -> RequestValidationError:
+    if isinstance(exc, ValidationError):
+        errors = [
+            {**issue, "loc": ("body", *issue.get("loc", ()))}
+            for issue in exc.errors()
+        ]
+    else:
+        errors = [
+            {
+                "type": "family_plan_invalid",
+                "loc": ("body",),
+                "msg": "Family wealth plan configuration is invalid",
+                "input": None,
+            }
+        ]
+    return RequestValidationError(errors)
+
+
+def _raise_family_plan_error(exc: Exception) -> None:
+    if isinstance(exc, FamilyPlanNotFound):
+        raise HTTPException(
+            status_code=404, detail="Family wealth plan was not found"
+        ) from exc
+    if isinstance(exc, UnsafeProjection):
+        raise HTTPException(
+            status_code=409, detail="Family wealth projection could not be produced"
+        ) from exc
+    if isinstance(exc, (InvalidFamilyPlan, ValidationError)):
+        raise _family_validation_error(exc) from exc
+    raise exc
 
 
 @router.post("/imports/preview", response_model=ImportPreview)
@@ -146,3 +191,49 @@ def replace_primary_goal(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidGoalConfiguration as exc:
         raise _goal_validation_error(exc) from exc
+
+
+@router.get("/goals/family-plan", response_model=FamilyPlanResponse)
+def family_plan(session: Session = Depends(get_session)) -> FamilyPlanResponse:
+    try:
+        return get_family_plan_response(session)
+    except (
+        FamilyPlanNotFound,
+        InvalidFamilyPlan,
+        UnsafeProjection,
+        ValidationError,
+    ) as exc:
+        _raise_family_plan_error(exc)
+
+
+@router.put("/goals/family-plan", response_model=FamilyPlanResponse)
+def replace_family_plan(
+    payload: FamilyPlanUpdate,
+    session: Session = Depends(get_session),
+) -> FamilyPlanResponse:
+    try:
+        return save_family_plan(session, payload)
+    except (
+        FamilyPlanNotFound,
+        InvalidFamilyPlan,
+        UnsafeProjection,
+        ValidationError,
+    ) as exc:
+        _raise_family_plan_error(exc)
+
+
+@router.post(
+    "/goals/family-plan/restore-defaults", response_model=FamilyPlanResponse
+)
+def restore_default_family_plan(
+    session: Session = Depends(get_session),
+) -> FamilyPlanResponse:
+    try:
+        return restore_family_plan_defaults(session)
+    except (
+        FamilyPlanNotFound,
+        InvalidFamilyPlan,
+        UnsafeProjection,
+        ValidationError,
+    ) as exc:
+        _raise_family_plan_error(exc)
