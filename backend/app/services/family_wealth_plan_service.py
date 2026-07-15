@@ -8,6 +8,7 @@ import uuid
 
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from app.repos.models import (
@@ -23,7 +24,7 @@ from app.schemas.wealth_portfolio import (
 from app.services.family_wealth_projection import (
     ProjectionGoal, ProjectionInput, UnsafeProjection, project_family_wealth,
 )
-from app.services.wealth_fx_service import FxUnavailable, get_usd_inr
+from app.services.wealth_fx_service import FxResult, FxUnavailable, get_usd_inr
 from app.services.wealth_goal_service import (
     PrimaryGoalNotFound, get_primary_goal_response,
 )
@@ -88,7 +89,34 @@ def _settings(plan, rows):
     return assumptions, goals
 
 
-def _opening_balances(session: Session, calculated_on: date):
+def _resolve_opening_fx(session: Session, calculated_on: date) -> FxResult | None:
+    """Resolve and persist portfolio FX without touching the caller's transaction."""
+    caller_bind = session.get_bind()
+    cache_bind = caller_bind.engine if isinstance(caller_bind, Connection) else caller_bind
+    with Session(bind=cache_bind) as cache_session:
+        snapshot = cache_session.scalar(select(PortfolioSnapshot).order_by(
+            PortfolioSnapshot.as_of.desc(), PortfolioSnapshot.created_at.desc(),
+            PortfolioSnapshot.id.desc(),
+        ).limit(1))
+        if snapshot is None:
+            return None
+        assets = cache_session.scalars(select(PortfolioAsset).where(
+            PortfolioAsset.snapshot_id == snapshot.id,
+            PortfolioAsset.market_value.is_not(None),
+        ))
+        if not any(
+            asset.currency.upper() == "USD"
+            and asset.asset_type.lower() in FINANCIAL_TYPES | PROPERTY_TYPES
+            for asset in assets
+        ):
+            return None
+        try:
+            return get_usd_inr(cache_session, calculated_on)
+        except FxUnavailable:
+            return None
+
+
+def _opening_balances(session: Session, calculated_on: date, fx: FxResult | None):
     snapshot = session.scalar(select(PortfolioSnapshot).order_by(
         PortfolioSnapshot.as_of.desc(), PortfolioSnapshot.created_at.desc(),
         PortfolioSnapshot.id.desc(),
@@ -98,12 +126,6 @@ def _opening_balances(session: Session, calculated_on: date):
     assets = list(session.scalars(select(PortfolioAsset).where(PortfolioAsset.snapshot_id == snapshot.id)))
     recognized = [asset for asset in assets if asset.asset_type.lower() in FINANCIAL_TYPES | PROPERTY_TYPES]
     needs_usd = any(asset.currency.upper() == "USD" and asset.market_value is not None for asset in recognized)
-    fx = None
-    if needs_usd:
-        try:
-            fx = get_usd_inr(session, calculated_on, persist=False)
-        except FxUnavailable:
-            pass
     financial = Decimal("0")
     property_value = Decimal("0")
     warning = needs_usd and (fx is None or fx.effective_on != calculated_on)
@@ -171,13 +193,12 @@ def _projection(settings, goals, result):
     )
 
 
-def get_family_plan_response(session: Session, today: date | None = None) -> FamilyPlanResponse:
-    calculated_on = today or date.today()
+def _family_plan_response(session: Session, calculated_on: date, fx: FxResult | None) -> FamilyPlanResponse:
     plan = _plan(session)
     goal_rows = list(session.scalars(select(FamilyWealthGoal).where(FamilyWealthGoal.plan_id == plan.id).order_by(FamilyWealthGoal.display_order, FamilyWealthGoal.goal_key)))
     _, scenario_rows = _primary_rows(session)
     assumptions, goals = _settings(plan, goal_rows)
-    snapshot, opening_financial, opening_property, health = _opening_balances(session, calculated_on)
+    snapshot, opening_financial, opening_property, health = _opening_balances(session, calculated_on, fx)
     summary = WealthSummary(
         snapshot_id=snapshot.id if snapshot else None,
         as_of=snapshot.as_of if snapshot else None,
@@ -214,6 +235,12 @@ def get_family_plan_response(session: Session, today: date | None = None) -> Fam
         raise InvalidFamilyPlan(f"Family wealth projection is invalid: {exc}") from exc
 
 
+def get_family_plan_response(session: Session, today: date | None = None) -> FamilyPlanResponse:
+    calculated_on = today or date.today()
+    fx = _resolve_opening_fx(session, calculated_on)
+    return _family_plan_response(session, calculated_on, fx)
+
+
 def _apply(session, plan, payload, *, base_age: int | None = None):
     if base_age is not None:
         plan.base_age = base_age
@@ -244,12 +271,13 @@ def _save_family_plan(
     *,
     base_age: int | None = None,
 ) -> FamilyPlanResponse:
+    fx = _resolve_opening_fx(session, calculated_on)
     transaction = session.begin_nested() if session.in_transaction() else session.begin()
     with transaction:
         plan = _plan(session)
         _apply(session, plan, payload, base_age=base_age)
         session.flush()
-        return get_family_plan_response(session, today=calculated_on)
+        return _family_plan_response(session, calculated_on, fx)
 
 
 def save_family_plan(session: Session, payload: FamilyPlanUpdate, today: date | None = None) -> FamilyPlanResponse:

@@ -4,6 +4,7 @@ import math
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.repos.models import (
     FamilyWealthGoal, FamilyWealthPlan,
@@ -21,6 +22,7 @@ from app.services.family_wealth_plan_service import (
     save_family_plan,
 )
 from app.services.wealth_fx_service import FxResult, FxUnavailable
+from app.services.wealth_fx_service import get_usd_inr as real_get_usd_inr
 
 from app.schemas.wealth_portfolio import (
     AnnualRunwayEvent,
@@ -133,6 +135,130 @@ def test_service_converts_usd_and_warns_when_fx_is_missing(session, monkeypatch)
     converted = get_family_plan_response(session, today=date(2026, 7, 15))
     assert converted.data_health == "warning"
     assert captured[0].opening_financial == 850
+
+
+def test_fresh_family_fx_is_persisted_with_provenance_and_reused(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=8, market_value=10)])
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"date": "2026-07-15", "rates": {"INR": 86.5}}
+
+    class CountingClient:
+        calls = 0
+
+        @classmethod
+        def get(cls, *_args, **_kwargs):
+            cls.calls += 1
+            return Response()
+
+    def resolve(cache_session, requested_on, **kwargs):
+        return real_get_usd_inr(cache_session, requested_on, client=CountingClient, **kwargs)
+
+    monkeypatch.setattr(family_wealth_plan_service, "get_usd_inr", resolve)
+
+    first = get_family_plan_response(session, today=date(2026, 7, 15))
+    session.expire_all()
+    second = get_family_plan_response(session, today=date(2026, 7, 15))
+
+    rows = list(session.scalars(select(PortfolioFxRate)))
+    assert CountingClient.calls == 1
+    assert len(rows) == 1
+    assert (rows[0].effective_on, rows[0].rate, rows[0].source) == (
+        date(2026, 7, 15), 86.5, "frankfurter",
+    )
+    assert rows[0].fetched_at is not None
+    assert first.primary_goal.current_value_inr == 865
+    assert second.primary_goal.current_value_inr == 865
+
+
+def test_persisted_fx_does_not_commit_callers_outer_save_transaction(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=8, market_value=10)])
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"date": "2026-07-15", "rates": {"INR": 86.5}}
+
+    class Client:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(
+        family_wealth_plan_service,
+        "get_usd_inr",
+        lambda cache_session, requested_on: real_get_usd_inr(
+            cache_session, requested_on, client=Client,
+        ),
+    )
+    outer = session.begin()
+    try:
+        unrelated = PortfolioImport(
+            id="outer-fx-import", source_sha256="outer-fx-sha",
+            filename="outer.xlsx", status="pending", issue_counts={},
+        )
+        session.add(unrelated)
+        response = save_family_plan(
+            session, FamilyPlanUpdate.model_validate(_payload()),
+            today=date(2026, 7, 15),
+        )
+        assert response.primary_goal.current_value_inr == 865
+        assert session.in_transaction()
+        assert unrelated in session
+    finally:
+        outer.rollback()
+
+    assert session.get(PortfolioImport, "outer-fx-import") is None
+    assert session.get(
+        FamilyWealthPlan, "00000000-0000-0000-0000-000000000001",
+    ).monthly_contribution_inr == 600_000
+    fx = session.scalar(select(PortfolioFxRate))
+    assert fx is not None
+    assert (fx.rate, fx.source) == (86.5, "frankfurter")
+
+
+def test_fx_failure_does_not_rollback_connection_bound_caller(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=8, market_value=10)])
+
+    class FailingClient:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            raise RuntimeError("offline")
+
+    monkeypatch.setattr(
+        family_wealth_plan_service,
+        "get_usd_inr",
+        lambda cache_session, requested_on: real_get_usd_inr(
+            cache_session, requested_on, client=FailingClient,
+        ),
+    )
+    connection = session.get_bind().connect()
+    outer = connection.begin()
+    caller = Session(bind=connection)
+    try:
+        unrelated = PortfolioImport(
+            id="connection-caller", source_sha256="connection-caller-sha",
+            filename="caller.xlsx", status="pending", issue_counts={},
+        )
+        caller.add(unrelated)
+        caller.flush()
+
+        response = get_family_plan_response(caller, today=date(2026, 7, 15))
+
+        assert response.data_health == "warning"
+        assert outer.is_active
+        assert caller.get(PortfolioImport, "connection-caller") is unrelated
+    finally:
+        if outer.is_active:
+            outer.rollback()
+        caller.close()
+        connection.close()
 
 
 def test_service_does_not_substitute_invested_amount_for_missing_market_value(session, monkeypatch):
