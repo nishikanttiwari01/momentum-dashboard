@@ -3,6 +3,23 @@ import math
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import select
+
+from app.repos.models import (
+    FamilyWealthGoal,
+    PortfolioAsset,
+    PortfolioFxRate,
+    PortfolioImport,
+    PortfolioSnapshot,
+    WealthGoal,
+    WealthGoalScenario,
+)
+from app.services import family_wealth_plan_service
+from app.services.family_wealth_plan_service import (
+    get_family_plan_response,
+    restore_family_plan_defaults,
+    save_family_plan,
+)
 
 from app.schemas.wealth_portfolio import (
     AnnualRunwayEvent,
@@ -48,6 +65,126 @@ def _payload() -> dict:
             }
         ],
     }
+
+
+def _add_snapshot(session, *, snapshot_id="snapshot-1", as_of=date(2026, 7, 1), assets=()):
+    import_id = f"import-{snapshot_id}"
+    session.add(PortfolioImport(id=import_id, source_sha256=import_id, filename="book.xlsx", status="completed", issue_counts={}))
+    session.add(PortfolioSnapshot(id=snapshot_id, import_id=import_id, as_of=as_of))
+    for index, asset in enumerate(assets):
+        session.add(PortfolioAsset(
+            id=f"{snapshot_id}-asset-{index}", snapshot_id=snapshot_id,
+            source_key=f"key-{index}", name=f"Asset {index}", market="INDIA",
+            source_ref={}, **asset,
+        ))
+    session.commit()
+
+
+def test_service_uses_latest_snapshot_and_splits_property_without_double_count(session, monkeypatch):
+    _add_snapshot(session, snapshot_id="old", as_of=date(2026, 6, 1), assets=[dict(asset_type="stocks", currency="INR", invested_amount=1, market_value=999)])
+    _add_snapshot(session, snapshot_id="new", assets=[
+        dict(asset_type="stocks", currency="INR", invested_amount=80, market_value=100),
+        dict(asset_type="property", currency="INR", invested_amount=150, market_value=200),
+        dict(asset_type="land", currency="INR", invested_amount=250, market_value=300),
+    ])
+
+    captured = []
+    real_project = family_wealth_plan_service.project_family_wealth
+    monkeypatch.setattr(family_wealth_plan_service, "project_family_wealth", lambda data: (captured.append(data), real_project(data))[1])
+    response = get_family_plan_response(session, today=date(2026, 7, 15))
+
+    assert response.snapshot_id == "new"
+    assert response.data_health == "fresh"
+    assert len(captured) == 3
+    assert captured[0].opening_financial == 100
+    assert captured[0].opening_property == 500
+
+
+def test_service_converts_usd_and_warns_when_fx_is_missing(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=8, market_value=10)])
+    captured = []
+    real_project = family_wealth_plan_service.project_family_wealth
+    monkeypatch.setattr(family_wealth_plan_service, "project_family_wealth", lambda data: (captured.append(data), real_project(data))[1])
+    response = get_family_plan_response(session, today=date(2026, 7, 15))
+    assert response.data_health in {"warning", "unavailable"}
+    assert captured[0].opening_financial == 0
+
+    session.add(PortfolioFxRate(base_currency="USD", quote_currency="INR", effective_on=date(2026, 7, 1), rate=85, source="test", fetched_at=date(2026, 7, 1)))
+    session.commit()
+    captured.clear()
+    converted = get_family_plan_response(session, today=date(2026, 7, 15))
+    assert converted.data_health == "fresh"
+    assert captured[0].opening_financial == 850
+
+
+def test_service_does_not_substitute_invested_amount_for_missing_market_value(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="stocks", currency="INR", invested_amount=50_000, market_value=None)])
+    captured = []
+    real_project = family_wealth_plan_service.project_family_wealth
+    monkeypatch.setattr(family_wealth_plan_service, "project_family_wealth", lambda data: (captured.append(data), real_project(data))[1])
+
+    get_family_plan_response(session, today=date(2026, 7, 15))
+
+    assert captured[0].opening_financial == 0
+
+
+def test_empty_snapshot_returns_configured_three_scenarios(session):
+    response = get_family_plan_response(session, today=date(2026, 7, 15))
+    assert response.snapshot_id is None
+    assert response.data_health == "empty"
+    assert len(response.scenario_projections) == 3
+    assert all(item.ending_total_net_worth_inr >= 0 for item in response.scenario_projections)
+    FamilyPlanResponse.model_validate(response.model_dump())
+
+
+def test_save_validates_dates_persists_and_synchronizes_primary_scenarios(session, monkeypatch):
+    payload = FamilyPlanUpdate.model_validate(_payload())
+    called = []
+    original = FamilyPlanUpdate.validate_target_dates
+    monkeypatch.setattr(FamilyPlanUpdate, "validate_target_dates", lambda self, day: (called.append(day), original(self, day))[1])
+
+    response = save_family_plan(session, payload, today=date(2026, 7, 15))
+
+    assert called == [date(2026, 7, 15)]
+    assert response.assumptions.monthly_contribution_inr == 100_000
+    primary = session.scalar(select(WealthGoal).where(WealthGoal.is_primary.is_(True)))
+    rows = list(session.scalars(select(WealthGoalScenario).where(WealthGoalScenario.goal_id == primary.id)))
+    assert {row.monthly_contribution_inr for row in rows} == {100_000}
+
+
+def test_save_failure_rolls_back_plan_goals_and_scenarios(session, monkeypatch):
+    before = get_family_plan_response(session, today=date(2026, 7, 15))
+    payload = FamilyPlanUpdate.model_validate(_payload())
+    monkeypatch.setattr(family_wealth_plan_service, "project_family_wealth", lambda *_: (_ for _ in ()).throw(RuntimeError("forced")))
+    with pytest.raises(RuntimeError, match="forced"):
+        save_family_plan(session, payload, today=date(2026, 7, 15))
+    monkeypatch.undo()
+    session.expire_all()
+    after = get_family_plan_response(session, today=date(2026, 7, 15))
+    assert after.assumptions == before.assumptions
+    assert after.goals == before.goals
+
+
+def test_goal_replacement_preserves_existing_id_and_assigns_stable_new_id(session):
+    existing = session.scalar(select(FamilyWealthGoal).where(FamilyWealthGoal.goal_key == "child_1_education"))
+    payload = _payload()
+    payload["goals"] = [payload["goals"][0], {**payload["goals"][0], "goal_key": "new_house", "name": "New house", "goal_type": "house", "funding_treatment": "asset_conversion", "display_order": 0}]
+    saved = save_family_plan(session, FamilyPlanUpdate.model_validate(payload), today=date(2026, 7, 15))
+    ids = {row.goal_key: row.id for row in session.scalars(select(FamilyWealthGoal))}
+    assert "child_1_education" not in ids
+    assert [g.goal_key for g in saved.goals] == ["new_house", "child_education"]
+    first_new_id = ids["new_house"]
+    save_family_plan(session, FamilyPlanUpdate.model_validate(payload), today=date(2026, 7, 15))
+    assert session.scalar(select(FamilyWealthGoal.id).where(FamilyWealthGoal.goal_key == "new_house")) == first_new_id
+
+
+def test_restore_family_plan_defaults_exactly(session):
+    save_family_plan(session, FamilyPlanUpdate.model_validate(_payload()), today=date(2026, 7, 15))
+    restored = restore_family_plan_defaults(session, today=date(2026, 7, 15))
+    assert restored.assumptions.monthly_contribution_inr == 600_000
+    assert restored.assumptions.reinvest_rent_until == date(2029, 12, 31)
+    assert [p.settings.annual_return_pct for p in restored.scenario_projections] == [7, 10, 13]
+    assert [g.goal_key for g in restored.goals] == ["child_1_education", "passive_income", "bangalore_house", "child_2_education", "child_1_marriage", "child_2_marriage"]
 
 
 def _error_locations(payload: dict) -> list[tuple]:
