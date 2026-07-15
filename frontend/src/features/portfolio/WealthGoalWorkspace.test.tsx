@@ -2,6 +2,10 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { PrimaryGoalResponse } from './wealthTypes';
+import type { FamilyScenarioProjection, GoalHealth, PassiveIncomeAnalysis } from './wealthTypes';
+import { FamilyWealthRunwayChart, aggregateRunwayEvents } from './FamilyWealthRunwayChart';
+import { FamilyGoalCards } from './FamilyGoalCards';
+import { PassiveIncomePanel } from './PassiveIncomePanel';
 import {
   DEFAULT_GOAL_FORM,
   EmptyWealthGoalAlert,
@@ -209,5 +213,56 @@ describe('WealthGoalWorkspace', () => {
     applyGoalMutationSuccess(client, response);
     expect(client.setQueryData).toHaveBeenCalledWith(['wealth-primary-goal'], response);
     expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['wealth-primary-goal'] });
+  });
+});
+
+const linkedGoals: GoalHealth[] = [
+  ['education', 'School fees', '2028-06-01', 'green', 'Fully reserved', 100, 2_000_000, 2_200_000, 2_000_000, 0],
+  ['house', 'Family home', '2029-01-01', 'amber', 'Within the planning margin', 82, 8_000_000, 7_000_000, 6_560_000, 1_440_000],
+  ['marriage', 'Wedding', '2031-03-01', 'red', 'Funding gap remains', 40, 3_000_000, 1_200_000, 1_200_000, 1_800_000],
+  ['passive_income', 'Income freedom', '2029-12-31', 'green', 'Income target sustained', 110, 60_000_000, 66_000_000, 60_000_000, 0],
+].map(([goal_type, name, target_date, status, reason, funded_pct, inflated_cost_inr, available_before_inr, funded_amount_inr, shortfall_inr], index) => ({
+  goal: { goal_key: String(goal_type), name: String(name), goal_type, current_value_amount_inr: Number(inflated_cost_inr), target_date: String(target_date), inflation_pct: 6, funding_treatment: goal_type === 'house' ? 'asset_conversion' : goal_type === 'passive_income' ? 'income_target' : 'expense', priority: index + 1, enabled: true, display_order: index + 1 },
+  inflated_cost_inr: Number(inflated_cost_inr), available_before_inr: Number(available_before_inr), funded_amount_inr: Number(funded_amount_inr), shortfall_inr: Number(shortfall_inr), funded_pct: Number(funded_pct), status, reason: String(reason),
+})) as GoalHealth[];
+
+const runwayProjection: FamilyScenarioProjection = {
+  settings: { scenario_key: 'expected', annual_return_pct: 10 },
+  annual_points: [{ on: '2029-12-31', financial_assets_inr: 120_000_000, property_value_inr: 50_000_000, total_net_worth_inr: 170_000_000, annual_contributions_inr: 2_400_000, annual_rent_inr: 1_200_000, financial_growth_inr: 9_000_000, property_growth_inr: 3_000_000, goal_outflows_inr: 8_000_000, events: linkedGoals.slice(0, 2).map(({ goal }, index) => ({ goal_key: goal.goal_key, goal_name: goal.name, goal_type: goal.goal_type, funding_treatment: goal.funding_treatment, amount_inr: index ? 8_000_000 : 2_000_000, funded_amount_inr: index ? 6_560_000 : 2_000_000, shortfall_inr: index ? 1_440_000 : 0 })) }],
+  goal_health: linkedGoals, passive_income: null, ending_financial_assets_inr: 120_000_000, ending_property_value_inr: 50_000_000, ending_total_net_worth_inr: 170_000_000, first_underfunded_goal_key: 'house',
+};
+
+describe('family runway visual components', () => {
+  it('renders an accessible unfilled runway with aggregated event fallback and tooltip facts', () => {
+    expect(aggregateRunwayEvents(runwayProjection.annual_points[0].events)[0].label).toContain('2 milestones');
+    const html = renderToStaticMarkup(<FamilyWealthRunwayChart projections={[runwayProjection]} />);
+    expect(html).toContain('Family wealth runway');
+    expect(html).toContain('2029 milestones');
+    expect(html).toContain('School fees');
+    expect(html).toContain('Family home');
+    expect(html).toContain('Transfer to property');
+    expect(html).not.toContain('<linearGradient');
+    expect(html).not.toContain('<path class="recharts-area');
+  });
+
+  it('renders every goal status, reason, accessible type icon and funded value', () => {
+    const html = renderToStaticMarkup(<FamilyGoalCards goals={linkedGoals} />);
+    for (const text of ['Green', 'Amber', 'Red', 'Fully reserved', 'Within the planning margin', 'Funding gap remains', '100% funded', '82% funded', '40% funded']) expect(html).toContain(text);
+    for (const type of ['Education goal', 'House goal', 'Marriage goal', 'Passive income goal']) expect(html).toContain(`aria-label="${type}"`);
+  });
+
+  it('explains rent offset, corpus, signed outcome, protection and sustainable date', () => {
+    const analysis: PassiveIncomeAnalysis = { target_date: '2029-12-31', target_monthly_income_inr: 200_000, projected_monthly_rent_inr: 70_000, portfolio_monthly_gap_inr: 130_000, required_corpus_inr: 39_000_000, supported_portfolio_monthly_income_inr: 140_000, total_monthly_income_inr: 210_000, surplus_or_shortfall_inr: 10_000, on_track: true, later_goals_protected: true, earliest_sustainable_date: '2029-06-30' };
+    const html = renderToStaticMarkup(<PassiveIncomePanel analysis={analysis} />);
+    for (const text of ['Rent counts toward the ₹2 lakh target', '₹3.9 Cr', '+₹10,000/month', 'Later goals remain protected', '30 Jun 2029', 'On track']) expect(html).toContain(text);
+  });
+
+  it('shows specific warnings, dashes for null dates, and never leaks invalid values', () => {
+    const analysis: PassiveIncomeAnalysis = { target_date: '2029-12-31', target_monthly_income_inr: 200_000, projected_monthly_rent_inr: 40_000, portfolio_monthly_gap_inr: 160_000, required_corpus_inr: 48_000_000, supported_portfolio_monthly_income_inr: 100_000, total_monthly_income_inr: 140_000, surplus_or_shortfall_inr: -60_000, on_track: false, later_goals_protected: false, earliest_sustainable_date: null };
+    const html = renderToStaticMarkup(<PassiveIncomePanel analysis={analysis} />);
+    expect(html).toContain('-₹60,000/month');
+    expect(html).toContain('Later goals would be exposed');
+    expect(html).toMatch(/Earliest sustainable date<\/span><strong[^>]*>—/);
+    expect(html).not.toMatch(/NaN|undefined/);
   });
 });
