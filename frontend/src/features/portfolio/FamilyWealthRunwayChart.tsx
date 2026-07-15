@@ -26,14 +26,13 @@ export function runwayTooltipLines(point: AnnualRunwayPoint): string[] {
   ];
 }
 
-const RunwayTooltip = ({ active, label, payload, pointByDate }: { active?: boolean; label?: string; payload?: unknown[]; pointByDate: Map<string, AnnualRunwayPoint> }) => {
+export const RunwayTooltipContent = ({ active, label, payload, pointByDate }: { active?: boolean; label?: string; payload?: unknown[]; pointByDate: Map<string, AnnualRunwayPoint> }) => {
   if (!active || !payload?.length || !label) return null;
   const point = pointByDate.get(label);
   if (!point) return null;
   return <Box sx={{ bgcolor: '#fff', border: '1px solid #D9E5F2', borderRadius: 2, p: 1.5, boxShadow: '0 8px 24px rgba(16,42,67,.12)' }}>
     <Typography variant="subtitle2">Year ending {point.on}</Typography>
-    {runwayTooltipLines(point).map((line) => <Typography key={line} variant="caption" display="block">{line}</Typography>)}
-    {point.events.map((event) => <Typography key={event.goal_key} variant="caption" display="block" sx={{ color: event.shortfall_inr > 0 ? '#DC4C4C' : '#0F766E', mt: .5 }}>{event.goal_name}: funded {formatCrore(event.funded_amount_inr)}{event.shortfall_inr > 0 ? `; shortfall ${formatCrore(event.shortfall_inr)}` : ''}</Typography>)}
+    {runwayTooltipLines(point).map((line, index) => <Typography key={line} variant="caption" display="block" sx={index >= 8 ? { color: line.includes('shortfall') ? '#DC4C4C' : '#0F766E', mt: .5 } : undefined}>{line}</Typography>)}
   </Box>;
 };
 
@@ -54,7 +53,7 @@ export const FamilyWealthRunwayChart: React.FC<{ projections: readonly FamilySce
           <CartesianGrid vertical={false} stroke="#E3EBF3" strokeDasharray="3 4" />
           <XAxis dataKey="on" tickFormatter={(on) => String(on).slice(0, 4)} tick={{ fill: '#52677C', fontSize: 11 }} />
           <YAxis width={66} tickFormatter={(value) => formatCrore(Number(value))} tick={{ fill: '#52677C', fontSize: 10 }} />
-          <Tooltip content={<RunwayTooltip pointByDate={pointByDate} />} />
+          <Tooltip content={<RunwayTooltipContent pointByDate={pointByDate} />} />
           {eventRows.map((row) => <ReferenceLine key={row.on} x={row.on} stroke={row.events.some((event) => event.funding_treatment === 'asset_conversion') ? '#0F9D8A' : '#7357B6'} strokeDasharray="4 4" label={{ value: aggregateRunwayEvents(row.events)[0]?.label, position: 'top', fill: '#102A43', fontSize: 10 }} />)}
           <Line type="monotone" dataKey="conservative_total_inr" name="Conservative total" stroke={RUNWAY_LINE_COLORS.conservative} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls isAnimationActive={RUNWAY_LINE_ANIMATION_ACTIVE} />
           <Line type="monotone" dataKey="optimistic_total_inr" name="Optimistic total" stroke={RUNWAY_LINE_COLORS.optimistic} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls isAnimationActive={RUNWAY_LINE_ANIMATION_ACTIVE} />

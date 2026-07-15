@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { PrimaryGoalResponse } from './wealthTypes';
 import type { FamilyScenarioProjection, GoalHealth, PassiveIncomeAnalysis } from './wealthTypes';
-import { FamilyWealthRunwayChart, RUNWAY_LINE_ANIMATION_ACTIVE, aggregateRunwayEvents, runwayTooltipLines } from './FamilyWealthRunwayChart';
+import { FamilyWealthRunwayChart, RUNWAY_LINE_ANIMATION_ACTIVE, RunwayTooltipContent, aggregateRunwayEvents, runwayTooltipLines } from './FamilyWealthRunwayChart';
 import { FamilyGoalCards } from './FamilyGoalCards';
 import { PassiveIncomePanel, type PassiveIncomePanelData } from './PassiveIncomePanel';
 import {
@@ -249,6 +249,14 @@ describe('family runway visual components', () => {
     expect(runwayTooltipLines(runwayProjection.annual_points[0])).toEqual(expect.arrayContaining(['Annual contributions ₹0.24 Cr', 'Rent ₹0.12 Cr', 'Financial growth ₹0.9 Cr', 'Property growth ₹0.3 Cr', 'Goal outflows ₹0.8 Cr', 'School fees: funded ₹0.2 Cr', 'Family home: funded ₹0.66 Cr; shortfall ₹0.14 Cr']));
     expect(RUNWAY_LINE_ANIMATION_ACTIVE).toBe(false);
     expect(FamilyWealthRunwayChart.toString()).not.toMatch(/\bArea\b|linearGradient/);
+  });
+
+  it('renders each tooltip event funding fact exactly once', () => {
+    const point = runwayProjection.annual_points[0];
+    const html = renderToStaticMarkup(<RunwayTooltipContent active label={point.on} payload={[{}]} pointByDate={new Map([[point.on, point]])} />);
+    expect(html.match(/School fees: funded/g)).toHaveLength(1);
+    expect(html.match(/Family home: funded/g)).toHaveLength(1);
+    expect(html).toContain('shortfall ₹0.14 Cr');
   });
 
   it('renders an accessible unfilled runway with aggregated event fallback and tooltip facts', () => {
