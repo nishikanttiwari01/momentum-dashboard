@@ -4,11 +4,19 @@ from copy import deepcopy
 from datetime import date
 
 import pytest
-from sqlalchemy import delete
+from fastapi.testclient import TestClient
+from sqlalchemy import delete, select
 
 from app.api.v1 import wealth_portfolio
 from app.core.db import get_sessionmaker
-from app.repos.models import PortfolioAsset, PortfolioImport, PortfolioSnapshot
+from app.main import app
+from app.repos.models import (
+    PortfolioAsset,
+    PortfolioImport,
+    PortfolioSnapshot,
+    WealthGoal,
+    WealthGoalScenario,
+)
 from app.services import family_wealth_plan_service
 from app.services.family_wealth_plan_service import (
     FamilyPlanNotFound,
@@ -163,6 +171,49 @@ def test_domain_failures_map_to_safe_standard_problems(client, monkeypatch, meth
     assert "private" not in str(response.json())
 
 
+def test_missing_primary_goal_maps_to_safe_404(client):
+    with get_sessionmaker()() as session:
+        goal = session.scalar(select(WealthGoal).where(WealthGoal.is_primary.is_(True)))
+        scenarios = list(session.scalars(
+            select(WealthGoalScenario).where(WealthGoalScenario.goal_id == goal.id)
+        ))
+        goal_values = {
+            "id": goal.id,
+            "name": goal.name,
+            "target_amount_inr": goal.target_amount_inr,
+            "deadline": goal.deadline,
+            "is_primary": goal.is_primary,
+        }
+        scenario_values = [
+            {
+                "id": row.id,
+                "goal_id": row.goal_id,
+                "scenario_key": row.scenario_key,
+                "annual_return_pct": row.annual_return_pct,
+                "monthly_contribution_inr": row.monthly_contribution_inr,
+                "display_order": row.display_order,
+            }
+            for row in scenarios
+        ]
+        session.execute(delete(WealthGoalScenario).where(
+            WealthGoalScenario.goal_id == goal.id
+        ))
+        session.delete(goal)
+        session.commit()
+
+    try:
+        response = client.get(URL)
+    finally:
+        with get_sessionmaker()() as session:
+            session.add(WealthGoal(**goal_values))
+            session.add_all(WealthGoalScenario(**row) for row in scenario_values)
+            session.commit()
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["detail"] == "Primary wealth goal was not found"
+
+
 def test_derived_response_failure_rolls_back_put_atomically(client, monkeypatch):
     before = _configuration(client)
     payload = deepcopy(before)
@@ -175,7 +226,10 @@ def test_derived_response_failure_rolls_back_put_atomically(client, monkeypatch)
     response = client.put(URL, json=payload)
     monkeypatch.undo()
 
-    assert response.status_code == 422
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Family wealth projection could not be produced"
+    )
     assert _configuration(client) == before
 
 
@@ -208,11 +262,27 @@ def test_restore_failure_leaves_configuration_unchanged(client, monkeypatch):
     response = client.post(f"{URL}/restore-defaults")
     monkeypatch.undo()
 
-    assert response.status_code == 422
+    assert response.status_code == 409
     assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert response.json()["detail"] == (
+        "Family wealth projection could not be produced"
+    )
     assert "forced restore response failure" not in str(response.json())
     assert _configuration(client) == before_restore
+
+
+def test_unexpected_family_plan_failure_uses_safe_standard_500(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("private unexpected failure")
+
+    monkeypatch.setattr(wealth_portfolio, "get_family_plan_response", fail)
+    with TestClient(app, raise_server_exceptions=False) as safe_client:
+        response = safe_client.get(URL)
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["code"] == "INTERNAL_ERROR"
+    assert "private unexpected failure" not in str(response.json())
 
 
 def test_unavailable_usd_fx_returns_warning_instead_of_500(client, monkeypatch):

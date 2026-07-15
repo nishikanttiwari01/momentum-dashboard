@@ -286,7 +286,9 @@ def _family_plan_response(session: Session, calculated_on: date, fx: FxResult | 
             projections.append(_projection(scenario, goals, result))
         return FamilyPlanResponse(primary_goal=primary, calculated_on=calculated_on, snapshot_id=snapshot.id if snapshot else None,
             data_health=health, assumptions=assumptions, goals=goals, scenario_projections=projections)
-    except (UnsafeProjection, ValidationError) as exc:
+    except UnsafeProjection:
+        raise
+    except ValidationError as exc:
         raise InvalidFamilyPlan(f"Family wealth projection is invalid: {exc}") from exc
 
 

@@ -89,6 +89,10 @@ def _family_validation_error(
 
 
 def _raise_family_plan_error(exc: Exception) -> None:
+    if isinstance(exc, PrimaryGoalNotFound):
+        raise HTTPException(
+            status_code=404, detail="Primary wealth goal was not found"
+        ) from exc
     if isinstance(exc, FamilyPlanNotFound):
         raise HTTPException(
             status_code=404, detail="Family wealth plan was not found"
@@ -199,6 +203,7 @@ def family_plan(session: Session = Depends(get_session)) -> FamilyPlanResponse:
         return get_family_plan_response(session)
     except (
         FamilyPlanNotFound,
+        PrimaryGoalNotFound,
         InvalidFamilyPlan,
         UnsafeProjection,
         ValidationError,
@@ -215,6 +220,7 @@ def replace_family_plan(
         return save_family_plan(session, payload)
     except (
         FamilyPlanNotFound,
+        PrimaryGoalNotFound,
         InvalidFamilyPlan,
         UnsafeProjection,
         ValidationError,
@@ -232,6 +238,7 @@ def restore_default_family_plan(
         return restore_family_plan_defaults(session)
     except (
         FamilyPlanNotFound,
+        PrimaryGoalNotFound,
         InvalidFamilyPlan,
         UnsafeProjection,
         ValidationError,
