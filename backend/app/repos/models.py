@@ -338,3 +338,58 @@ class WealthGoalScenario(Base):
     )
 
     __table_args__ = (UniqueConstraint("goal_id", "scenario_key"),)
+
+
+class FamilyWealthPlan(Base):
+    __tablename__ = "family_wealth_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    base_age: Mapped[int] = mapped_column(Integer)
+    monthly_contribution_inr: Mapped[float] = mapped_column(Float)
+    contribution_step_up_enabled: Mapped[bool] = mapped_column(Boolean)
+    contribution_step_up_pct: Mapped[float] = mapped_column(Float)
+    monthly_rent_inr: Mapped[float] = mapped_column(Float)
+    rent_growth_pct: Mapped[float] = mapped_column(Float)
+    reinvest_rent_until: Mapped[date] = mapped_column(Date)
+    property_growth_pct: Mapped[float] = mapped_column(Float)
+    withdrawal_rate_pct: Mapped[float] = mapped_column(Float)
+    amber_margin_pct: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
+    )
+
+
+class FamilyWealthGoal(Base):
+    __tablename__ = "family_wealth_goals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    plan_id: Mapped[str] = mapped_column(
+        ForeignKey("family_wealth_plans.id"), index=True
+    )
+    goal_key: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(120))
+    goal_type: Mapped[str] = mapped_column(String(32))
+    current_value_amount_inr: Mapped[float] = mapped_column(Float)
+    target_date: Mapped[date] = mapped_column(Date)
+    inflation_pct: Mapped[float] = mapped_column(Float)
+    funding_treatment: Mapped[str] = mapped_column(String(32))
+    priority: Mapped[int] = mapped_column(Integer)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    display_order: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        nullable=False,
+    )
+
+    __table_args__ = (UniqueConstraint("plan_id", "goal_key"),)

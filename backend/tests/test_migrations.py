@@ -115,6 +115,46 @@ def test_wealth_goal_defaults_are_seeded():
     ]
 
 
+def test_family_wealth_plan_defaults_are_seeded():
+    tmpdir = tempfile.mkdtemp()
+    db_path = Path(tmpdir) / "test_family_wealth_plan.db"
+    init_sqlite(str(db_path))
+
+    eng = get_engine()
+    with eng.connect() as conn:
+        names = {
+            row[0]
+            for row in conn.exec_driver_sql(
+                "select name from sqlite_master where type='table'"
+            )
+        }
+        plan = conn.exec_driver_sql(
+            "select base_age, monthly_contribution_inr, contribution_step_up_enabled, "
+            "contribution_step_up_pct, monthly_rent_inr, rent_growth_pct, "
+            "reinvest_rent_until, property_growth_pct, withdrawal_rate_pct, "
+            "amber_margin_pct "
+            "from family_wealth_plans"
+        ).one()
+        goals = conn.exec_driver_sql(
+            "select goal_key, current_value_amount_inr, target_date, inflation_pct, "
+            "funding_treatment from family_wealth_goals order by display_order"
+        ).all()
+
+    dispose_engine()
+    assert {"family_wealth_plans", "family_wealth_goals"} <= names
+    assert plan == (
+        42, 600000.0, 0, 6.0, 45000.0, 6.0, "2029-12-31", 6.0, 3.5, 10.0
+    )
+    assert goals == [
+        ("child_1_education", 20000000.0, "2032-12-31", 8.0, "expense"),
+        ("passive_income", 200000.0, "2029-12-31", 0.0, "income_target"),
+        ("bangalore_house", 30000000.0, "2036-12-31", 8.0, "asset_conversion"),
+        ("child_2_education", 20000000.0, "2038-12-31", 8.0, "expense"),
+        ("child_1_marriage", 5000000.0, "2042-12-31", 6.0, "expense"),
+        ("child_2_marriage", 5000000.0, "2044-12-31", 6.0, "expense"),
+    ]
+
+
 def test_multiple_non_primary_wealth_goals_can_coexist():
     tmpdir = tempfile.mkdtemp()
     db_path = Path(tmpdir) / "test_secondary_wealth_goals.db"
