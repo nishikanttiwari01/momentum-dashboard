@@ -234,8 +234,8 @@ def test_fx_failure_does_not_rollback_connection_bound_caller(session, monkeypat
     monkeypatch.setattr(
         family_wealth_plan_service,
         "get_usd_inr",
-        lambda cache_session, requested_on: real_get_usd_inr(
-            cache_session, requested_on, client=FailingClient,
+        lambda cache_session, requested_on, **kwargs: real_get_usd_inr(
+            cache_session, requested_on, client=FailingClient, **kwargs,
         ),
     )
     connection = session.get_bind().connect()
@@ -259,6 +259,116 @@ def test_fx_failure_does_not_rollback_connection_bound_caller(session, monkeypat
             outer.rollback()
         caller.close()
         connection.close()
+
+
+def test_connection_bound_fresh_fx_commits_with_caller_and_is_reused(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=8, market_value=10)])
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"date": "2026-07-15", "rates": {"INR": 86.5}}
+
+    class CountingClient:
+        calls = 0
+
+        @classmethod
+        def get(cls, *_args, **_kwargs):
+            cls.calls += 1
+            return Response()
+
+    monkeypatch.setattr(
+        family_wealth_plan_service,
+        "get_usd_inr",
+        lambda fx_session, requested_on, **kwargs: real_get_usd_inr(
+            fx_session, requested_on, client=CountingClient, **kwargs,
+        ),
+    )
+    engine = session.get_bind()
+    connection = engine.connect()
+    outer = connection.begin()
+    caller = Session(bind=connection)
+    try:
+        unrelated = PortfolioImport(
+            id="connection-commit", source_sha256="connection-commit-sha",
+            filename="caller.xlsx", status="pending", issue_counts={},
+        )
+        caller.add(unrelated)
+        caller.flush()
+
+        first = save_family_plan(
+            caller, FamilyPlanUpdate.model_validate(_payload()),
+            today=date(2026, 7, 15),
+        )
+        assert first.primary_goal.current_value_inr == 865
+        assert outer.is_active
+        outer.commit()
+
+        second = get_family_plan_response(caller, today=date(2026, 7, 15))
+        assert second.primary_goal.current_value_inr == 865
+        assert CountingClient.calls == 1
+    finally:
+        if outer.is_active:
+            outer.rollback()
+        caller.close()
+        connection.close()
+
+    with Session(bind=engine) as verification:
+        assert verification.get(PortfolioImport, "connection-commit") is not None
+        rows = list(verification.scalars(select(PortfolioFxRate)))
+        assert len(rows) == 1
+        assert (rows[0].rate, rows[0].source) == (86.5, "frankfurter")
+
+
+def test_connection_bound_fresh_fx_rolls_back_with_caller(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=8, market_value=10)])
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"date": "2026-07-15", "rates": {"INR": 86.5}}
+
+    class Client:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(
+        family_wealth_plan_service,
+        "get_usd_inr",
+        lambda fx_session, requested_on, **kwargs: real_get_usd_inr(
+            fx_session, requested_on, client=Client, **kwargs,
+        ),
+    )
+    engine = session.get_bind()
+    connection = engine.connect()
+    outer = connection.begin()
+    caller = Session(bind=connection)
+    try:
+        unrelated = PortfolioImport(
+            id="connection-rollback", source_sha256="connection-rollback-sha",
+            filename="caller.xlsx", status="pending", issue_counts={},
+        )
+        caller.add(unrelated)
+        caller.flush()
+
+        response = get_family_plan_response(caller, today=date(2026, 7, 15))
+        assert response.primary_goal.current_value_inr == 865
+        assert outer.is_active
+        outer.rollback()
+    finally:
+        if outer.is_active:
+            outer.rollback()
+        caller.close()
+        connection.close()
+
+    with Session(bind=engine) as verification:
+        assert verification.get(PortfolioImport, "connection-rollback") is None
+        assert verification.scalar(select(PortfolioFxRate)) is None
 
 
 def test_service_does_not_substitute_invested_amount_for_missing_market_value(session, monkeypatch):

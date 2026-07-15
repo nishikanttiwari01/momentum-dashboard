@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.repos.models import (
     FamilyWealthGoal, FamilyWealthPlan, PortfolioAsset,
-    PortfolioSnapshot, WealthGoal, WealthGoalScenario,
+    PortfolioFxRate, PortfolioSnapshot, WealthGoal, WealthGoalScenario,
 )
 from app.schemas.wealth_portfolio import (
     AnnualRunwayEvent, AnnualRunwayPoint, FamilyPlanAssumptions,
@@ -89,26 +89,81 @@ def _settings(plan, rows):
     return assumptions, goals
 
 
+def _latest_snapshot_needs_usd(session: Session) -> bool:
+    snapshot = session.scalar(select(PortfolioSnapshot).order_by(
+        PortfolioSnapshot.as_of.desc(), PortfolioSnapshot.created_at.desc(),
+        PortfolioSnapshot.id.desc(),
+    ).limit(1))
+    if snapshot is None:
+        return False
+    assets = session.scalars(select(PortfolioAsset).where(
+        PortfolioAsset.snapshot_id == snapshot.id,
+        PortfolioAsset.market_value.is_not(None),
+    ))
+    return any(
+        asset.currency.upper() == "USD"
+        and asset.asset_type.lower() in FINANCIAL_TYPES | PROPERTY_TYPES
+        for asset in assets
+    )
+
+
+def _matching_fx(session: Session, effective_on: date) -> PortfolioFxRate | None:
+    for row in session.new:
+        if (
+            isinstance(row, PortfolioFxRate)
+            and row.base_currency == "USD"
+            and row.quote_currency == "INR"
+            and row.effective_on == effective_on
+        ):
+            return row
+    return session.scalar(select(PortfolioFxRate).where(
+        PortfolioFxRate.base_currency == "USD",
+        PortfolioFxRate.quote_currency == "INR",
+        PortfolioFxRate.effective_on == effective_on,
+    ).limit(1))
+
+
+def _resolve_connection_bound_fx(session: Session, calculated_on: date) -> FxResult | None:
+    staged = max(
+        (
+            row for row in session.new
+            if isinstance(row, PortfolioFxRate)
+            and row.base_currency == "USD"
+            and row.quote_currency == "INR"
+            and row.effective_on <= calculated_on
+        ),
+        key=lambda row: row.effective_on,
+        default=None,
+    )
+    if staged is not None:
+        return FxResult(
+            staged.rate, staged.effective_on, staged.source, staged.fetched_at,
+            staged.effective_on != calculated_on,
+        )
+    try:
+        fx = get_usd_inr(session, calculated_on, persist=False)
+    except FxUnavailable:
+        return None
+    if not fx.is_fallback and _matching_fx(session, fx.effective_on) is None:
+        session.add(PortfolioFxRate(
+            base_currency="USD", quote_currency="INR",
+            effective_on=fx.effective_on, rate=fx.rate,
+            source=fx.source, fetched_at=fx.fetched_at,
+        ))
+    return fx
+
+
 def _resolve_opening_fx(session: Session, calculated_on: date) -> FxResult | None:
-    """Resolve and persist portfolio FX without touching the caller's transaction."""
+    """Resolve portfolio FX without committing or rolling back the caller."""
     caller_bind = session.get_bind()
+    if isinstance(caller_bind, Connection) and caller_bind.in_transaction():
+        if not _latest_snapshot_needs_usd(session):
+            return None
+        return _resolve_connection_bound_fx(session, calculated_on)
+
     cache_bind = caller_bind.engine if isinstance(caller_bind, Connection) else caller_bind
     with Session(bind=cache_bind) as cache_session:
-        snapshot = cache_session.scalar(select(PortfolioSnapshot).order_by(
-            PortfolioSnapshot.as_of.desc(), PortfolioSnapshot.created_at.desc(),
-            PortfolioSnapshot.id.desc(),
-        ).limit(1))
-        if snapshot is None:
-            return None
-        assets = cache_session.scalars(select(PortfolioAsset).where(
-            PortfolioAsset.snapshot_id == snapshot.id,
-            PortfolioAsset.market_value.is_not(None),
-        ))
-        if not any(
-            asset.currency.upper() == "USD"
-            and asset.asset_type.lower() in FINANCIAL_TYPES | PROPERTY_TYPES
-            for asset in assets
-        ):
+        if not _latest_snapshot_needs_usd(cache_session):
             return None
         try:
             return get_usd_inr(cache_session, calculated_on)
