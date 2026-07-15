@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from typing import Literal
 
@@ -236,6 +237,43 @@ def _contract_error(error_type: str, message: str, loc: tuple, value):
     )
 
 
+def _validate_ordered_scenarios(
+    keys: list[ScenarioKey],
+    rates: list[float],
+    root: str,
+    key_path: tuple[str, ...] = (),
+) -> None:
+    expected_keys: list[ScenarioKey] = ["conservative", "expected", "optimistic"]
+    if keys != expected_keys:
+        mismatch = next(
+            (
+                index
+                for index, expected in enumerate(expected_keys)
+                if index >= len(keys) or keys[index] != expected
+            ),
+            None,
+        )
+        location = (
+            (root, mismatch, *key_path, "scenario_key")
+            if mismatch is not None and mismatch < len(keys)
+            else (root,)
+        )
+        raise _contract_error(
+            "scenario_key_order",
+            "scenarios must be conservative, expected, optimistic in that order",
+            location,
+            keys,
+        )
+    for index in range(1, len(rates)):
+        if rates[index - 1] > rates[index]:
+            raise _contract_error(
+                "scenario_return_order",
+                "scenario returns must satisfy conservative <= expected <= optimistic",
+                (root, index, *key_path, "annual_return_pct"),
+                rates[index],
+            )
+
+
 class FamilyPlanUpdate(BaseModel):
     assumptions: FamilyPlanAssumptions
     scenarios: list[FamilyScenarioSettings]
@@ -243,38 +281,9 @@ class FamilyPlanUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_plan_contract(self):
-        expected_keys = ["conservative", "expected", "optimistic"]
         keys = [scenario.scenario_key for scenario in self.scenarios]
-        if keys != expected_keys:
-            mismatch = next(
-                (
-                    index
-                    for index, expected in enumerate(expected_keys)
-                    if index >= len(keys) or keys[index] != expected
-                ),
-                None,
-            )
-            location = (
-                ("scenarios", mismatch, "scenario_key")
-                if mismatch is not None and mismatch < len(keys)
-                else ("scenarios",)
-            )
-            raise _contract_error(
-                "scenario_key_order",
-                "scenarios must be conservative, expected, optimistic in that order",
-                location,
-                keys,
-            )
-
         rates = [scenario.annual_return_pct for scenario in self.scenarios]
-        for index in range(1, len(rates)):
-            if rates[index - 1] > rates[index]:
-                raise _contract_error(
-                    "scenario_return_order",
-                    "scenario returns must satisfy conservative <= expected <= optimistic",
-                    ("scenarios", index, "annual_return_pct"),
-                    rates[index],
-                )
+        _validate_ordered_scenarios(keys, rates, "scenarios")
 
         goal_keys = [goal.goal_key for goal in self.goals]
         if len(goal_keys) != len(set(goal_keys)):
@@ -300,6 +309,13 @@ class FamilyPlanUpdate(BaseModel):
                     ("goals", index, "funding_treatment"),
                     goal.funding_treatment,
                 )
+            if goal.enabled and goal.target_date <= date.today():
+                raise _contract_error(
+                    "target_date_not_future",
+                    "enabled goals require a future target_date",
+                    ("goals", index, "target_date"),
+                    goal.target_date,
+                )
         return self
 
 
@@ -310,49 +326,82 @@ class AnnualRunwayEvent(BaseModel):
     goal_name: str
     goal_type: GoalType
     funding_treatment: FundingTreatment
-    amount_inr: float
-    funded_amount_inr: float
-    shortfall_inr: float
+    amount_inr: float = Field(ge=0)
+    funded_amount_inr: float = Field(ge=0)
+    shortfall_inr: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_funding_total(self):
+        if not math.isclose(
+            self.funded_amount_inr + self.shortfall_inr,
+            self.amount_inr,
+            rel_tol=0,
+            abs_tol=0.01,
+        ):
+            raise ValueError("funded amount plus shortfall must equal event amount")
+        return self
 
 
 class AnnualRunwayPoint(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     on: date
-    financial_assets_inr: float
-    property_value_inr: float
-    total_net_worth_inr: float
-    annual_contributions_inr: float
-    annual_rent_inr: float
+    financial_assets_inr: float = Field(ge=0)
+    property_value_inr: float = Field(ge=0)
+    total_net_worth_inr: float = Field(ge=0)
+    annual_contributions_inr: float = Field(ge=0)
+    annual_rent_inr: float = Field(ge=0)
     financial_growth_inr: float
     property_growth_inr: float
-    goal_outflows_inr: float
+    goal_outflows_inr: float = Field(ge=0)
     events: list[AnnualRunwayEvent] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_net_worth_total(self):
+        if not math.isclose(
+            self.financial_assets_inr + self.property_value_inr,
+            self.total_net_worth_inr,
+            rel_tol=0,
+            abs_tol=0.01,
+        ):
+            raise ValueError("total net worth must equal financial assets plus property")
+        return self
 
 
 class GoalHealth(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     goal: LinkedGoalSettings
-    inflated_cost_inr: float
-    available_before_inr: float
-    funded_amount_inr: float
-    shortfall_inr: float
-    funded_pct: float
+    inflated_cost_inr: float = Field(ge=0)
+    available_before_inr: float = Field(ge=0)
+    funded_amount_inr: float = Field(ge=0)
+    shortfall_inr: float = Field(ge=0)
+    funded_pct: float = Field(ge=0, le=100)
     status: Literal["green", "amber", "red"]
     reason: str
+
+    @model_validator(mode="after")
+    def validate_funding_total(self):
+        if not math.isclose(
+            self.funded_amount_inr + self.shortfall_inr,
+            self.inflated_cost_inr,
+            rel_tol=0,
+            abs_tol=0.01,
+        ):
+            raise ValueError("funded amount plus shortfall must equal inflated cost")
+        return self
 
 
 class PassiveIncomeAnalysis(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     target_date: date
-    target_monthly_income_inr: float
-    projected_monthly_rent_inr: float
-    portfolio_monthly_gap_inr: float
-    required_corpus_inr: float
-    supported_portfolio_monthly_income_inr: float
-    total_monthly_income_inr: float
+    target_monthly_income_inr: float = Field(ge=0)
+    projected_monthly_rent_inr: float = Field(ge=0)
+    portfolio_monthly_gap_inr: float = Field(ge=0)
+    required_corpus_inr: float = Field(ge=0)
+    supported_portfolio_monthly_income_inr: float = Field(ge=0)
+    total_monthly_income_inr: float = Field(ge=0)
     surplus_or_shortfall_inr: float
     on_track: bool
     later_goals_protected: bool
@@ -366,10 +415,23 @@ class FamilyScenarioProjection(BaseModel):
     annual_points: list[AnnualRunwayPoint]
     goal_health: list[GoalHealth]
     passive_income: PassiveIncomeAnalysis | None = None
-    ending_financial_assets_inr: float
-    ending_property_value_inr: float
-    ending_total_net_worth_inr: float
+    ending_financial_assets_inr: float = Field(ge=0)
+    ending_property_value_inr: float = Field(ge=0)
+    ending_total_net_worth_inr: float = Field(ge=0)
     first_underfunded_goal_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_ending_net_worth_total(self):
+        if not math.isclose(
+            self.ending_financial_assets_inr + self.ending_property_value_inr,
+            self.ending_total_net_worth_inr,
+            rel_tol=0,
+            abs_tol=0.01,
+        ):
+            raise ValueError(
+                "ending total net worth must equal ending financial assets plus property"
+            )
+        return self
 
 
 class FamilyPlanResponse(BaseModel):
@@ -380,3 +442,20 @@ class FamilyPlanResponse(BaseModel):
     assumptions: FamilyPlanAssumptions
     goals: list[LinkedGoalSettings]
     scenario_projections: list[FamilyScenarioProjection]
+
+    @model_validator(mode="after")
+    def validate_response_contract(self):
+        keys = [item.settings.scenario_key for item in self.scenario_projections]
+        rates = [item.settings.annual_return_pct for item in self.scenario_projections]
+        _validate_ordered_scenarios(
+            keys, rates, "scenario_projections", key_path=("settings",)
+        )
+        goal_keys = [goal.goal_key for goal in self.goals]
+        if len(goal_keys) != len(set(goal_keys)):
+            raise _contract_error(
+                "duplicate_goal_key",
+                "goal_key values must be unique",
+                ("goals",),
+                goal_keys,
+            )
+        return self

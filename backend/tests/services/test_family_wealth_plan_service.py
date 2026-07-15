@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -367,6 +367,10 @@ def _response_parts() -> tuple:
 
 def test_constructs_complete_family_plan_response_contract() -> None:
     plan, event, point, health, passive, projection = _response_parts()
+    projections = [
+        projection.model_copy(update={"settings": scenario})
+        for scenario in plan.scenarios
+    ]
     response = FamilyPlanResponse(
         primary_goal={
             "goal": {
@@ -382,13 +386,17 @@ def test_constructs_complete_family_plan_response_contract() -> None:
         data_health="fresh",
         assumptions=plan.assumptions,
         goals=plan.goals,
-        scenario_projections=[projection],
+        scenario_projections=projections,
     )
 
     assert response.primary_goal.goal.name == "Family corpus"
     assert response.assumptions.monthly_contribution_inr == 100_000
     assert response.goals[0].goal_key == "child_education"
-    assert response.scenario_projections[0].settings.scenario_key == "expected"
+    assert [item.settings.scenario_key for item in response.scenario_projections] == [
+        "conservative",
+        "expected",
+        "optimistic",
+    ]
     assert point.events == [event]
     assert event.funded_amount_inr == 5_500_000
     assert point.total_net_worth_inr == 35_000_000
@@ -422,3 +430,157 @@ def test_response_contracts_reject_nonfinite_monetary_values(model, field: str) 
     with pytest.raises(ValidationError) as exc_info:
         model.model_validate(payload)
     assert (field,) in [error["loc"] for error in exc_info.value.errors()]
+
+
+@pytest.mark.parametrize(
+    "model,field",
+    [
+        (AnnualRunwayEvent, "amount_inr"),
+        (AnnualRunwayEvent, "funded_amount_inr"),
+        (AnnualRunwayPoint, "financial_assets_inr"),
+        (AnnualRunwayPoint, "annual_contributions_inr"),
+        (GoalHealth, "shortfall_inr"),
+        (GoalHealth, "funded_pct"),
+        (PassiveIncomeAnalysis, "required_corpus_inr"),
+        (FamilyScenarioProjection, "ending_property_value_inr"),
+    ],
+)
+def test_response_contracts_reject_negative_nonnegative_values(model, field: str) -> None:
+    _, event, point, health, passive, projection = _response_parts()
+    instance = {
+        AnnualRunwayEvent: event,
+        AnnualRunwayPoint: point,
+        GoalHealth: health,
+        PassiveIncomeAnalysis: passive,
+        FamilyScenarioProjection: projection,
+    }[model]
+    payload = instance.model_dump()
+    payload[field] = -0.01
+
+    with pytest.raises(ValidationError) as exc_info:
+        model.model_validate(payload)
+    assert (field,) in [error["loc"] for error in exc_info.value.errors()]
+
+
+def test_goal_health_rejects_funded_pct_above_100() -> None:
+    _, _, _, health, _, _ = _response_parts()
+    payload = health.model_dump()
+    payload["funded_pct"] = 100.01
+    with pytest.raises(ValidationError) as exc_info:
+        GoalHealth.model_validate(payload)
+    assert ("funded_pct",) in [error["loc"] for error in exc_info.value.errors()]
+
+
+@pytest.mark.parametrize(
+    "model,field",
+    [
+        (AnnualRunwayEvent, "shortfall_inr"),
+        (AnnualRunwayPoint, "total_net_worth_inr"),
+        (GoalHealth, "shortfall_inr"),
+        (FamilyScenarioProjection, "ending_total_net_worth_inr"),
+    ],
+)
+def test_response_contracts_reject_contradictory_financial_totals(
+    model, field: str
+) -> None:
+    _, event, point, health, _, projection = _response_parts()
+    instance = {
+        AnnualRunwayEvent: event,
+        AnnualRunwayPoint: point,
+        GoalHealth: health,
+        FamilyScenarioProjection: projection,
+    }[model]
+    payload = instance.model_dump()
+    payload[field] += 0.02
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+
+def test_financial_consistency_allows_one_cent_rounding_tolerance() -> None:
+    _, event, _, _, _, _ = _response_parts()
+    payload = event.model_dump()
+    payload["shortfall_inr"] += 0.01
+    assert AnnualRunwayEvent.model_validate(payload).shortfall_inr == 500_000.01
+
+
+def _family_response_payload() -> dict:
+    plan, _, _, _, _, projection = _response_parts()
+    projections = [
+        projection.model_copy(update={"settings": scenario})
+        for scenario in plan.scenarios
+    ]
+    return {
+        "primary_goal": {
+            "goal": {
+                "name": "Family corpus",
+                "target_amount_inr": 50_000_000,
+                "deadline": date(2045, 1, 1),
+            },
+            "scenario_projections": [],
+            "calculated_on": date(2026, 7, 15),
+        },
+        "calculated_on": date(2026, 7, 15),
+        "snapshot_id": "snapshot-1",
+        "data_health": "fresh",
+        "assumptions": plan.assumptions,
+        "goals": plan.goals,
+        "scenario_projections": projections,
+    }
+
+
+@pytest.mark.parametrize("projection_count", [2, 4])
+def test_family_response_requires_exactly_three_scenarios(
+    projection_count: int,
+) -> None:
+    payload = _family_response_payload()
+    payload["scenario_projections"] = (
+        payload["scenario_projections"][:projection_count]
+        if projection_count < 3
+        else payload["scenario_projections"] + [payload["scenario_projections"][-1]]
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        FamilyPlanResponse.model_validate(payload)
+    assert ("scenario_projections",) in [e["loc"] for e in exc_info.value.errors()]
+
+
+def test_family_response_requires_scenarios_in_canonical_order() -> None:
+    payload = _family_response_payload()
+    payload["scenario_projections"][0], payload["scenario_projections"][1] = (
+        payload["scenario_projections"][1],
+        payload["scenario_projections"][0],
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        FamilyPlanResponse.model_validate(payload)
+    assert ("scenario_projections", 0, "settings", "scenario_key") in [
+        e["loc"] for e in exc_info.value.errors()
+    ]
+
+
+def test_family_response_rejects_duplicate_goal_keys() -> None:
+    payload = _family_response_payload()
+    payload["goals"].append(payload["goals"][0])
+    with pytest.raises(ValidationError) as exc_info:
+        FamilyPlanResponse.model_validate(payload)
+    assert ("goals",) in [e["loc"] for e in exc_info.value.errors()]
+
+
+def test_enabled_goal_requires_future_target_date() -> None:
+    payload = _payload()
+    payload["goals"][0]["target_date"] = date.today()
+    assert ("goals", 0, "target_date") in _error_locations(payload)
+
+
+def test_disabled_goal_may_retain_historical_target_date() -> None:
+    payload = _payload()
+    payload["goals"][0]["enabled"] = False
+    payload["goals"][0]["target_date"] = date.today() - timedelta(days=1)
+    assert FamilyPlanUpdate.model_validate(payload).goals[0].enabled is False
+
+
+def test_numeric_strings_are_intentionally_coerced_for_api_form_ergonomics() -> None:
+    payload = _payload()
+    payload["assumptions"]["monthly_contribution_inr"] = "100000"
+    payload["goals"][0]["priority"] = "10"
+    plan = FamilyPlanUpdate.model_validate(payload)
+    assert plan.assumptions.monthly_contribution_inr == 100_000
+    assert plan.goals[0].priority == 10
