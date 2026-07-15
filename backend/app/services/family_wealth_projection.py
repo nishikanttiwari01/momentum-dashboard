@@ -271,7 +271,10 @@ def project_family_wealth(data: ProjectionInput) -> ProjectionResult:
     for index in range(start, end + 1):
         on = _month_end(index)
         if on.month == 1 and on.year > data.calculated_on.year:
-            if data.contribution_step_up_enabled:
+            if (
+                data.contribution_step_up_enabled
+                and index - start >= 12
+            ):
                 contribution *= step_factor
             rent *= rent_factor
         opening_financial = financial
@@ -360,9 +363,15 @@ def _passive_result(
     required = money(annual_gap / (data.withdrawal_rate_pct / HUNDRED))
     supported_portfolio = money(target_point.closing_financial * data.withdrawal_rate_pct / HUNDRED / TWELVE)
     total_supported = money(supported_portfolio + rent)
-    surplus = money(total_supported - target)
     later_funded = all(
         g.key in result_by_key and result_by_key[g.key].shortfall == ZERO
+        for g in later
+    )
+    later_reserve_preserved = later_funded and all(
+        result_by_key[g.key].available_before
+        - result_by_key[g.key].funded_amount
+        + CENT
+        >= required
         for g in later
     )
 
@@ -380,8 +389,7 @@ def _passive_result(
                 return False
         return True
 
-    later_protected = later_funded
-    target_sustainable = sustainable_from(target_point)
+    later_protected = later_reserve_preserved
     corpus_met = target_point.closing_financial >= required
     earliest = next(
         (
@@ -397,6 +405,7 @@ def _passive_result(
         monthly_gap=gap, annual_gap=annual_gap, required_corpus=required,
         supported_portfolio_monthly_income=supported_portfolio,
         total_supported_monthly_income=total_supported,
-        surplus_or_shortfall=surplus, on_track=corpus_met and target_sustainable,
+        surplus_or_shortfall=money(target_point.closing_financial - required),
+        on_track=corpus_met and later_protected,
         later_goals_protected=later_protected, earliest_sustainable_date=earliest,
     )
