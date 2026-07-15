@@ -1,6 +1,8 @@
 import axios from 'axios';
 import type {
   GoalConfigurationUpdate,
+  FamilyPlanResponse,
+  FamilyPlanUpdate,
   ImportCommitResult,
   ImportPreview,
   PrimaryGoalResponse,
@@ -31,4 +33,18 @@ export async function updatePrimaryGoal(
   configuration: GoalConfigurationUpdate,
 ): Promise<PrimaryGoalResponse> {
   return (await axios.put<PrimaryGoalResponse>(PRIMARY_GOAL_URL, configuration)).data;
+}
+
+const FAMILY_PLAN_URL = '/api/v1/wealth-portfolio/goals/family-plan';
+
+export async function fetchFamilyPlan(): Promise<FamilyPlanResponse> {
+  return (await axios.get<FamilyPlanResponse>(FAMILY_PLAN_URL)).data;
+}
+
+export async function updateFamilyPlan(payload: FamilyPlanUpdate): Promise<FamilyPlanResponse> {
+  return (await axios.put<FamilyPlanResponse>(FAMILY_PLAN_URL, payload)).data;
+}
+
+export async function restoreFamilyPlanDefaults(): Promise<FamilyPlanResponse> {
+  return (await axios.post<FamilyPlanResponse>(`${FAMILY_PLAN_URL}/restore-defaults`)).data;
 }

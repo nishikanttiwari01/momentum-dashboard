@@ -100,3 +100,113 @@ export type FieldProblemError = {
 export type FieldProblemResponse = {
   errors: FieldProblemError[];
 };
+
+export type FamilyGoalType = 'education' | 'house' | 'marriage' | 'passive_income';
+export type FamilyFundingTreatment = 'expense' | 'asset_conversion' | 'income_target';
+export type FamilyScenarioKey = 'conservative' | 'expected' | 'optimistic';
+export type FamilyGoalHealthStatus = 'green' | 'amber' | 'red';
+
+export type FamilyPlanAssumptions = {
+  monthly_contribution_inr: number;
+  contribution_step_up_enabled: boolean;
+  contribution_step_up_pct: number;
+  monthly_rent_inr: number;
+  rent_growth_pct: number;
+  reinvest_rent_until: string;
+  property_growth_pct: number;
+  withdrawal_rate_pct: number;
+  amber_margin_pct: number;
+};
+
+export type LinkedGoalSettings = {
+  goal_key: string;
+  name: string;
+  goal_type: FamilyGoalType;
+  current_value_amount_inr: number;
+  target_date: string;
+  inflation_pct: number;
+  funding_treatment: FamilyFundingTreatment;
+  priority: number;
+  enabled: boolean;
+  display_order: number;
+};
+
+export type FamilyScenarioSettings = {
+  scenario_key: FamilyScenarioKey;
+  annual_return_pct: number;
+};
+
+export type AnnualRunwayEvent = {
+  goal_key: string;
+  goal_name: string;
+  goal_type: FamilyGoalType;
+  funding_treatment: FamilyFundingTreatment;
+  amount_inr: number;
+  funded_amount_inr: number;
+  shortfall_inr: number;
+};
+
+export type AnnualRunwayPoint = {
+  on: string;
+  financial_assets_inr: number;
+  property_value_inr: number;
+  total_net_worth_inr: number;
+  annual_contributions_inr: number;
+  annual_rent_inr: number;
+  financial_growth_inr: number;
+  property_growth_inr: number;
+  goal_outflows_inr: number;
+  events: AnnualRunwayEvent[];
+};
+
+export type GoalHealth = {
+  goal: LinkedGoalSettings;
+  inflated_cost_inr: number;
+  available_before_inr: number;
+  funded_amount_inr: number;
+  shortfall_inr: number;
+  funded_pct: number;
+  status: FamilyGoalHealthStatus;
+  reason: string;
+};
+
+export type PassiveIncomeAnalysis = {
+  target_date: string;
+  target_monthly_income_inr: number;
+  projected_monthly_rent_inr: number;
+  portfolio_monthly_gap_inr: number;
+  required_corpus_inr: number;
+  supported_portfolio_monthly_income_inr: number;
+  total_monthly_income_inr: number;
+  surplus_or_shortfall_inr: number;
+  on_track: boolean;
+  later_goals_protected: boolean;
+  earliest_sustainable_date: string | null;
+};
+
+export type FamilyScenarioProjection = {
+  settings: FamilyScenarioSettings;
+  annual_points: AnnualRunwayPoint[];
+  goal_health: GoalHealth[];
+  passive_income: PassiveIncomeAnalysis | null;
+  ending_financial_assets_inr: number;
+  ending_property_value_inr: number;
+  ending_total_net_worth_inr: number;
+  first_underfunded_goal_key: string | null;
+};
+
+export type FamilyPlanResponse = {
+  primary_goal: PrimaryGoalResponse;
+  calculated_on: string;
+  snapshot_id: string | null;
+  data_health: WealthDataHealth;
+  assumptions: FamilyPlanAssumptions;
+  goals: LinkedGoalSettings[];
+  scenario_projections: FamilyScenarioProjection[];
+};
+
+export type FamilyPlanUpdate = {
+  assumptions: FamilyPlanAssumptions;
+  scenarios: FamilyScenarioSettings[];
+  goals: LinkedGoalSettings[];
+};
