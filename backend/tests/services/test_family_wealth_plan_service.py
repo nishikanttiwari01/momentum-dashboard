@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.repos.models import (
-    FamilyWealthGoal,
+    FamilyWealthGoal, FamilyWealthPlan,
     PortfolioAsset,
     PortfolioFxRate,
     PortfolioImport,
@@ -165,6 +165,40 @@ def test_save_failure_rolls_back_plan_goals_and_scenarios(session, monkeypatch):
     assert after.goals == before.goals
 
 
+def test_failed_nested_save_preserves_callers_unrelated_transaction(session, monkeypatch):
+    with session.begin():
+        unrelated = PortfolioImport(id="caller-import", source_sha256="caller-sha", filename="caller.xlsx", status="pending", issue_counts={})
+        session.add(unrelated)
+        original_monthly = session.get(FamilyWealthPlan, "00000000-0000-0000-0000-000000000001").monthly_contribution_inr
+        monkeypatch.setattr(family_wealth_plan_service, "project_family_wealth", lambda *_: (_ for _ in ()).throw(RuntimeError("forced nested")))
+
+        with pytest.raises(RuntimeError, match="forced nested"):
+            save_family_plan(session, FamilyPlanUpdate.model_validate(_payload()), today=date(2026, 7, 15))
+
+        # SQLAlchemy flushes pending outer work before opening a savepoint, but
+        # the row remains owned by (and persistable through) the caller's outer
+        # transaction rather than being rolled back by the service.
+        assert unrelated in session
+        assert session.get(PortfolioImport, "caller-import") is unrelated
+        assert session.get(FamilyWealthPlan, "00000000-0000-0000-0000-000000000001").monthly_contribution_inr == original_monthly
+    assert session.get(PortfolioImport, "caller-import") is not None
+
+
+def test_successful_nested_save_does_not_commit_callers_outer_transaction(session):
+    outer = session.begin()
+    try:
+        unrelated = PortfolioImport(id="outer-import", source_sha256="outer-sha", filename="outer.xlsx", status="pending", issue_counts={})
+        session.add(unrelated)
+        save_family_plan(session, FamilyPlanUpdate.model_validate(_payload()), today=date(2026, 7, 15))
+        assert session.in_transaction()
+        assert unrelated in session
+        assert session.get(FamilyWealthPlan, "00000000-0000-0000-0000-000000000001").monthly_contribution_inr == 100_000
+    finally:
+        outer.rollback()
+    assert session.get(PortfolioImport, "outer-import") is None
+    assert session.get(FamilyWealthPlan, "00000000-0000-0000-0000-000000000001").monthly_contribution_inr == 600_000
+
+
 def test_goal_replacement_preserves_existing_id_and_assigns_stable_new_id(session):
     existing = session.scalar(select(FamilyWealthGoal).where(FamilyWealthGoal.goal_key == "child_1_education"))
     payload = _payload()
@@ -180,10 +214,22 @@ def test_goal_replacement_preserves_existing_id_and_assigns_stable_new_id(sessio
 
 def test_restore_family_plan_defaults_exactly(session):
     save_family_plan(session, FamilyPlanUpdate.model_validate(_payload()), today=date(2026, 7, 15))
+    plan = session.get(FamilyWealthPlan, "00000000-0000-0000-0000-000000000001")
+    plan.base_age = 99
+    session.commit()
     restored = restore_family_plan_defaults(session, today=date(2026, 7, 15))
+    plan = session.get(FamilyWealthPlan, "00000000-0000-0000-0000-000000000001")
+    assert (plan.base_age, plan.monthly_contribution_inr, plan.contribution_step_up_enabled,
+            plan.contribution_step_up_pct, plan.monthly_rent_inr, plan.rent_growth_pct,
+            plan.reinvest_rent_until, plan.property_growth_pct, plan.withdrawal_rate_pct,
+            plan.amber_margin_pct) == (42, 600_000, False, 6, 45_000, 6,
+                                      date(2029, 12, 31), 6, 3.5, 10)
     assert restored.assumptions.monthly_contribution_inr == 600_000
     assert restored.assumptions.reinvest_rent_until == date(2029, 12, 31)
     assert [p.settings.annual_return_pct for p in restored.scenario_projections] == [7, 10, 13]
+    primary = session.scalar(select(WealthGoal).where(WealthGoal.is_primary.is_(True)))
+    scenario_rows = list(session.scalars(select(WealthGoalScenario).where(WealthGoalScenario.goal_id == primary.id).order_by(WealthGoalScenario.display_order)))
+    assert [(row.annual_return_pct, row.monthly_contribution_inr) for row in scenario_rows] == [(7, 600_000), (10, 600_000), (13, 600_000)]
     assert [g.goal_key for g in restored.goals] == ["child_1_education", "passive_income", "bangalore_house", "child_2_education", "child_1_marriage", "child_2_marriage"]
 
 

@@ -216,7 +216,9 @@ def get_family_plan_response(session: Session, today: date | None = None) -> Fam
         raise InvalidFamilyPlan(f"Family wealth projection is invalid: {exc}") from exc
 
 
-def _apply(session, plan, payload):
+def _apply(session, plan, payload, *, base_age: int | None = None):
+    if base_age is not None:
+        plan.base_age = base_age
     for field, value in payload.assumptions.model_dump().items():
         setattr(plan, field, value)
     existing = {row.goal_key: row for row in session.scalars(select(FamilyWealthGoal).where(FamilyWealthGoal.plan_id == plan.id))}
@@ -237,21 +239,25 @@ def _apply(session, plan, payload):
         row.monthly_contribution_inr = payload.assumptions.monthly_contribution_inr
 
 
+def _save_family_plan(
+    session: Session,
+    payload: FamilyPlanUpdate,
+    calculated_on: date,
+    *,
+    base_age: int | None = None,
+) -> FamilyPlanResponse:
+    transaction = session.begin_nested() if session.in_transaction() else session.begin()
+    with transaction:
+        plan = _plan(session)
+        _apply(session, plan, payload, base_age=base_age)
+        session.flush()
+        return get_family_plan_response(session, today=calculated_on)
+
+
 def save_family_plan(session: Session, payload: FamilyPlanUpdate, today: date | None = None) -> FamilyPlanResponse:
     calculated_on = today or date.today()
     payload.validate_target_dates(calculated_on)
-    if session.in_transaction():
-        session.rollback()
-    try:
-        with session.begin():
-            plan = _plan(session)
-            _apply(session, plan, payload)
-            session.flush()
-            response = get_family_plan_response(session, today=calculated_on)
-        return response
-    except Exception:
-        session.rollback()
-        raise
+    return _save_family_plan(session, payload, calculated_on)
 
 
 def _defaults() -> FamilyPlanUpdate:
@@ -271,4 +277,7 @@ def _defaults() -> FamilyPlanUpdate:
 
 
 def restore_family_plan_defaults(session: Session, today: date | None = None) -> FamilyPlanResponse:
-    return save_family_plan(session, _defaults(), today=today)
+    calculated_on = today or date.today()
+    payload = _defaults()
+    payload.validate_target_dates(calculated_on)
+    return _save_family_plan(session, payload, calculated_on, base_age=42)
