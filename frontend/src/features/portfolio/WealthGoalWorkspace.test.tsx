@@ -2,7 +2,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { PrimaryGoalResponse } from './wealthTypes';
-import type { FamilyScenarioProjection, GoalHealth, PassiveIncomeAnalysis } from './wealthTypes';
+import type { FamilyPlanResponse, FamilyScenarioProjection, GoalHealth, PassiveIncomeAnalysis } from './wealthTypes';
+import { FamilyPlanAssumptions, familyPlanDraftFromResponse, familyPlanUpdateFromDraft } from './FamilyPlanAssumptions';
 import { FamilyWealthRunwayChart, RUNWAY_LINE_ANIMATION_ACTIVE, RunwayTooltipContent, aggregateRunwayEvents, runwayTooltipLines } from './FamilyWealthRunwayChart';
 import { FamilyGoalCards } from './FamilyGoalCards';
 import { PassiveIncomePanel, type PassiveIncomePanelData } from './PassiveIncomePanel';
@@ -12,6 +13,7 @@ import {
   WealthGoalError,
   WealthGoalLoading,
   WealthGoalWorkspaceView,
+  FamilyPlanWorkspaceView,
   applyGoalFormChange,
   applyGoalMutationSuccess,
   applyUserGoalFormChange,
@@ -25,6 +27,8 @@ import {
   goalFormFromResponse,
   goalUpdateFromForm,
   wealthGoalQueryOptions,
+  familyPlanQueryOptions,
+  classifyFamilyPlanSaveError,
 } from './WealthGoalWorkspace';
 
 const response: PrimaryGoalResponse = {
@@ -303,5 +307,63 @@ describe('family runway visual components', () => {
     const protectedButShort = renderToStaticMarkup(<PassiveIncomePanel analysis={{ ...analysis, on_track: false, later_goals_protected: true }} />);
     expect(protectedButShort).toContain('Shortfall');
     expect(protectedButShort).toContain('Later goals remain protected');
+  });
+});
+
+const familyPlan: FamilyPlanResponse = {
+  primary_goal: response,
+  calculated_on: '2026-07-15', snapshot_id: 'snapshot-1', data_health: 'fresh',
+  assumptions: { monthly_contribution_inr: 600000, contribution_step_up_enabled: false, contribution_step_up_pct: 6, monthly_rent_inr: 45000, rent_growth_pct: 6, reinvest_rent_until: '2029-12-31', property_growth_pct: 6, withdrawal_rate_pct: 4, amber_margin_pct: 10 },
+  goals: linkedGoals.map(({ goal }) => goal),
+  scenario_projections: [
+    { ...runwayProjection, settings: { scenario_key: 'conservative', annual_return_pct: 7 } },
+    runwayProjection,
+    { ...runwayProjection, settings: { scenario_key: 'optimistic', annual_return_pct: 13 } },
+  ],
+};
+
+describe('family plan assumptions', () => {
+  it('shows the six lakh default and disables the six percent step-up until selected', () => {
+    const draft = familyPlanDraftFromResponse(familyPlan);
+    const html = renderToStaticMarkup(<FamilyPlanAssumptions value={draft} onChange={vi.fn()} fieldErrors={{}} disabled={false} />);
+    expect(html).toContain('Monthly investment');
+    expect(html).toContain('value="600000"');
+    expect(html).toContain('Annual contribution step-up');
+    expect(html).toMatch(/<input[^>]*disabled=""[^>]*value="6"/);
+  });
+
+  it('builds one atomic payload containing assumptions, three scenarios and all linked goals', () => {
+    const draft = familyPlanDraftFromResponse(familyPlan);
+    draft.assumptions.monthly_contribution_inr = '650000';
+    draft.assumptions.contribution_step_up_enabled = true;
+    const payload = familyPlanUpdateFromDraft(draft);
+    expect(payload.assumptions.monthly_contribution_inr).toBe(650000);
+    expect(payload.assumptions.contribution_step_up_pct).toBe(6);
+    expect(payload.scenarios.map(({ scenario_key }) => scenario_key)).toEqual(['conservative', 'expected', 'optimistic']);
+    expect(payload.goals).toHaveLength(linkedGoals.length);
+  });
+
+  it('labels draft assumptions honestly before a server calculation is saved', () => {
+    const draft = familyPlanDraftFromResponse(familyPlan);
+    draft.assumptions.monthly_contribution_inr = '650000';
+    const html = renderToStaticMarkup(<FamilyPlanAssumptions value={draft} onChange={vi.fn()} fieldErrors={{}} disabled={false} dirty />);
+    expect(html).toContain('Draft assumptions');
+    expect(html).toContain('Charts still show the last saved calculation');
+  });
+
+  it('keeps the pinned goal before the runway and exposes saved scenario analysis', () => {
+    const draft = familyPlanDraftFromResponse(familyPlan);
+    const html = renderToStaticMarkup(<FamilyPlanWorkspaceView data={familyPlan} draft={draft} onDraftChange={vi.fn()} onSave={vi.fn()} onRestore={vi.fn()} isSaving={false} />);
+    expect(html.indexOf('Primary family finish line')).toBeLessThan(html.indexOf('Family wealth runway'));
+    expect(html.indexOf('Family wealth runway')).toBeLessThan(html.indexOf('Linked goals'));
+    expect(html.indexOf('Linked goals')).toBeLessThan(html.indexOf('Scenario comparison'));
+    expect(html).toContain('Edit assumptions');
+    expect(familyPlanQueryOptions.queryKey).toEqual(['wealth-family-plan']);
+  });
+
+  it('maps server validation fields and keeps generic failures retryable', () => {
+    const problem = { isAxiosError: true, response: { status: 422, data: { errors: [{ loc: ['body', 'goals', 1, 'target_date'], msg: 'Choose a later date' }] } } };
+    expect(classifyFamilyPlanSaveError(problem)).toEqual({ kind: 'fields', errors: { 'goals.1.target_date': 'Choose a later date' } });
+    expect(classifyFamilyPlanSaveError(new Error('offline'))).toEqual({ kind: 'form', message: 'Could not calculate the updated family plan. Your last saved plan is unchanged.' });
   });
 });

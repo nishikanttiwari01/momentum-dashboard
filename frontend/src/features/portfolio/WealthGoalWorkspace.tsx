@@ -1,14 +1,19 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { Alert, Box, Button, Chip, LinearProgress, Paper, Skeleton, Stack, TextField, Typography } from '@mui/material';
+import { Alert, Box, Button, Chip, Drawer, LinearProgress, Paper, Skeleton, Stack, TextField, Typography } from '@mui/material';
 import FlagRoundedIcon from '@mui/icons-material/FlagRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { fetchPrimaryGoal, updatePrimaryGoal } from './wealthApi';
-import type { FieldProblemResponse, GoalConfigurationUpdate, GoalScenarioKey, PrimaryGoalResponse } from './wealthTypes';
+import { fetchFamilyPlan, fetchPrimaryGoal, restoreFamilyPlanDefaults, updateFamilyPlan, updatePrimaryGoal } from './wealthApi';
+import type { FamilyPlanResponse, FamilyPlanUpdate, FieldProblemResponse, GoalConfigurationUpdate, GoalScenarioKey, PrimaryGoalResponse } from './wealthTypes';
 import { formatCompactCrore, formatIndianCurrency, goalErrorFieldKey, progressFill } from './wealthGoalMath';
+import { familyPlanProblemField, formatCrore } from './familyWealthMath';
 import WealthGoalChart from './WealthGoalChart';
+import { FamilyPlanAssumptions, familyPlanDraftFromResponse, familyPlanUpdateFromDraft, type FamilyPlanDraft } from './FamilyPlanAssumptions';
+import { FamilyWealthRunwayChart } from './FamilyWealthRunwayChart';
+import { FamilyGoalCards } from './FamilyGoalCards';
+import { PassiveIncomePanel } from './PassiveIncomePanel';
 
 type ScenarioForm = { scenario_key: GoalScenarioKey; annual_return_pct: string; monthly_contribution: string };
 export type GoalForm = { name: string; target: string; deadline: string; scenarios: ScenarioForm[] };
@@ -62,6 +67,7 @@ export function applyUserGoalFormChange(change: GoalFormChange, onDraftChange: (
 }
 
 export const wealthGoalQueryOptions = { queryKey: ['wealth-primary-goal'] as const, queryFn: fetchPrimaryGoal, retry: 1 };
+export const familyPlanQueryOptions = { queryKey: ['wealth-family-plan'] as const, queryFn: fetchFamilyPlan, retry: 1 };
 type GoalCacheClient = Pick<ReturnType<typeof useQueryClient>, 'setQueryData' | 'invalidateQueries'>;
 export function applyGoalMutationSuccess(client: GoalCacheClient, next: PrimaryGoalResponse) {
   client.setQueryData(wealthGoalQueryOptions.queryKey, next);
@@ -155,7 +161,61 @@ export function classifyGoalSaveError(error: unknown): { kind: 'fields'; errors:
 export const WealthGoalLoading = () => <Paper data-testid="wealth-goal-workspace" variant="outlined" sx={{ ...cardSx, minHeight: 640, p: 2 }}><Skeleton height={90} /><Skeleton variant="rounded" height={220} /><Skeleton height={160} /></Paper>;
 export function WealthGoalError({ retry }: { retry: () => void }) { return <Alert data-testid="wealth-goal-workspace" severity="error" action={<Button color="inherit" onClick={retry}>Retry</Button>}>We couldn’t load your wealth goal. No estimates are shown until the data is available.</Alert>; }
 
-const WealthGoalWorkspace: React.FC<{ onOpenDataImport?: () => void }> = ({ onOpenDataImport }) => {
+export function classifyFamilyPlanSaveError(error: unknown): { kind: 'fields'; errors: FieldErrors } | { kind: 'form'; message: string } {
+  const errors: FieldErrors = {};
+  if (axios.isAxiosError<FieldProblemResponse>(error) && error.response?.status === 422) {
+    error.response.data?.errors?.forEach((problem) => { const key = familyPlanProblemField(problem.loc); if (key) errors[key] = problem.msg; });
+    if (Object.keys(errors).length) return { kind: 'fields', errors };
+  }
+  return { kind: 'form', message: 'Could not calculate the updated family plan. Your last saved plan is unchanged.' };
+}
+
+const familyDraftEqual = (left: FamilyPlanDraft, right: FamilyPlanDraft) => JSON.stringify(left) === JSON.stringify(right);
+export type FamilyPlanFormState = { accepted: FamilyPlanDraft | null; draft: FamilyPlanDraft | null };
+export type FamilyPlanFormAction = { type: 'load'; value: FamilyPlanDraft } | { type: 'edit'; value: FamilyPlanDraft } | { type: 'saved'; value: FamilyPlanDraft };
+export function familyPlanFormReducer(state: FamilyPlanFormState, action: FamilyPlanFormAction): FamilyPlanFormState {
+  if (action.type === 'edit') return { ...state, draft: action.value };
+  if (action.type === 'saved') return { accepted: action.value, draft: action.value };
+  const dirty = state.accepted && state.draft && !familyDraftEqual(state.accepted, state.draft);
+  return { accepted: action.value, draft: dirty ? state.draft : action.value };
+}
+const scenarioTone = { conservative: '#D98A00', expected: '#2563EB', optimistic: '#7357B6' } as const;
+
+export const FamilyPlanWorkspaceView: React.FC<{
+  data: FamilyPlanResponse; draft: FamilyPlanDraft; onDraftChange: (draft: FamilyPlanDraft) => void;
+  onSave: (payload: FamilyPlanUpdate) => void; onRestore: () => void; isSaving: boolean; fieldErrors?: FieldErrors;
+  saveError?: string | null; saved?: boolean; onRetry?: () => void; onOpenDataImport?: () => void;
+}> = ({ data, draft, onDraftChange, onSave, onRestore, isSaving, fieldErrors = {}, saveError, saved, onRetry, onOpenDataImport }) => {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const accepted = useMemo(() => familyPlanDraftFromResponse(data), [data]);
+  const dirty = !familyDraftEqual(draft, accepted);
+  const primary = data.primary_goal;
+  const achieved = primary.achieved_pct;
+  const expected = data.scenario_projections.find(({ settings }) => settings.scenario_key === 'expected') ?? data.scenario_projections[0];
+  const passive = expected?.passive_income;
+  return <Stack data-testid="wealth-goal-workspace" spacing={2.25} sx={{ minWidth: 0, overflowX: 'hidden' }}>
+    {data.data_health === 'warning' && <Alert severity="warning">Attention needed — projections use the latest available portfolio snapshot.</Alert>}
+    {data.data_health === 'empty' && <EmptyWealthGoalAlert onOpenDataImport={onOpenDataImport} disabled={isSaving} />}
+    <Paper variant="outlined" sx={{ ...cardSx, p: { xs: 2, md: 2.75 }, overflow: 'hidden', background: 'linear-gradient(120deg,#F7FAFF 0%,#FFFFFF 70%)' }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={2}>
+        <Box><Stack direction="row" alignItems="center" spacing={1}><FlagRoundedIcon color="primary" /><Typography variant="overline" fontWeight={900}>Primary family finish line</Typography></Stack><Typography variant="h4" fontWeight={900}>{primary.goal.name}</Typography><Typography color="text.secondary">Market-value net worth {formatCompactCrore(primary.current_value_inr)} · target {formatCompactCrore(primary.goal.target_amount_inr)} by {primary.goal.deadline.slice(0, 4)}</Typography></Box>
+        <Button variant="outlined" onClick={() => setDrawerOpen(true)}>Edit assumptions</Button>
+      </Stack>
+      <Box sx={{ mt: 2, p: .6, bgcolor: '#E8EEF5', borderRadius: 8 }} aria-label={`Goal progress ${achieved == null ? 'unavailable' : `${formatGoalPercentage(achieved)}%`}`}><LinearProgress variant="determinate" value={progressFill(achieved ?? 0)} sx={{ height: 16, borderRadius: 8, '& .MuiLinearProgress-bar': { borderRadius: 8, bgcolor: '#2563EB' } }} /></Box>
+      <Stack direction="row" justifyContent="space-between" mt={1} flexWrap="wrap"><Typography fontWeight={850}>{achieved == null ? 'Progress unavailable' : `${formatGoalPercentage(achieved)}% complete`}</Typography><Typography>Remaining {formatCompactCrore(primary.remaining_inr)}</Typography></Stack>
+      {dirty && <Alert severity="warning" sx={{ mt: 2 }}>Draft assumptions are ready to review. The runway below remains the last saved server calculation.</Alert>}
+    </Paper>
+    <Paper component="section" variant="outlined" sx={{ ...cardSx, p: { xs: 1.5, md: 2.5 }, minWidth: 0 }}><FamilyWealthRunwayChart projections={data.scenario_projections} /></Paper>
+    <Box component="section"><Typography variant="h5" fontWeight={900} mb={1.25}>Linked goals</Typography><FamilyGoalCards goals={expected?.goal_health ?? []} linkedGoals={data.goals} /></Box>
+    {passive && <PassiveIncomePanel analysis={passive} />}
+    <Box component="section"><Typography variant="h5" fontWeight={900} mb={1.25}>Scenario comparison</Typography><Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3,minmax(0,1fr))' }, gap: 1.5 }}>{data.scenario_projections.map((scenario) => <Paper key={scenario.settings.scenario_key} variant="outlined" sx={{ ...cardSx, p: 2, minWidth: 0, borderTop: `4px solid ${scenarioTone[scenario.settings.scenario_key]}` }}><Typography fontWeight={900} textTransform="capitalize">{scenario.settings.scenario_key}</Typography><Typography variant="h5" fontWeight={900}>{formatCrore(scenario.ending_total_net_worth_inr)}</Typography><Typography color="text.secondary">Projected ending net worth</Typography><Typography mt={1}>Annual return <b>{scenario.settings.annual_return_pct}%</b></Typography>{scenario.first_underfunded_goal_key && <Typography color="error.main">First funding gap: {scenario.first_underfunded_goal_key.replaceAll('_', ' ')}</Typography>}</Paper>)}</Box></Box>
+    {saved && <Alert severity="success">Family plan saved and recalculated.</Alert>}
+    {saveError && <Alert severity="error" action={onRetry && <Button color="inherit" disabled={isSaving} onClick={onRetry}>Retry</Button>}>{saveError}</Alert>}
+    <Drawer anchor="right" open={drawerOpen} onClose={() => !isSaving && setDrawerOpen(false)} PaperProps={{ sx: { maxWidth: '100%' } }}><FamilyPlanAssumptions value={draft} onChange={onDraftChange} fieldErrors={fieldErrors} disabled={isSaving} dirty={dirty} /><Stack direction="row" spacing={1} sx={{ position: 'sticky', bottom: 0, bgcolor: '#fff', borderTop: '1px solid #DCE7F2', p: 2, zIndex: 1 }}><Button variant="contained" disabled={!dirty || isSaving} onClick={() => onSave(familyPlanUpdateFromDraft(draft))}>{isSaving ? 'Saving…' : 'Save and recalculate'}</Button><Button disabled={isSaving} onClick={onRestore}>Restore defaults</Button></Stack></Drawer>
+  </Stack>;
+};
+
+export const LegacyWealthGoalWorkspace: React.FC<{ onOpenDataImport?: () => void }> = ({ onOpenDataImport }) => {
   const client = useQueryClient();
   const query = useQuery(wealthGoalQueryOptions);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -165,5 +225,20 @@ const WealthGoalWorkspace: React.FC<{ onOpenDataImport?: () => void }> = ({ onOp
   if (query.isError || !query.data) return <WealthGoalError retry={() => void query.refetch()} />;
   const clearFeedback = () => { setFieldErrors({}); setSaveStatus(clearGoalSaveFeedback()); };
   return <WealthGoalWorkspaceView data={query.data} onSave={(payload) => { clearFeedback(); mutation.mutate(payload); }} isSaving={mutation.isPending} fieldErrors={fieldErrors} saved={saveStatus.saved} saveError={saveStatus.error?.message} onRetrySave={saveStatus.error ? () => retryGoalSave(saveStatus.error, mutation.mutate) : undefined} onOpenDataImport={onOpenDataImport} onDraftChange={clearFeedback} />;
+};
+
+const WealthGoalWorkspace: React.FC<{ onOpenDataImport?: () => void }> = ({ onOpenDataImport }) => {
+  const client = useQueryClient();
+  const query = useQuery(familyPlanQueryOptions);
+  const [form, dispatchForm] = useReducer(familyPlanFormReducer, { accepted: null, draft: null });
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [saveStatus, setSaveStatus] = useState<{ saved: boolean; error: { message: string; payload: FamilyPlanUpdate } | null }>({ saved: false, error: null });
+  useEffect(() => { if (query.data) dispatchForm({ type: 'load', value: familyPlanDraftFromResponse(query.data) }); }, [query.data]);
+  const mutation = useMutation({ mutationFn: updateFamilyPlan, onSuccess: (next) => { client.setQueryData(familyPlanQueryOptions.queryKey, next); dispatchForm({ type: 'saved', value: familyPlanDraftFromResponse(next) }); setFieldErrors({}); setSaveStatus({ saved: true, error: null }); }, onError: (error, payload) => { const failure = classifyFamilyPlanSaveError(error); if (failure.kind === 'fields') { setFieldErrors(failure.errors); setSaveStatus({ saved: false, error: null }); } else setSaveStatus({ saved: false, error: { message: failure.message, payload } }); } });
+  const restore = useMutation({ mutationFn: restoreFamilyPlanDefaults, onSuccess: (next) => { client.setQueryData(familyPlanQueryOptions.queryKey, next); dispatchForm({ type: 'saved', value: familyPlanDraftFromResponse(next) }); setFieldErrors({}); setSaveStatus({ saved: true, error: null }); } });
+  if (query.isLoading || (query.data && !form.draft)) return <WealthGoalLoading />;
+  if (query.isError || !query.data || !form.draft) return <WealthGoalError retry={() => void query.refetch()} />;
+  const edit = (next: FamilyPlanDraft) => { dispatchForm({ type: 'edit', value: next }); setFieldErrors({}); setSaveStatus({ saved: false, error: null }); };
+  return <FamilyPlanWorkspaceView data={query.data} draft={form.draft} onDraftChange={edit} onSave={(payload) => { setSaveStatus({ saved: false, error: null }); mutation.mutate(payload); }} onRestore={() => { if (window.confirm('Restore all family-plan assumptions and linked goals to defaults?')) restore.mutate(); }} isSaving={mutation.isPending || restore.isPending} fieldErrors={fieldErrors} saved={saveStatus.saved} saveError={saveStatus.error?.message ?? (restore.isError ? 'Could not restore defaults. Your saved plan is unchanged.' : null)} onRetry={saveStatus.error ? () => mutation.mutate(saveStatus.error!.payload) : undefined} onOpenDataImport={onOpenDataImport} />;
 };
 export default WealthGoalWorkspace;
