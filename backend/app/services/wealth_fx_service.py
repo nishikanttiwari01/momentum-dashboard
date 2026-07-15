@@ -50,7 +50,13 @@ def _result(row: PortfolioFxRate, *, fallback: bool) -> FxResult:
     )
 
 
-def get_usd_inr(session: Session, requested_on: date, client: Any | None = None) -> FxResult:
+def get_usd_inr(
+    session: Session,
+    requested_on: date,
+    client: Any | None = None,
+    *,
+    persist: bool = True,
+) -> FxResult:
     cached = _latest_cached(session, requested_on)
     if cached is not None and cached.effective_on == requested_on:
         return _result(cached, fallback=False)
@@ -72,11 +78,14 @@ def get_usd_inr(session: Session, requested_on: date, client: Any | None = None)
             source="frankfurter",
             fetched_at=fetched_at,
         )
+        if not persist:
+            return _result(row, fallback=False)
         session.add(row)
         session.commit()
         return _result(row, fallback=False)
     except Exception as exc:
-        session.rollback()
+        if persist:
+            session.rollback()
         cached = _latest_cached(session, requested_on)
         if cached is None:
             raise FxUnavailable(f"USD/INR unavailable for {requested_on.isoformat()}") from exc

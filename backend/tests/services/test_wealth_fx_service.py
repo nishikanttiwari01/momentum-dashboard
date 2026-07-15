@@ -33,3 +33,12 @@ def test_network_failure_uses_latest_cached_rate(session):
     result = get_usd_inr(session, date(2026, 7, 14), client=FailingClient())
     assert result.rate == 86.1
     assert result.is_fallback is True
+
+
+def test_non_persisting_resolution_does_not_commit_callers_transaction(session):
+    outer = session.begin()
+    result = get_usd_inr(session, date(2026, 7, 14), client=StaticClient(), persist=False)
+    assert result.rate == 86.25
+    assert session.query(PortfolioFxRate).count() == 0
+    assert session.in_transaction()
+    outer.rollback()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 import uuid
 
@@ -11,26 +11,24 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.repos.models import (
-    FamilyWealthGoal, FamilyWealthPlan, PortfolioAsset, PortfolioFxRate,
+    FamilyWealthGoal, FamilyWealthPlan, PortfolioAsset,
     PortfolioSnapshot, WealthGoal, WealthGoalScenario,
 )
 from app.schemas.wealth_portfolio import (
     AnnualRunwayEvent, AnnualRunwayPoint, FamilyPlanAssumptions,
     FamilyPlanResponse, FamilyPlanUpdate, FamilyScenarioProjection,
-    FamilyScenarioSettings, GoalHealth, GoalScenarioProjection,
-    GoalScenarioSettings, GoalSettings, LinkedGoalSettings,
-    PassiveIncomeAnalysis, PrimaryGoalResponse,
+    FamilyScenarioSettings, GoalHealth, LinkedGoalSettings,
+    PassiveIncomeAnalysis, WealthSummary,
 )
 from app.services.family_wealth_projection import (
     ProjectionGoal, ProjectionInput, UnsafeProjection, project_family_wealth,
 )
-from app.services.wealth_fx_service import FxUnavailable
+from app.services.wealth_fx_service import FxUnavailable, get_usd_inr
 from app.services.wealth_goal_service import (
-    InvalidGoalConfiguration, PrimaryGoalNotFound, get_primary_goal_response,
+    PrimaryGoalNotFound, get_primary_goal_response,
 )
 
 
-PLAN_ID = "00000000-0000-0000-0000-000000000001"
 SCENARIO_KEYS = ("conservative", "expected", "optimistic")
 GOAL_NAMESPACE = uuid.UUID("f7bbbf68-47e5-4cd6-8987-d0b3e3898f11")
 FINANCIAL_TYPES = {
@@ -91,18 +89,25 @@ def _settings(plan, rows):
 
 
 def _opening_balances(session: Session, calculated_on: date):
-    snapshot = session.scalar(select(PortfolioSnapshot).order_by(PortfolioSnapshot.as_of.desc(), PortfolioSnapshot.created_at.desc()).limit(1))
+    snapshot = session.scalar(select(PortfolioSnapshot).order_by(
+        PortfolioSnapshot.as_of.desc(), PortfolioSnapshot.created_at.desc(),
+        PortfolioSnapshot.id.desc(),
+    ).limit(1))
     if snapshot is None:
         return None, Decimal("0"), Decimal("0"), "empty"
     assets = list(session.scalars(select(PortfolioAsset).where(PortfolioAsset.snapshot_id == snapshot.id)))
-    fx = session.scalar(select(PortfolioFxRate).where(
-        PortfolioFxRate.base_currency == "USD", PortfolioFxRate.quote_currency == "INR",
-        PortfolioFxRate.effective_on <= snapshot.as_of,
-    ).order_by(PortfolioFxRate.effective_on.desc()).limit(1))
+    recognized = [asset for asset in assets if asset.asset_type.lower() in FINANCIAL_TYPES | PROPERTY_TYPES]
+    needs_usd = any(asset.currency.upper() == "USD" and asset.market_value is not None for asset in recognized)
+    fx = None
+    if needs_usd:
+        try:
+            fx = get_usd_inr(session, calculated_on, persist=False)
+        except FxUnavailable:
+            pass
     financial = Decimal("0")
     property_value = Decimal("0")
-    warning = fx is not None and fx.effective_on != snapshot.as_of
-    for asset in assets:
+    warning = needs_usd and (fx is None or fx.effective_on != calculated_on)
+    for asset in recognized:
         kind = asset.asset_type.lower()
         if kind not in FINANCIAL_TYPES | PROPERTY_TYPES:
             continue
@@ -126,18 +131,7 @@ def _opening_balances(session: Session, calculated_on: date):
     return snapshot, financial, property_value, "warning" if warning else "fresh"
 
 
-def _fallback_primary(session, calculated_on):
-    goal, scenarios = _primary_rows(session)
-    return PrimaryGoalResponse(
-        goal=GoalSettings(name=goal.name, target_amount_inr=goal.target_amount_inr, deadline=goal.deadline),
-        scenario_projections=[GoalScenarioProjection(settings=GoalScenarioSettings(
-            scenario_key=row.scenario_key, annual_return_pct=row.annual_return_pct,
-            monthly_contribution_inr=row.monthly_contribution_inr,
-        )) for row in scenarios], calculated_on=calculated_on, data_health="unavailable",
-    )
-
-
-def _projection(settings, assumptions, goals, result):
+def _projection(settings, goals, result):
     by_key = {goal.goal_key: goal for goal in goals}
     event = lambda item: AnnualRunwayEvent(
         goal_key=item.goal_key, goal_name=item.goal_name, goal_type=item.goal_type,
@@ -181,13 +175,17 @@ def get_family_plan_response(session: Session, today: date | None = None) -> Fam
     calculated_on = today or date.today()
     plan = _plan(session)
     goal_rows = list(session.scalars(select(FamilyWealthGoal).where(FamilyWealthGoal.plan_id == plan.id).order_by(FamilyWealthGoal.display_order, FamilyWealthGoal.goal_key)))
-    primary_goal, scenario_rows = _primary_rows(session)
+    _, scenario_rows = _primary_rows(session)
     assumptions, goals = _settings(plan, goal_rows)
     snapshot, opening_financial, opening_property, health = _opening_balances(session, calculated_on)
-    try:
-        primary = get_primary_goal_response(session, today=calculated_on)
-    except FxUnavailable:
-        primary = _fallback_primary(session, calculated_on)
+    summary = WealthSummary(
+        snapshot_id=snapshot.id if snapshot else None,
+        as_of=snapshot.as_of if snapshot else None,
+        net_worth_market_value_inr=(float(opening_financial + opening_property) if snapshot else None),
+        invested_capital_inr=(float(opening_financial + opening_property) if snapshot else None),
+        data_health=health,
+    )
+    primary = get_primary_goal_response(session, today=calculated_on, summary=summary)
     enabled = [goal for goal in goals if goal.enabled]
     end_date = max((goal.target_date for goal in enabled), default=calculated_on)
     projection_goals = tuple(ProjectionGoal(
@@ -209,7 +207,7 @@ def get_family_plan_response(session: Session, today: date | None = None) -> Fam
                 property_growth_pct=_decimal(assumptions.property_growth_pct), withdrawal_rate_pct=_decimal(assumptions.withdrawal_rate_pct),
                 amber_margin_pct=_decimal(assumptions.amber_margin_pct), annual_financial_return_pct=_decimal(row.annual_return_pct), goals=projection_goals,
             ))
-            projections.append(_projection(scenario, assumptions, goals, result))
+            projections.append(_projection(scenario, goals, result))
         return FamilyPlanResponse(primary_goal=primary, calculated_on=calculated_on, snapshot_id=snapshot.id if snapshot else None,
             data_health=health, assumptions=assumptions, goals=goals, scenario_projections=projections)
     except (UnsafeProjection, ValidationError) as exc:

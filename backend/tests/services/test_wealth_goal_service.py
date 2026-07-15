@@ -5,9 +5,10 @@ import pytest
 from sqlalchemy import select
 
 from app.repos.models import WealthGoal, WealthGoalScenario
-from app.schemas.wealth_portfolio import GoalConfigurationUpdate
+from app.schemas.wealth_portfolio import GoalConfigurationUpdate, WealthSummary
 from app.services import wealth_goal_service
 from app.services.wealth_goal_service import (
+    get_primary_goal_response,
     monthly_trajectory,
     project_balance,
     projected_completion_date,
@@ -15,6 +16,22 @@ from app.services.wealth_goal_service import (
     whole_months_between,
     update_primary_goal,
 )
+
+
+def test_primary_goal_uses_injected_summary_without_building_another(session, monkeypatch):
+    injected = WealthSummary(
+        snapshot_id="family-snapshot", as_of=date(2026, 7, 1),
+        net_worth_market_value_inr=1_000_000, invested_capital_inr=1_000_000,
+        data_health="warning",
+    )
+    monkeypatch.setattr(wealth_goal_service, "build_summary", lambda *_: (_ for _ in ()).throw(AssertionError("must not build")))
+
+    response = get_primary_goal_response(session, today=date(2026, 7, 15), summary=injected)
+
+    assert response.calculated_on == date(2026, 7, 15)
+    assert response.snapshot_id == "family-snapshot"
+    assert response.current_value_inr == 1_000_000
+    assert response.data_health == "warning"
 
 
 def test_project_balance_at_zero_return_uses_end_of_period_contributions():

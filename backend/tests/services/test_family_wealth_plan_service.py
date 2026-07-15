@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import math
 
 import pytest
@@ -20,6 +20,7 @@ from app.services.family_wealth_plan_service import (
     restore_family_plan_defaults,
     save_family_plan,
 )
+from app.services.wealth_fx_service import FxResult, FxUnavailable
 
 from app.schemas.wealth_portfolio import (
     AnnualRunwayEvent,
@@ -67,10 +68,13 @@ def _payload() -> dict:
     }
 
 
-def _add_snapshot(session, *, snapshot_id="snapshot-1", as_of=date(2026, 7, 1), assets=()):
+def _add_snapshot(session, *, snapshot_id="snapshot-1", as_of=date(2026, 7, 1), created_at=None, assets=()):
     import_id = f"import-{snapshot_id}"
     session.add(PortfolioImport(id=import_id, source_sha256=import_id, filename="book.xlsx", status="completed", issue_counts={}))
-    session.add(PortfolioSnapshot(id=snapshot_id, import_id=import_id, as_of=as_of))
+    snapshot_values = {"id": snapshot_id, "import_id": import_id, "as_of": as_of}
+    if created_at is not None:
+        snapshot_values["created_at"] = created_at
+    session.add(PortfolioSnapshot(**snapshot_values))
     for index, asset in enumerate(assets):
         session.add(PortfolioAsset(
             id=f"{snapshot_id}-asset-{index}", snapshot_id=snapshot_id,
@@ -100,8 +104,21 @@ def test_service_uses_latest_snapshot_and_splits_property_without_double_count(s
     assert captured[0].opening_property == 500
 
 
+def test_latest_snapshot_uses_id_as_final_tie_breaker(session):
+    tied = datetime(2026, 7, 1, 12, 0)
+    _add_snapshot(session, snapshot_id="aaa", created_at=tied, assets=[dict(asset_type="stocks", currency="INR", invested_amount=1, market_value=100)])
+    _add_snapshot(session, snapshot_id="zzz", created_at=tied, assets=[dict(asset_type="stocks", currency="INR", invested_amount=1, market_value=200)])
+
+    response = get_family_plan_response(session, today=date(2026, 7, 15))
+
+    assert response.snapshot_id == "zzz"
+    assert response.primary_goal.snapshot_id == "zzz"
+    assert response.primary_goal.current_value_inr == 200
+
+
 def test_service_converts_usd_and_warns_when_fx_is_missing(session, monkeypatch):
     _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=8, market_value=10)])
+    monkeypatch.setattr(family_wealth_plan_service, "get_usd_inr", lambda *_args, **_kwargs: (_ for _ in ()).throw(FxUnavailable("missing")))
     captured = []
     real_project = family_wealth_plan_service.project_family_wealth
     monkeypatch.setattr(family_wealth_plan_service, "project_family_wealth", lambda data: (captured.append(data), real_project(data))[1])
@@ -111,9 +128,10 @@ def test_service_converts_usd_and_warns_when_fx_is_missing(session, monkeypatch)
 
     session.add(PortfolioFxRate(base_currency="USD", quote_currency="INR", effective_on=date(2026, 7, 1), rate=85, source="test", fetched_at=date(2026, 7, 1)))
     session.commit()
+    monkeypatch.setattr(family_wealth_plan_service, "get_usd_inr", lambda *_args, **_kwargs: FxResult(85, date(2026, 7, 1), "test", datetime(2026, 7, 1), True))
     captured.clear()
     converted = get_family_plan_response(session, today=date(2026, 7, 15))
-    assert converted.data_health == "fresh"
+    assert converted.data_health == "warning"
     assert captured[0].opening_financial == 850
 
 
@@ -126,6 +144,59 @@ def test_service_does_not_substitute_invested_amount_for_missing_market_value(se
     get_family_plan_response(session, today=date(2026, 7, 15))
 
     assert captured[0].opening_financial == 0
+
+
+def test_inr_snapshot_ignores_stale_fx_and_remains_fresh(session, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="stocks", currency="INR", invested_amount=1, market_value=100)])
+    session.add(PortfolioFxRate(base_currency="USD", quote_currency="INR", effective_on=date(2020, 1, 1), rate=70, source="stale", fetched_at=date(2020, 1, 1)))
+    session.commit()
+    monkeypatch.setattr(family_wealth_plan_service, "get_usd_inr", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("INR-only must not resolve FX")))
+
+    response = get_family_plan_response(session, today=date(2026, 7, 15))
+
+    assert response.data_health == "fresh"
+    assert response.primary_goal.current_value_inr == 100
+
+
+def test_unsupported_currency_is_excluded_consistently_from_primary(session):
+    _add_snapshot(session, assets=[
+        dict(asset_type="stocks", currency="INR", invested_amount=1, market_value=100),
+        dict(asset_type="stocks", currency="SGD", invested_amount=1, market_value=10_000),
+    ])
+
+    response = get_family_plan_response(session, today=date(2026, 7, 15))
+
+    assert response.data_health == "warning"
+    assert response.primary_goal.data_health == "warning"
+    assert response.primary_goal.current_value_inr == 100
+
+
+@pytest.mark.parametrize(
+    ("fx_result", "expected_health", "expected_opening"),
+    [(FxResult(85, date(2026, 7, 15), "fetched", datetime(2026, 7, 15), False), "fresh", 850),
+     (FxResult(85, date(2026, 7, 1), "cached", datetime(2026, 7, 1), True), "warning", 850),
+     (None, "warning", 0)],
+)
+def test_usd_family_save_is_transaction_neutral_for_all_fx_states(session, fx_result, expected_health, expected_opening, monkeypatch):
+    _add_snapshot(session, assets=[dict(asset_type="us_holdings", currency="USD", invested_amount=1, market_value=10)])
+    def resolve(*_args, **_kwargs):
+        if fx_result is None:
+            raise FxUnavailable("missing")
+        return fx_result
+    monkeypatch.setattr(family_wealth_plan_service, "get_usd_inr", resolve)
+    captured = []
+    real_project = family_wealth_plan_service.project_family_wealth
+    monkeypatch.setattr(family_wealth_plan_service, "project_family_wealth", lambda data: (captured.append(data), real_project(data))[1])
+    outer = session.begin()
+    try:
+        session.add(PortfolioImport(id=f"outer-{expected_health}-{expected_opening}", source_sha256=f"sha-{expected_health}-{expected_opening}", filename="outer.xlsx", status="pending", issue_counts={}))
+        response = save_family_plan(session, FamilyPlanUpdate.model_validate(_payload()), today=date(2026, 7, 15))
+        assert response.data_health == expected_health
+        assert response.primary_goal.current_value_inr == (expected_opening if expected_opening else 0)
+        assert captured[0].opening_financial == expected_opening
+        assert session.in_transaction()
+    finally:
+        outer.rollback()
 
 
 def test_empty_snapshot_returns_configured_three_scenarios(session):

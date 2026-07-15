@@ -17,6 +17,7 @@ from app.schemas.wealth_portfolio import (
     GoalSettings,
     GoalTrajectoryPoint,
     PrimaryGoalResponse,
+    WealthSummary,
 )
 from app.services.wealth_summary_service import build_summary
 
@@ -212,7 +213,9 @@ def _trajectory(points: tuple[TrajectoryPoint, ...]) -> list[GoalTrajectoryPoint
 
 
 def get_primary_goal_response(
-    session: Session, today: date | None = None
+    session: Session,
+    today: date | None = None,
+    summary: WealthSummary | None = None,
 ) -> PrimaryGoalResponse:
     calculated_on = today or date.today()
     goal = _primary_goal(session)
@@ -245,7 +248,7 @@ def get_primary_goal_response(
         )
         for row in scenarios
     ]
-    summary = build_summary(session)
+    summary = summary if summary is not None else build_summary(session)
     if summary.net_worth_market_value_inr is None:
         return PrimaryGoalResponse(
             goal=settings,
