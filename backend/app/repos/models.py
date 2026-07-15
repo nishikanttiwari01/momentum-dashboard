@@ -372,15 +372,15 @@ class FamilyWealthGoal(Base):
     plan_id: Mapped[str] = mapped_column(
         ForeignKey("family_wealth_plans.id"), index=True
     )
-    goal_key: Mapped[str] = mapped_column(String(64))
+    goal_key: Mapped[str] = mapped_column(String(40))
     name: Mapped[str] = mapped_column(String(120))
-    goal_type: Mapped[str] = mapped_column(String(32))
+    goal_type: Mapped[str] = mapped_column(String(24))
     current_value_amount_inr: Mapped[float] = mapped_column(Float)
     target_date: Mapped[date] = mapped_column(Date)
     inflation_pct: Mapped[float] = mapped_column(Float)
-    funding_treatment: Mapped[str] = mapped_column(String(32))
+    funding_treatment: Mapped[str] = mapped_column(String(24))
     priority: Mapped[int] = mapped_column(Integer)
-    enabled: Mapped[bool] = mapped_column(Boolean)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     display_order: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp(), nullable=False

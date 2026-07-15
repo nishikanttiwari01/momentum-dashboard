@@ -129,30 +129,73 @@ def test_family_wealth_plan_defaults_are_seeded():
             )
         }
         plan = conn.exec_driver_sql(
-            "select base_age, monthly_contribution_inr, contribution_step_up_enabled, "
+            "select id, base_age, monthly_contribution_inr, contribution_step_up_enabled, "
             "contribution_step_up_pct, monthly_rent_inr, rent_growth_pct, "
             "reinvest_rent_until, property_growth_pct, withdrawal_rate_pct, "
             "amber_margin_pct "
             "from family_wealth_plans"
         ).one()
         goals = conn.exec_driver_sql(
-            "select goal_key, current_value_amount_inr, target_date, inflation_pct, "
-            "funding_treatment from family_wealth_goals order by display_order"
+            "select id, goal_key, goal_type, current_value_amount_inr, target_date, "
+            "inflation_pct, funding_treatment, priority, enabled, display_order "
+            "from family_wealth_goals order by display_order"
         ).all()
 
     dispose_engine()
     assert {"family_wealth_plans", "family_wealth_goals"} <= names
     assert plan == (
+        "00000000-0000-0000-0000-000000000001",
         42, 600000.0, 0, 6.0, 45000.0, 6.0, "2029-12-31", 6.0, 3.5, 10.0
     )
     assert goals == [
-        ("child_1_education", 20000000.0, "2032-12-31", 8.0, "expense"),
-        ("passive_income", 200000.0, "2029-12-31", 0.0, "income_target"),
-        ("bangalore_house", 30000000.0, "2036-12-31", 8.0, "asset_conversion"),
-        ("child_2_education", 20000000.0, "2038-12-31", 8.0, "expense"),
-        ("child_1_marriage", 5000000.0, "2042-12-31", 6.0, "expense"),
-        ("child_2_marriage", 5000000.0, "2044-12-31", 6.0, "expense"),
+        ("00000000-0000-0000-0000-000000000101", "child_1_education", "education", 20000000.0, "2032-12-31", 8.0, "expense", 1, 1, 0),
+        ("00000000-0000-0000-0000-000000000102", "passive_income", "passive_income", 200000.0, "2029-12-31", 0.0, "income_target", 2, 1, 1),
+        ("00000000-0000-0000-0000-000000000103", "bangalore_house", "house", 30000000.0, "2036-12-31", 8.0, "asset_conversion", 3, 1, 2),
+        ("00000000-0000-0000-0000-000000000104", "child_2_education", "education", 20000000.0, "2038-12-31", 8.0, "expense", 4, 1, 3),
+        ("00000000-0000-0000-0000-000000000105", "child_1_marriage", "marriage", 5000000.0, "2042-12-31", 6.0, "expense", 5, 1, 4),
+        ("00000000-0000-0000-0000-000000000106", "child_2_marriage", "marriage", 5000000.0, "2044-12-31", 6.0, "expense", 6, 1, 5),
     ]
+
+
+def test_family_wealth_goal_defaults_enabled_and_goal_key_is_unique_per_plan():
+    tmpdir = tempfile.mkdtemp()
+    db_path = Path(tmpdir) / "test_family_wealth_goal_constraints.db"
+    init_sqlite(str(db_path))
+
+    eng = get_engine()
+    insert_sql = (
+        "insert into family_wealth_goals "
+        "(id, plan_id, goal_key, name, goal_type, current_value_amount_inr, "
+        "target_date, inflation_pct, funding_treatment, priority, display_order) "
+        "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    values = (
+        "00000000-0000-0000-0000-000000000107",
+        "00000000-0000-0000-0000-000000000001",
+        "future_goal",
+        "Future goal",
+        "education",
+        1000000.0,
+        "2045-12-31",
+        8.0,
+        "expense",
+        7,
+        6,
+    )
+    with eng.begin() as conn:
+        conn.exec_driver_sql(insert_sql, values)
+        assert conn.exec_driver_sql(
+            "select enabled from family_wealth_goals where id = ?", (values[0],)
+        ).scalar_one() == 1
+
+    with pytest.raises(IntegrityError):
+        with eng.begin() as conn:
+            conn.exec_driver_sql(
+                insert_sql,
+                ("00000000-0000-0000-0000-000000000108",) + values[1:],
+            )
+
+    dispose_engine()
 
 
 def test_multiple_non_primary_wealth_goals_can_coexist():
@@ -230,6 +273,8 @@ def test_wealth_goal_migration_downgrade_upgrade_round_trip():
         }
     assert "wealth_goals" not in names
     assert "wealth_goal_scenarios" not in names
+    assert "family_wealth_plans" not in names
+    assert "family_wealth_goals" not in names
 
     alembic_command.upgrade(cfg, "head")
     with sqlite3.connect(db_path) as conn:
