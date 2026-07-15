@@ -5,6 +5,7 @@ import { familyRunwayRows, formatCrore, type FamilyRunwayEvent } from './familyW
 import type { AnnualRunwayEvent, AnnualRunwayPoint, FamilyScenarioProjection } from './wealthTypes';
 
 export const RUNWAY_LINE_COLORS = { total: '#102A43', financial: '#2563EB', property: '#0F9D8A', conservative: '#D98A00', optimistic: '#7357B6' } as const;
+export const RUNWAY_LINE_ANIMATION_ACTIVE = false;
 
 export function aggregateRunwayEvents(events: readonly AnnualRunwayEvent[]): { label: string; events: AnnualRunwayEvent[] }[] {
   if (!events.length) return [];
@@ -21,6 +22,7 @@ export function runwayTooltipLines(point: AnnualRunwayPoint): string[] {
     `Financial growth ${formatCrore(point.financial_growth_inr)}`,
     `Property growth ${formatCrore(point.property_growth_inr)}`,
     `Goal outflows ${formatCrore(point.goal_outflows_inr)}`,
+    ...point.events.map((event) => `${event.goal_name}: funded ${formatCrore(event.funded_amount_inr)}${event.shortfall_inr > 0 ? `; shortfall ${formatCrore(event.shortfall_inr)}` : ''}`),
   ];
 }
 
@@ -54,13 +56,18 @@ export const FamilyWealthRunwayChart: React.FC<{ projections: readonly FamilySce
           <YAxis width={66} tickFormatter={(value) => formatCrore(Number(value))} tick={{ fill: '#52677C', fontSize: 10 }} />
           <Tooltip content={<RunwayTooltip pointByDate={pointByDate} />} />
           {eventRows.map((row) => <ReferenceLine key={row.on} x={row.on} stroke={row.events.some((event) => event.funding_treatment === 'asset_conversion') ? '#0F9D8A' : '#7357B6'} strokeDasharray="4 4" label={{ value: aggregateRunwayEvents(row.events)[0]?.label, position: 'top', fill: '#102A43', fontSize: 10 }} />)}
-          <Line type="monotone" dataKey="conservative_total_inr" name="Conservative total" stroke={RUNWAY_LINE_COLORS.conservative} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls isAnimationActive={false} />
-          <Line type="monotone" dataKey="optimistic_total_inr" name="Optimistic total" stroke={RUNWAY_LINE_COLORS.optimistic} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls isAnimationActive={false} />
-          <Line type="monotone" dataKey="expected_total_inr" name="Total net worth" stroke={RUNWAY_LINE_COLORS.total} strokeWidth={3.5} dot={false} connectNulls isAnimationActive={false} />
-          <Line type="monotone" dataKey="expected_financial_assets_inr" name="Financial assets" stroke={RUNWAY_LINE_COLORS.financial} strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
-          <Line type="monotone" dataKey="expected_property_value_inr" name="Property value" stroke={RUNWAY_LINE_COLORS.property} strokeWidth={2.5} dot={false} connectNulls isAnimationActive={false} />
+          <Line type="monotone" dataKey="conservative_total_inr" name="Conservative total" stroke={RUNWAY_LINE_COLORS.conservative} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls isAnimationActive={RUNWAY_LINE_ANIMATION_ACTIVE} />
+          <Line type="monotone" dataKey="optimistic_total_inr" name="Optimistic total" stroke={RUNWAY_LINE_COLORS.optimistic} strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls isAnimationActive={RUNWAY_LINE_ANIMATION_ACTIVE} />
+          <Line type="monotone" dataKey="expected_total_inr" name="Total net worth" stroke={RUNWAY_LINE_COLORS.total} strokeWidth={3.5} dot={false} connectNulls isAnimationActive={RUNWAY_LINE_ANIMATION_ACTIVE} />
+          <Line type="monotone" dataKey="expected_financial_assets_inr" name="Financial assets" stroke={RUNWAY_LINE_COLORS.financial} strokeWidth={2.5} dot={false} connectNulls isAnimationActive={RUNWAY_LINE_ANIMATION_ACTIVE} />
+          <Line type="monotone" dataKey="expected_property_value_inr" name="Property value" stroke={RUNWAY_LINE_COLORS.property} strokeWidth={2.5} dot={false} connectNulls isAnimationActive={RUNWAY_LINE_ANIMATION_ACTIVE} />
         </LineChart>
       </ResponsiveContainer>
+    </Box>
+    <Box sx={{ position: 'absolute', width: 1, height: 1, p: 0, m: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }}>
+      <table><caption>Annual family wealth data</caption><thead><tr><th>Date</th><th>Expected financial assets</th><th>Expected property value</th><th>Expected total</th><th>Conservative total</th><th>Optimistic total</th><th>Events</th></tr></thead><tbody>
+        {rows.map((row) => <tr key={row.on}><th>{row.on}</th><td>{formatCrore(row.expected_financial_assets_inr)}</td><td>{formatCrore(row.expected_property_value_inr)}</td><td>{formatCrore(row.expected_total_inr)}</td><td>{formatCrore(row.conservative_total_inr)}</td><td>{formatCrore(row.optimistic_total_inr)}</td><td>{row.events.length ? row.events.map((event) => `${event.goal_name} ${formatCrore(event.amount_inr)}`).join('; ') : 'None'}</td></tr>)}
+      </tbody></table>
     </Box>
     <Box component="ul" aria-label="Family wealth runway events" sx={{ m: 0, mt: 1, pl: 2.5 }}>
       {eventRows.map((row) => <li key={row.on}><Typography variant="body2" component="span" fontWeight={700}>{row.year} milestones: </Typography>{row.events.map((event: FamilyRunwayEvent) => <Typography component="span" variant="body2" key={event.goal_key}>{event.goal_name} ({event.funding_treatment === 'asset_conversion' ? 'Transfer to property' : `${formatCrore(event.amount_inr)} outflow`}; {event.shortfall_inr > 0 ? `${formatCrore(event.shortfall_inr)} shortfall` : 'funded'}){event !== row.events.at(-1) ? '; ' : ''}</Typography>)}</li>)}

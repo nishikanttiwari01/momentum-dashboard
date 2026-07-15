@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { PrimaryGoalResponse } from './wealthTypes';
 import type { FamilyScenarioProjection, GoalHealth, PassiveIncomeAnalysis } from './wealthTypes';
-import { FamilyWealthRunwayChart, aggregateRunwayEvents } from './FamilyWealthRunwayChart';
+import { FamilyWealthRunwayChart, RUNWAY_LINE_ANIMATION_ACTIVE, aggregateRunwayEvents, runwayTooltipLines } from './FamilyWealthRunwayChart';
 import { FamilyGoalCards } from './FamilyGoalCards';
-import { PassiveIncomePanel } from './PassiveIncomePanel';
+import { PassiveIncomePanel, type PassiveIncomePanelData } from './PassiveIncomePanel';
 import {
   DEFAULT_GOAL_FORM,
   EmptyWealthGoalAlert,
@@ -233,6 +233,24 @@ const runwayProjection: FamilyScenarioProjection = {
 };
 
 describe('family runway visual components', () => {
+  it('provides every misaligned scenario row in a semantic annual data fallback', () => {
+    const scenario = (scenario_key: FamilyScenarioProjection['settings']['scenario_key'], annual_points: FamilyScenarioProjection['annual_points']): FamilyScenarioProjection => ({ ...runwayProjection, settings: { scenario_key, annual_return_pct: 8 }, annual_points });
+    const point = (on: string, total_net_worth_inr: number, financial_assets_inr = 0, property_value_inr = 0): FamilyScenarioProjection['annual_points'][number] => ({ on, total_net_worth_inr, financial_assets_inr, property_value_inr, annual_contributions_inr: 0, annual_rent_inr: 0, financial_growth_inr: 0, property_growth_inr: 0, goal_outflows_inr: 0, events: [] });
+    const projections = [
+      scenario('conservative', [point('2028-12-31', 80_000_000), point('2030-12-31', 100_000_000)]),
+      scenario('expected', [point('2028-12-31', 100_000_000, 70_000_000, 30_000_000), runwayProjection.annual_points[0], point('2030-12-31', 200_000_000, 140_000_000, 60_000_000)]),
+      scenario('optimistic', [point('2029-12-31', 190_000_000), point('2030-12-31', 230_000_000)]),
+    ];
+    const html = renderToStaticMarkup(<FamilyWealthRunwayChart projections={projections} />);
+    for (const text of ['Annual family wealth data', '2028-12-31', '2029-12-31', '2030-12-31', '₹10 Cr', '₹12 Cr', '₹5 Cr', '₹19 Cr', '₹23 Cr', 'School fees ₹0.2 Cr']) expect(html).toContain(text);
+  });
+
+  it('exports complete tooltip facts and disables animation on line-only charts', () => {
+    expect(runwayTooltipLines(runwayProjection.annual_points[0])).toEqual(expect.arrayContaining(['Annual contributions ₹0.24 Cr', 'Rent ₹0.12 Cr', 'Financial growth ₹0.9 Cr', 'Property growth ₹0.3 Cr', 'Goal outflows ₹0.8 Cr', 'School fees: funded ₹0.2 Cr', 'Family home: funded ₹0.66 Cr; shortfall ₹0.14 Cr']));
+    expect(RUNWAY_LINE_ANIMATION_ACTIVE).toBe(false);
+    expect(FamilyWealthRunwayChart.toString()).not.toMatch(/\bArea\b|linearGradient/);
+  });
+
   it('renders an accessible unfilled runway with aggregated event fallback and tooltip facts', () => {
     expect(aggregateRunwayEvents(runwayProjection.annual_points[0].events)[0].label).toContain('2 milestones');
     const html = renderToStaticMarkup(<FamilyWealthRunwayChart projections={[runwayProjection]} />);
@@ -249,12 +267,13 @@ describe('family runway visual components', () => {
     const html = renderToStaticMarkup(<FamilyGoalCards goals={linkedGoals} />);
     for (const text of ['Green', 'Amber', 'Red', 'Fully reserved', 'Within the planning margin', 'Funding gap remains', '100% funded', '82% funded', '40% funded']) expect(html).toContain(text);
     for (const type of ['Education goal', 'House goal', 'Marriage goal', 'Passive income goal']) expect(html).toContain(`aria-label="${type}"`);
+    for (const text of ['Due Jun 2028', 'Inflated target ₹0.2 Cr', 'Available before ₹0.22 Cr', 'Funded amount ₹0.2 Cr', 'Gap ₹0', 'Gap ₹0.14 Cr', 'Gap ₹0.18 Cr']) expect(html).toContain(text);
   });
 
   it('explains rent offset, corpus, signed outcome, protection and sustainable date', () => {
-    const analysis: PassiveIncomeAnalysis = { target_date: '2029-12-31', target_monthly_income_inr: 200_000, projected_monthly_rent_inr: 70_000, portfolio_monthly_gap_inr: 130_000, required_corpus_inr: 39_000_000, supported_portfolio_monthly_income_inr: 140_000, total_monthly_income_inr: 210_000, surplus_or_shortfall_inr: 10_000, on_track: true, later_goals_protected: true, earliest_sustainable_date: '2029-06-30' };
+    const analysis: PassiveIncomeAnalysis = { target_date: '2032-12-31', target_monthly_income_inr: 275_000, projected_monthly_rent_inr: 70_000, portfolio_monthly_gap_inr: 205_000, required_corpus_inr: 39_000_000, supported_portfolio_monthly_income_inr: 215_000, total_monthly_income_inr: 285_000, surplus_or_shortfall_inr: 10_000, on_track: true, later_goals_protected: true, earliest_sustainable_date: '2029-06-30' };
     const html = renderToStaticMarkup(<PassiveIncomePanel analysis={analysis} />);
-    for (const text of ['Rent counts toward the ₹2 lakh target', '₹3.9 Cr', '+₹10,000/month', 'Later goals remain protected', '30 Jun 2029', 'On track']) expect(html).toContain(text);
+    for (const text of ['2032 income runway', 'Rent counts toward the ₹2,75,000/month target', '₹3.9 Cr', '+₹10,000/month', 'Later goals remain protected', '30 Jun 2029', 'On track']) expect(html).toContain(text);
   });
 
   it('shows specific warnings, dashes for null dates, and never leaks invalid values', () => {
@@ -264,5 +283,17 @@ describe('family runway visual components', () => {
     expect(html).toContain('Later goals would be exposed');
     expect(html).toMatch(/Earliest sustainable date<\/span><strong[^>]*>—/);
     expect(html).not.toMatch(/NaN|undefined/);
+  });
+
+  it('keeps track and protection independent and renders nullable facts as dashes', () => {
+    const analysis: PassiveIncomePanelData = { target_date: '2035-12-31', target_monthly_income_inr: 300_000, projected_monthly_rent_inr: null, portfolio_monthly_gap_inr: null, required_corpus_inr: null, supported_portfolio_monthly_income_inr: null, total_monthly_income_inr: null, surplus_or_shortfall_inr: null, on_track: true, later_goals_protected: false, earliest_sustainable_date: null };
+    const html = renderToStaticMarkup(<PassiveIncomePanel analysis={analysis} />);
+    expect(html).toContain('On track');
+    expect(html).toContain('Later goals would be exposed');
+    expect(html.match(/—/g)?.length).toBeGreaterThanOrEqual(6);
+    expect(html).not.toMatch(/NaN|undefined/);
+    const protectedButShort = renderToStaticMarkup(<PassiveIncomePanel analysis={{ ...analysis, on_track: false, later_goals_protected: true }} />);
+    expect(protectedButShort).toContain('Shortfall');
+    expect(protectedButShort).toContain('Later goals remain protected');
   });
 });
