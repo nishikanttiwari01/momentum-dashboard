@@ -194,17 +194,25 @@ def test_restore_defaults_after_edit(client):
 def test_restore_failure_leaves_configuration_unchanged(client, monkeypatch):
     edited = _configuration(client)
     edited["assumptions"]["monthly_rent_inr"] = 99_000
-    client.put(URL, json=edited)
+    edited["scenarios"][1]["annual_return_pct"] = 11
+    edited["goals"][0]["name"] = "Edited university fund"
+    assert client.put(URL, json=edited).status_code == 200
+    before_restore = _configuration(client)
 
-    def fail(*_args, **_kwargs):
-        raise InvalidFamilyPlan("forced restore failure")
+    def fail_projection(_data):
+        raise UnsafeProjection("forced restore response failure")
 
-    monkeypatch.setattr(wealth_portfolio, "restore_family_plan_defaults", fail)
+    monkeypatch.setattr(
+        family_wealth_plan_service, "project_family_wealth", fail_projection
+    )
     response = client.post(f"{URL}/restore-defaults")
     monkeypatch.undo()
 
     assert response.status_code == 422
-    assert _configuration(client) == edited
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["code"] == "VALIDATION_ERROR"
+    assert "forced restore response failure" not in str(response.json())
+    assert _configuration(client) == before_restore
 
 
 def test_unavailable_usd_fx_returns_warning_instead_of_500(client, monkeypatch):
