@@ -224,9 +224,11 @@ class FamilyScenarioSettings(BaseModel):
     annual_return_pct: float = Field(ge=-25, le=50)
 
 
-def _contract_error(error_type: str, message: str, loc: tuple, value):
+def _contract_error(
+    model_title: str, error_type: str, message: str, loc: tuple, value
+):
     return ValidationError.from_exception_data(
-        "FamilyPlanUpdate",
+        model_title,
         [
             {
                 "type": PydanticCustomError(error_type, message),
@@ -238,6 +240,7 @@ def _contract_error(error_type: str, message: str, loc: tuple, value):
 
 
 def _validate_ordered_scenarios(
+    model_title: str,
     keys: list[ScenarioKey],
     rates: list[float],
     root: str,
@@ -259,6 +262,7 @@ def _validate_ordered_scenarios(
             else (root,)
         )
         raise _contract_error(
+            model_title,
             "scenario_key_order",
             "scenarios must be conservative, expected, optimistic in that order",
             location,
@@ -267,6 +271,7 @@ def _validate_ordered_scenarios(
     for index in range(1, len(rates)):
         if rates[index - 1] > rates[index]:
             raise _contract_error(
+                model_title,
                 "scenario_return_order",
                 "scenario returns must satisfy conservative <= expected <= optimistic",
                 (root, index, *key_path, "annual_return_pct"),
@@ -283,11 +288,14 @@ class FamilyPlanUpdate(BaseModel):
     def validate_plan_contract(self):
         keys = [scenario.scenario_key for scenario in self.scenarios]
         rates = [scenario.annual_return_pct for scenario in self.scenarios]
-        _validate_ordered_scenarios(keys, rates, "scenarios")
+        _validate_ordered_scenarios(
+            "FamilyPlanUpdate", keys, rates, "scenarios"
+        )
 
         goal_keys = [goal.goal_key for goal in self.goals]
         if len(goal_keys) != len(set(goal_keys)):
             raise _contract_error(
+                "FamilyPlanUpdate",
                 "duplicate_goal_key",
                 "goal_key values must be unique",
                 ("goals",),
@@ -304,19 +312,35 @@ class FamilyPlanUpdate(BaseModel):
             expected = expected_treatments[goal.goal_type]
             if goal.funding_treatment != expected:
                 raise _contract_error(
+                    "FamilyPlanUpdate",
                     "funding_treatment_mismatch",
                     f"{goal.goal_type} goals require {expected} funding treatment",
                     ("goals", index, "funding_treatment"),
                     goal.funding_treatment,
                 )
-            if goal.enabled and goal.target_date <= date.today():
+        return self
+
+    def validate_target_dates(self, reference_date: date) -> FamilyPlanUpdate:
+        for index, goal in enumerate(self.goals):
+            if goal.enabled and goal.target_date <= reference_date:
                 raise _contract_error(
+                    "FamilyPlanUpdate",
                     "target_date_not_future",
                     "enabled goals require a future target_date",
                     ("goals", index, "target_date"),
                     goal.target_date,
                 )
         return self
+
+
+def _money_isclose(left: float, right: float) -> bool:
+    ulp_tolerance = 4 * max(math.ulp(left), math.ulp(right))
+    return math.isclose(
+        left,
+        right,
+        rel_tol=0,
+        abs_tol=max(0.01, ulp_tolerance),
+    )
 
 
 class AnnualRunwayEvent(BaseModel):
@@ -332,11 +356,8 @@ class AnnualRunwayEvent(BaseModel):
 
     @model_validator(mode="after")
     def validate_funding_total(self):
-        if not math.isclose(
-            self.funded_amount_inr + self.shortfall_inr,
-            self.amount_inr,
-            rel_tol=0,
-            abs_tol=0.01,
+        if not _money_isclose(
+            self.funded_amount_inr + self.shortfall_inr, self.amount_inr
         ):
             raise ValueError("funded amount plus shortfall must equal event amount")
         return self
@@ -358,11 +379,9 @@ class AnnualRunwayPoint(BaseModel):
 
     @model_validator(mode="after")
     def validate_net_worth_total(self):
-        if not math.isclose(
+        if not _money_isclose(
             self.financial_assets_inr + self.property_value_inr,
             self.total_net_worth_inr,
-            rel_tol=0,
-            abs_tol=0.01,
         ):
             raise ValueError("total net worth must equal financial assets plus property")
         return self
@@ -382,11 +401,8 @@ class GoalHealth(BaseModel):
 
     @model_validator(mode="after")
     def validate_funding_total(self):
-        if not math.isclose(
-            self.funded_amount_inr + self.shortfall_inr,
-            self.inflated_cost_inr,
-            rel_tol=0,
-            abs_tol=0.01,
+        if not _money_isclose(
+            self.funded_amount_inr + self.shortfall_inr, self.inflated_cost_inr
         ):
             raise ValueError("funded amount plus shortfall must equal inflated cost")
         return self
@@ -422,11 +438,9 @@ class FamilyScenarioProjection(BaseModel):
 
     @model_validator(mode="after")
     def validate_ending_net_worth_total(self):
-        if not math.isclose(
+        if not _money_isclose(
             self.ending_financial_assets_inr + self.ending_property_value_inr,
             self.ending_total_net_worth_inr,
-            rel_tol=0,
-            abs_tol=0.01,
         ):
             raise ValueError(
                 "ending total net worth must equal ending financial assets plus property"
@@ -448,11 +462,16 @@ class FamilyPlanResponse(BaseModel):
         keys = [item.settings.scenario_key for item in self.scenario_projections]
         rates = [item.settings.annual_return_pct for item in self.scenario_projections]
         _validate_ordered_scenarios(
-            keys, rates, "scenario_projections", key_path=("settings",)
+            "FamilyPlanResponse",
+            keys,
+            rates,
+            "scenario_projections",
+            key_path=("settings",),
         )
         goal_keys = [goal.goal_key for goal in self.goals]
         if len(goal_keys) != len(set(goal_keys)):
             raise _contract_error(
+                "FamilyPlanResponse",
                 "duplicate_goal_key",
                 "goal_key values must be unique",
                 ("goals",),

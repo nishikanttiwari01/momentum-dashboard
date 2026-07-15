@@ -1,4 +1,5 @@
-from datetime import date, timedelta
+from datetime import date
+import math
 
 import pytest
 from pydantic import ValidationError
@@ -564,17 +565,31 @@ def test_family_response_rejects_duplicate_goal_keys() -> None:
     assert ("goals",) in [e["loc"] for e in exc_info.value.errors()]
 
 
-def test_enabled_goal_requires_future_target_date() -> None:
-    payload = _payload()
-    payload["goals"][0]["target_date"] = date.today()
-    assert ("goals", 0, "target_date") in _error_locations(payload)
+@pytest.mark.parametrize("target_date", [date(2026, 7, 14), date(2026, 7, 15)])
+def test_enabled_goal_rejects_target_date_on_or_before_reference_date(
+    target_date: date,
+) -> None:
+    plan = FamilyPlanUpdate.model_validate(_payload())
+    plan.goals[0].target_date = target_date
+    with pytest.raises(ValidationError) as exc_info:
+        plan.validate_target_dates(date(2026, 7, 15))
+    assert ("goals", 0, "target_date") in [
+        error["loc"] for error in exc_info.value.errors()
+    ]
+
+
+def test_enabled_goal_accepts_target_date_after_reference_date() -> None:
+    plan = FamilyPlanUpdate.model_validate(_payload())
+    plan.goals[0].target_date = date(2026, 7, 16)
+    assert plan.validate_target_dates(date(2026, 7, 15)) is plan
 
 
 def test_disabled_goal_may_retain_historical_target_date() -> None:
     payload = _payload()
     payload["goals"][0]["enabled"] = False
-    payload["goals"][0]["target_date"] = date.today() - timedelta(days=1)
-    assert FamilyPlanUpdate.model_validate(payload).goals[0].enabled is False
+    payload["goals"][0]["target_date"] = date(2020, 1, 1)
+    plan = FamilyPlanUpdate.model_validate(payload)
+    assert plan.validate_target_dates(date(2026, 7, 15)) is plan
 
 
 def test_numeric_strings_are_intentionally_coerced_for_api_form_ergonomics() -> None:
@@ -584,3 +599,46 @@ def test_numeric_strings_are_intentionally_coerced_for_api_form_ergonomics() -> 
     plan = FamilyPlanUpdate.model_validate(payload)
     assert plan.assumptions.monthly_contribution_inr == 100_000
     assert plan.goals[0].priority == 10
+
+
+@pytest.mark.parametrize(
+    "model,total_field,component_fields",
+    [
+        (AnnualRunwayEvent, "amount_inr", ("funded_amount_inr", "shortfall_inr")),
+        (
+            AnnualRunwayPoint,
+            "total_net_worth_inr",
+            ("financial_assets_inr", "property_value_inr"),
+        ),
+        (GoalHealth, "inflated_cost_inr", ("funded_amount_inr", "shortfall_inr")),
+        (
+            FamilyScenarioProjection,
+            "ending_total_net_worth_inr",
+            ("ending_financial_assets_inr", "ending_property_value_inr"),
+        ),
+    ],
+)
+def test_financial_consistency_tolerates_large_value_float_ulp(
+    model, total_field: str, component_fields: tuple[str, str]
+) -> None:
+    _, event, point, health, _, projection = _response_parts()
+    instance = {
+        AnnualRunwayEvent: event,
+        AnnualRunwayPoint: point,
+        GoalHealth: health,
+        FamilyScenarioProjection: projection,
+    }[model]
+    payload = instance.model_dump()
+    payload[component_fields[0]] = 600_000_000_000_000.0
+    payload[component_fields[1]] = 400_000_000_000_000.0
+    payload[total_field] = math.nextafter(1_000_000_000_000_000.0, math.inf)
+
+    assert getattr(model.model_validate(payload), total_field) == payload[total_field]
+
+
+def test_family_response_validation_error_uses_response_model_title() -> None:
+    payload = _family_response_payload()
+    payload["scenario_projections"] = payload["scenario_projections"][:2]
+    with pytest.raises(ValidationError) as exc_info:
+        FamilyPlanResponse.model_validate(payload)
+    assert exc_info.value.title == "FamilyPlanResponse"
