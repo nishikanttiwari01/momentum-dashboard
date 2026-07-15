@@ -99,8 +99,8 @@ describe('wealthApi', () => {
       current_value_amount_inr: 5_000_000, target_date: '2032-06-30', inflation_pct: 8,
       funding_treatment: 'expense', priority: 1, enabled: true, display_order: 0,
     }],
-    scenario_projections: [{
-      settings: { scenario_key: 'expected', annual_return_pct: 11 },
+    scenario_projections: (['conservative', 'expected', 'optimistic'] as const).map((scenario_key, index) => ({
+      settings: { scenario_key, annual_return_pct: 8 + index * 3 },
       annual_points: [{
         on: '2027-12-31', financial_assets_inr: 55_000_000, property_value_inr: 20_000_000,
         total_net_worth_inr: 75_000_000, annual_contributions_inr: 2_400_000,
@@ -126,7 +126,7 @@ describe('wealthApi', () => {
       },
       ending_financial_assets_inr: 80_000_000, ending_property_value_inr: 30_000_000,
       ending_total_net_worth_inr: 110_000_000, first_underfunded_goal_key: null,
-    }],
+    })),
   } satisfies FamilyPlanResponse;
 
   it('gets the family plan and returns response data', async () => {
@@ -139,7 +139,11 @@ describe('wealthApi', () => {
     const payload = {
       assumptions: familyPlan.assumptions,
       goals: familyPlan.goals,
-      scenarios: [{ scenario_key: 'expected', annual_return_pct: 11 }],
+      scenarios: [
+        { scenario_key: 'conservative', annual_return_pct: 8 },
+        { scenario_key: 'expected', annual_return_pct: 11 },
+        { scenario_key: 'optimistic', annual_return_pct: 14 },
+      ],
     } satisfies FamilyPlanUpdate;
     mockedAxios.put.mockResolvedValueOnce({ data: familyPlan });
     await expect(updateFamilyPlan(payload)).resolves.toBe(familyPlan);

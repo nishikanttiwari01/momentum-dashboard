@@ -15,7 +15,7 @@ export type FamilyRunwayRow = {
   optimistic_total_inr?: number;
   expected_financial_assets_inr?: number;
   expected_property_value_inr?: number;
-  events?: FamilyRunwayEvent[];
+  events: FamilyRunwayEvent[];
 };
 
 export function familyRunwayRows(projections: readonly FamilyScenarioProjection[]): FamilyRunwayRow[] {
@@ -23,7 +23,11 @@ export function familyRunwayRows(projections: readonly FamilyScenarioProjection[
   for (const projection of projections) {
     const scenario = projection.settings.scenario_key;
     for (const point of projection.annual_points) {
-      const row = rows.get(point.on) ?? { on: point.on, year: Number(point.on.slice(0, 4)) };
+      const row = rows.get(point.on) ?? {
+        on: point.on,
+        year: Number(point.on.slice(0, 4)),
+        events: [],
+      };
       row[`${scenario}_total_inr`] = point.total_net_worth_inr;
       if (scenario === 'expected') {
         row.expected_financial_assets_inr = point.financial_assets_inr;

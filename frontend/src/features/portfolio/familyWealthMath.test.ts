@@ -33,9 +33,9 @@ describe('familyRunwayRows', () => {
     ];
     const before = structuredClone(projections);
     expect(familyRunwayRows(projections)).toEqual([
-      { on: '2026-12-31', year: 2026, conservative_total_inr: 80, optimistic_total_inr: 100 },
+      { on: '2026-12-31', year: 2026, conservative_total_inr: 80, optimistic_total_inr: 100, events: [] },
       { on: '2027-12-31', year: 2027, expected_total_inr: 180, expected_financial_assets_inr: 144, expected_property_value_inr: 36, events: [] },
-      { on: '2028-12-31', year: 2028, conservative_total_inr: 200, optimistic_total_inr: 300 },
+      { on: '2028-12-31', year: 2028, conservative_total_inr: 200, optimistic_total_inr: 300, events: [] },
     ]);
     expect(projections).toEqual(before);
   });
@@ -43,10 +43,13 @@ describe('familyRunwayRows', () => {
   it('keeps numeric zero and normalized expected events', () => {
     const events = [{ goal_key: 'home', goal_name: 'Home', goal_type: 'house' as const,
       funding_treatment: 'asset_conversion' as const, amount_inr: 10, funded_amount_inr: 10, shortfall_inr: 0 }];
-    expect(familyRunwayRows([projection('expected', [point('2026-12-31', 0, events)])])[0]).toMatchObject({
+    const rows = familyRunwayRows([projection('expected', [point('2026-12-31', 0, events)])]);
+    expect(rows[0]).toMatchObject({
       expected_total_inr: 0, expected_financial_assets_inr: 0, expected_property_value_inr: 0,
       events: [{ goal_key: 'home', label: 'Home', amount_inr: 10, funded_amount_inr: 10, shortfall_inr: 0 }],
     });
+    expect(rows[0].events).not.toBe(events);
+    expect(rows[0].events[0]).not.toBe(events[0]);
   });
 });
 
