@@ -285,15 +285,6 @@ class FamilyPlanUpdate(BaseModel):
                 goal_keys,
             )
 
-        display_orders = [goal.display_order for goal in self.goals]
-        if len(display_orders) != len(set(display_orders)):
-            raise _contract_error(
-                "duplicate_display_order",
-                "display_order values must be unique",
-                ("goals",),
-                display_orders,
-            )
-
         expected_treatments: dict[GoalType, FundingTreatment] = {
             "education": "expense",
             "house": "asset_conversion",

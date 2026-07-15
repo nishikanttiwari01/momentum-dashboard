@@ -3,7 +3,15 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.wealth_portfolio import FamilyPlanUpdate
+from app.schemas.wealth_portfolio import (
+    AnnualRunwayEvent,
+    AnnualRunwayPoint,
+    FamilyPlanResponse,
+    FamilyPlanUpdate,
+    FamilyScenarioProjection,
+    GoalHealth,
+    PassiveIncomeAnalysis,
+)
 
 
 def _payload() -> dict:
@@ -52,6 +60,20 @@ def test_rejects_duplicate_goal_keys_at_stable_goals_location() -> None:
     payload["goals"].append({**payload["goals"][0], "display_order": 2})
 
     assert _error_locations(payload) == [("goals",)]
+
+
+def test_allows_duplicate_display_order_for_later_tie_breaking() -> None:
+    payload = _payload()
+    payload["goals"].append(
+        {
+            **payload["goals"][0],
+            "goal_key": "child_marriage",
+            "name": "Child marriage",
+            "goal_type": "marriage",
+        }
+    )
+
+    assert len(FamilyPlanUpdate.model_validate(payload).goals) == 2
 
 
 def test_rejects_zero_withdrawal_rate() -> None:
@@ -137,3 +159,239 @@ def test_accepts_valid_family_plan_contract() -> None:
         "expected",
         "optimistic",
     ]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("goal_type", "retirement"), ("funding_treatment", "investment")],
+)
+def test_rejects_values_outside_goal_and_treatment_literals(
+    field: str, value: str
+) -> None:
+    payload = _payload()
+    payload["goals"][0][field] = value
+
+    assert ("goals", 0, field) in _error_locations(payload)
+
+
+@pytest.mark.parametrize("goal_key", ["Upper_Case", "has-dash", "x" * 41])
+def test_rejects_invalid_goal_keys(goal_key: str) -> None:
+    payload = _payload()
+    payload["goals"][0]["goal_key"] = goal_key
+
+    assert ("goals", 0, "goal_key") in _error_locations(payload)
+
+
+@pytest.mark.parametrize("scenario_count", [2, 4])
+def test_requires_exactly_three_scenarios(scenario_count: int) -> None:
+    payload = _payload()
+    payload["scenarios"] = (
+        payload["scenarios"][:scenario_count]
+        if scenario_count < 3
+        else payload["scenarios"] + [payload["scenarios"][-1]]
+    )
+
+    assert ("scenarios",) in _error_locations(payload)
+
+
+@pytest.mark.parametrize(
+    "field,lower,upper",
+    [
+        ("monthly_contribution_inr", 0, 1_000_000_000_000),
+        ("contribution_step_up_pct", 0, 25),
+        ("monthly_rent_inr", 0, 1_000_000_000),
+        ("rent_growth_pct", -25, 50),
+        ("property_growth_pct", -25, 50),
+        ("withdrawal_rate_pct", 0.01, 20),
+        ("amber_margin_pct", 0, 100),
+    ],
+)
+def test_accepts_family_assumption_numeric_boundaries(
+    field: str, lower: float, upper: float
+) -> None:
+    for value in (lower, upper):
+        payload = _payload()
+        payload["assumptions"][field] = value
+        assert getattr(FamilyPlanUpdate.model_validate(payload).assumptions, field) == value
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("monthly_contribution_inr", -0.01),
+        ("monthly_contribution_inr", 1_000_000_000_001),
+        ("contribution_step_up_pct", -0.01),
+        ("contribution_step_up_pct", 25.01),
+        ("monthly_rent_inr", -0.01),
+        ("monthly_rent_inr", 1_000_000_001),
+        ("rent_growth_pct", -25.01),
+        ("rent_growth_pct", 50.01),
+        ("property_growth_pct", -25.01),
+        ("property_growth_pct", 50.01),
+        ("withdrawal_rate_pct", 0),
+        ("withdrawal_rate_pct", 20.01),
+        ("amber_margin_pct", -0.01),
+        ("amber_margin_pct", 100.01),
+    ],
+)
+def test_rejects_family_assumption_values_outside_bounds(
+    field: str, value: float
+) -> None:
+    payload = _payload()
+    payload["assumptions"][field] = value
+    assert ("assumptions", field) in _error_locations(payload)
+
+
+@pytest.mark.parametrize(
+    "field,lower,upper",
+    [
+        ("current_value_amount_inr", 0.01, 1_000_000_000_000_000),
+        ("inflation_pct", 0, 25),
+        ("priority", 1, 100),
+        ("display_order", 0, 100),
+    ],
+)
+def test_accepts_linked_goal_numeric_boundaries(
+    field: str, lower: float, upper: float
+) -> None:
+    for value in (lower, upper):
+        payload = _payload()
+        payload["goals"][0][field] = value
+        assert getattr(FamilyPlanUpdate.model_validate(payload).goals[0], field) == value
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("current_value_amount_inr", 0),
+        ("current_value_amount_inr", 1_000_000_000_000_001),
+        ("inflation_pct", -0.01),
+        ("inflation_pct", 25.01),
+        ("priority", 0),
+        ("priority", 101),
+        ("display_order", -1),
+        ("display_order", 101),
+    ],
+)
+def test_rejects_linked_goal_values_outside_bounds(field: str, value: float) -> None:
+    payload = _payload()
+    payload["goals"][0][field] = value
+    assert ("goals", 0, field) in _error_locations(payload)
+
+
+def _response_parts() -> tuple:
+    plan = FamilyPlanUpdate.model_validate(_payload())
+    event = AnnualRunwayEvent(
+        goal_key="child_education",
+        goal_name="Child education",
+        goal_type="education",
+        funding_treatment="expense",
+        amount_inr=6_000_000,
+        funded_amount_inr=5_500_000,
+        shortfall_inr=500_000,
+    )
+    point = AnnualRunwayPoint(
+        on=date(2035, 12, 31),
+        financial_assets_inr=20_000_000,
+        property_value_inr=15_000_000,
+        total_net_worth_inr=35_000_000,
+        annual_contributions_inr=1_200_000,
+        annual_rent_inr=480_000,
+        financial_growth_inr=1_500_000,
+        property_growth_inr=900_000,
+        goal_outflows_inr=5_500_000,
+        events=[event],
+    )
+    health = GoalHealth(
+        goal=plan.goals[0],
+        inflated_cost_inr=6_000_000,
+        available_before_inr=5_500_000,
+        funded_amount_inr=5_500_000,
+        shortfall_inr=500_000,
+        funded_pct=91.67,
+        status="amber",
+        reason="Within the configured amber margin",
+    )
+    passive = PassiveIncomeAnalysis(
+        target_date=date(2040, 1, 1),
+        target_monthly_income_inr=200_000,
+        projected_monthly_rent_inr=80_000,
+        portfolio_monthly_gap_inr=120_000,
+        required_corpus_inr=36_000_000,
+        supported_portfolio_monthly_income_inr=110_000,
+        total_monthly_income_inr=190_000,
+        surplus_or_shortfall_inr=-10_000,
+        on_track=False,
+        later_goals_protected=True,
+        earliest_sustainable_date=date(2041, 6, 1),
+    )
+    projection = FamilyScenarioProjection(
+        settings=plan.scenarios[1],
+        annual_points=[point],
+        goal_health=[health],
+        passive_income=passive,
+        ending_financial_assets_inr=25_000_000,
+        ending_property_value_inr=18_000_000,
+        ending_total_net_worth_inr=43_000_000,
+        first_underfunded_goal_key="child_education",
+    )
+    return plan, event, point, health, passive, projection
+
+
+def test_constructs_complete_family_plan_response_contract() -> None:
+    plan, event, point, health, passive, projection = _response_parts()
+    response = FamilyPlanResponse(
+        primary_goal={
+            "goal": {
+                "name": "Family corpus",
+                "target_amount_inr": 50_000_000,
+                "deadline": date(2045, 1, 1),
+            },
+            "scenario_projections": [],
+            "calculated_on": date(2026, 7, 15),
+        },
+        calculated_on=date(2026, 7, 15),
+        snapshot_id="snapshot-1",
+        data_health="fresh",
+        assumptions=plan.assumptions,
+        goals=plan.goals,
+        scenario_projections=[projection],
+    )
+
+    assert response.primary_goal.goal.name == "Family corpus"
+    assert response.assumptions.monthly_contribution_inr == 100_000
+    assert response.goals[0].goal_key == "child_education"
+    assert response.scenario_projections[0].settings.scenario_key == "expected"
+    assert point.events == [event]
+    assert event.funded_amount_inr == 5_500_000
+    assert point.total_net_worth_inr == 35_000_000
+    assert health.shortfall_inr == 500_000
+    assert passive.required_corpus_inr == 36_000_000
+    assert projection.ending_total_net_worth_inr == 43_000_000
+
+
+@pytest.mark.parametrize(
+    "model,field",
+    [
+        (AnnualRunwayEvent, "amount_inr"),
+        (AnnualRunwayPoint, "financial_assets_inr"),
+        (GoalHealth, "inflated_cost_inr"),
+        (PassiveIncomeAnalysis, "required_corpus_inr"),
+        (FamilyScenarioProjection, "ending_total_net_worth_inr"),
+    ],
+)
+def test_response_contracts_reject_nonfinite_monetary_values(model, field: str) -> None:
+    _, event, point, health, passive, projection = _response_parts()
+    instance = {
+        AnnualRunwayEvent: event,
+        AnnualRunwayPoint: point,
+        GoalHealth: health,
+        PassiveIncomeAnalysis: passive,
+        FamilyScenarioProjection: projection,
+    }[model]
+    payload = instance.model_dump()
+    payload[field] = float("nan")
+
+    with pytest.raises(ValidationError) as exc_info:
+        model.model_validate(payload)
+    assert (field,) in [error["loc"] for error in exc_info.value.errors()]
