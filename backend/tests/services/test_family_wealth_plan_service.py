@@ -106,6 +106,21 @@ def test_service_uses_latest_snapshot_and_splits_property_without_double_count(s
     assert captured[0].opening_property == 500
 
 
+def test_primary_goal_includes_financial_reconciliation_and_property(session):
+    _add_snapshot(session, assets=[
+        dict(asset_type="mutual_fund", currency="INR", invested_amount=30_000_000, market_value=34_054_345),
+        dict(asset_type="financial_other", currency="INR", invested_amount=10_000_000, market_value=10_604_507.25),
+        dict(asset_type="property", currency="INR", invested_amount=17_709_216, market_value=38_400_000),
+    ])
+
+    response = get_family_plan_response(session, today=date(2026, 7, 15))
+
+    assert response.primary_goal.current_value_inr == 83_058_852.25
+    assert response.primary_goal.achieved_pct == pytest.approx(55.3725681667)
+    expected = next(item for item in response.scenario_projections if item.settings.scenario_key == "expected")
+    assert expected.annual_points[0].property_value_inr > 38_400_000
+
+
 def test_latest_snapshot_uses_id_as_final_tie_breaker(session):
     tied = datetime(2026, 7, 1, 12, 0)
     _add_snapshot(session, snapshot_id="aaa", created_at=tied, assets=[dict(asset_type="stocks", currency="INR", invested_amount=1, market_value=100)])

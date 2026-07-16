@@ -35,7 +35,7 @@ SCENARIO_KEYS = ("conservative", "expected", "optimistic")
 GOAL_NAMESPACE = uuid.UUID("f7bbbf68-47e5-4cd6-8987-d0b3e3898f11")
 FINANCIAL_TYPES = {
     "mutual_fund", "mutual_funds", "stock", "stocks", "etf", "etfs",
-    "debt", "cash", "us_holding", "us_holdings",
+    "debt", "cash", "us_holding", "us_holdings", "financial_other",
 }
 PROPERTY_TYPES = {"property", "land", "real_estate"}
 
