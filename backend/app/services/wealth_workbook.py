@@ -9,7 +9,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import to_excel
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field
 
 from app.schemas.wealth_portfolio import IGNORED_SHEETS, ImportIssue
 
@@ -63,6 +63,29 @@ class ParsedValuation(BaseModel):
     source_ref: dict[str, Any]
 
 
+class HouseholdAggregate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    as_of_label: str
+    financial_invested_capital: float | None
+    financial_market_value: float | None
+    property_invested_capital: float | None
+    property_market_value: float | None
+    invested_capital: float | None
+    total_market_value: float | None
+    monthly_rent: float | None
+
+
+class FixedAssetComponent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    description: str | None = None
+    invested_amount: float | None = None
+    market_value: float
+    source_ref: dict[str, Any]
+
+
 class ParsedWorkbook(BaseModel):
     source_sha256: str
     filename: str
@@ -71,6 +94,9 @@ class ParsedWorkbook(BaseModel):
     assets: list[ParsedAsset]
     transactions: list[ParsedTransaction]
     valuations: list[ParsedValuation]
+    household: HouseholdAggregate | None = None
+    fixed_assets: tuple[FixedAssetComponent, ...] = ()
+    reconciliation_warnings: tuple[ImportIssue, ...] = ()
     issues: list[ImportIssue]
 
     @computed_field
@@ -306,12 +332,95 @@ def _parse_fund_transactions(sheet, assets: list[ParsedAsset]) -> tuple[list[Par
     return _parse_paired_fund_transactions(sheet, assets)
 
 
+def _parse_household(balance_sheet, income_sheet) -> tuple[HouseholdAggregate, list[ImportIssue]]:
+    rows = list(balance_sheet.iter_rows(values_only=True))
+    warnings: list[ImportIssue] = []
+    header_row = next((row for row in rows if _header(row[0] if row else None) == "asset type"), ())
+    populated_columns = [
+        index for index in range(1, len(header_row))
+        if _name(header_row[index]) and any(_number(row[index] if index < len(row) else None) is not None for row in rows)
+    ]
+    latest_column = max(populated_columns, default=1)
+    as_of_label = _name(header_row[latest_column] if latest_column < len(header_row) else "") or "unknown"
+    values: dict[str, float | None] = {}
+    for row in rows:
+        label = _header(row[0] if row else None)
+        if label:
+            values[label] = _number(row[latest_column] if latest_column < len(row) else None)
+
+    financial_mv = values.get("current assets market value (year end)")
+    property_mv = values.get("fixed assests market value (year end)")
+    total_mv = values.get("total assets market value")
+    financial_principal = values.get("current assests principal (year end)")
+    property_principal = values.get("fixed assests principal (year end)")
+    total_principal = values.get("total assets principal")
+
+    rent_values: list[float] = []
+    if income_sheet is not None:
+        income_rows = list(income_sheet.iter_rows(values_only=True))
+        heading = next((row for row in income_rows if "monthly income" in {_header(v) for v in row}), ())
+        monthly_column = next((i for i, value in enumerate(heading) if _header(value) == "monthly income"), None)
+        for row_number, row in enumerate(income_rows, 1):
+            label = _header(row[0] if row else None)
+            if "rent" not in label:
+                continue
+            rent = _number(row[monthly_column] if monthly_column is not None and monthly_column < len(row) else None)
+            if rent is None:
+                warnings.append(ImportIssue(severity="warning", code="missing_rent", message=f"{_name(row[0])} has no current monthly rent", sheet="MNTHLY INCOM PLAN", row=row_number))
+            else:
+                rent_values.append(rent)
+    if income_sheet is None or not rent_values:
+        warnings.append(ImportIssue(severity="warning", code="missing_rent", message="Current monthly rent is missing", sheet="MNTHLY INCOM PLAN"))
+    if property_mv is None:
+        warnings.append(ImportIssue(severity="warning", code="missing_property_value", message="Latest balance sheet property value is missing", sheet="BALANCE SHEET"))
+    if financial_mv is not None and property_mv is not None and total_mv is not None and abs(financial_mv + property_mv - total_mv) > 1:
+        warnings.append(ImportIssue(severity="warning", code="household_total_mismatch", message="Financial and property values do not reconcile to total assets within INR 1", sheet="BALANCE SHEET"))
+    return HouseholdAggregate(
+        as_of_label=as_of_label, financial_invested_capital=financial_principal,
+        financial_market_value=financial_mv, property_invested_capital=property_principal,
+        property_market_value=property_mv, invested_capital=total_principal,
+        total_market_value=total_mv, monthly_rent=sum(rent_values) if rent_values else None,
+    ), warnings
+
+
+def _parse_fixed_assets(sheet) -> list[FixedAssetComponent]:
+    rows = list(sheet.iter_rows(values_only=True))
+    if not rows:
+        return []
+    headings = rows[0]
+    market_columns = [i for i, value in enumerate(headings) if "mkt value" in _header(value)]
+    market_column = max(market_columns, default=-1)
+    principal_column = market_column - 1
+    result: list[FixedAssetComponent] = []
+    for row_number, row in enumerate(rows[1:], 2):
+        name = _name(row[1] if len(row) > 1 else None)
+        market_value = _number(row[market_column] if 0 <= market_column < len(row) else None)
+        if not name or market_value is None:
+            continue
+        result.append(FixedAssetComponent(
+            name=name, description=_name(row[2] if len(row) > 2 else None) or None,
+            invested_amount=_number(row[principal_column] if principal_column < len(row) else None),
+            market_value=market_value, source_ref={"sheet": "FIXED ASSET", "row": row_number},
+        ))
+    return result
+
+
 def parse_workbook(payload: bytes, filename: str) -> ParsedWorkbook:
     source_sha256 = sha256(payload).hexdigest()
     workbook = load_workbook(BytesIO(payload), read_only=True, data_only=True)
     recognized = [name for name in workbook.sheetnames if name in SUPPORTED_SHEETS]
     ignored = [name for name in workbook.sheetnames if name in IGNORED_SHEETS]
     issues: list[ImportIssue] = []
+    household = None
+    fixed_assets: list[FixedAssetComponent] = []
+    reconciliation_warnings: list[ImportIssue] = []
+    if "BALANCE SHEET" in recognized:
+        household, reconciliation_warnings = _parse_household(
+            workbook["BALANCE SHEET"], workbook["MNTHLY INCOM PLAN"] if "MNTHLY INCOM PLAN" in recognized else None,
+        )
+        issues.extend(reconciliation_warnings)
+    if "FIXED ASSET" in recognized:
+        fixed_assets = _parse_fixed_assets(workbook["FIXED ASSET"])
 
     assets: list[ParsedAsset] = []
     if "FUNDS" in recognized:
@@ -338,7 +447,7 @@ def parse_workbook(payload: bytes, filename: str) -> ParsedWorkbook:
             if asset.market_value is not None
         ]
 
-    parsed_sheets = {"FUNDS", "Funds XIRR"}
+    parsed_sheets = {"FUNDS", "Funds XIRR", "BALANCE SHEET", "FIXED ASSET", "MNTHLY INCOM PLAN"}
     for sheet_name in recognized:
         if sheet_name not in parsed_sheets:
             issues.append(ImportIssue(
@@ -355,5 +464,8 @@ def parse_workbook(payload: bytes, filename: str) -> ParsedWorkbook:
         assets=assets,
         transactions=transactions,
         valuations=valuations,
+        household=household,
+        fixed_assets=tuple(fixed_assets),
+        reconciliation_warnings=tuple(reconciliation_warnings),
         issues=issues,
     )

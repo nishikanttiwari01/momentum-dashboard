@@ -97,6 +97,28 @@ def _insert_assets(session: Session, snapshot_id: str, parsed: ParsedWorkbook) -
             market_value=item.market_value,
             source_ref=item.source_ref,
         ))
+    household = parsed.household
+    if household and household.financial_market_value is not None:
+        imported_mv = sum(item.market_value or 0 for item in parsed.assets)
+        imported_principal = sum(item.invested_amount or 0 for item in parsed.assets)
+        session.add(PortfolioAsset(
+            id=str(uuid4()), snapshot_id=snapshot_id,
+            source_key="household-financial-reconciliation", asset_type="financial_other",
+            name="Other financial/current assets", market="IN", currency="INR",
+            invested_amount=(household.financial_invested_capital - imported_principal) if household.financial_invested_capital is not None else None,
+            market_value=household.financial_market_value - imported_mv,
+            source_ref={"sheet": "BALANCE SHEET", "as_of": household.as_of_label, "role": "reconciliation_adjustment"},
+        ))
+    if household and household.property_market_value is not None:
+        session.add(PortfolioAsset(
+            id=str(uuid4()), snapshot_id=snapshot_id,
+            source_key="household-property-aggregate", asset_type="property",
+            name="Property (aggregate)", market="IN", currency="INR",
+            invested_amount=household.property_invested_capital,
+            market_value=household.property_market_value,
+            source_ref={"sheet": "BALANCE SHEET", "as_of": household.as_of_label, "monthly_rent": household.monthly_rent,
+                        "components": [item.model_dump() for item in parsed.fixed_assets]},
+        ))
     return asset_ids
 
 

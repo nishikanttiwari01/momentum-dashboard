@@ -4,7 +4,7 @@ from io import BytesIO
 from openpyxl import Workbook
 
 
-def make_workbook_bytes(*, invalid_transaction_date: bool = False) -> bytes:
+def make_workbook_bytes(*, invalid_transaction_date: bool = False, include_household: bool = False) -> bytes:
     workbook = Workbook()
     funds = workbook.active
     funds.title = "FUNDS"
@@ -21,10 +21,34 @@ def make_workbook_bytes(*, invalid_transaction_date: bool = False) -> bytes:
         99.367,
     ])
 
-    for sheet_name in (
-        "BALANCE SHEET", "CURRENT ASSET", "Final XIRR", "EQUITY",
-        "FIXED ASSET", "GOALS", "MNTHLY INCOM PLAN", "Gera office roi",
-    ):
+    balance = workbook.create_sheet("BALANCE SHEET")
+    if include_household:
+        balance.append(["BALANCE SHEET"])
+        balance.append([])
+        balance.append(["ASSET TYPE", "FY-2025", "FY-2026", "FY-2027"])
+        balance.append(["Current assests principal (year end)", 39_892_239.25, 40_953_839.25, None])
+        balance.append(["Current assets market value (year end)", 44_110_481.25, 44_658_852.25, None])
+        balance.append(["Fixed assests principal (year end)", 17_709_216, 17_709_216, None])
+        balance.append(["Fixed assests market value (year end)", 38_400_000, 38_400_000, None])
+        balance.append(["TOTAL ASSETS PRINCIPAL", 57_601_455.25, 58_663_055.25, None])
+        balance.append(["TOTAL ASSETS MARKET VALUE", 82_510_481.25, 83_058_852.25, None])
+
+    fixed = workbook.create_sheet("FIXED ASSET")
+    if include_household:
+        fixed.append(["S No.", "Name", "Desc", "01/9/2025\nPRINCIPAL", "01/9/2025\nMKT VALUE"])
+        fixed.append([1, "Brigade land", "Residential Land", 9_959_216, 21_600_000])
+        fixed.append([2, "Amrapali Flat G Noida M8-306", "Residential flat", 2_050_000, 6_800_000])
+        fixed.append([3, "Gera Office Pune 733", "Office", 5_700_000, 10_000_000])
+        fixed.append([None, None, "Total", 17_709_216, 38_400_000])
+
+    income = workbook.create_sheet("MNTHLY INCOM PLAN")
+    if include_household:
+        income.append([None, None, "Option 1"])
+        income.append(["Desc", "Principal Amount", None, "Yearly Income", "Monthly Income"])
+        income.append(["Gera office rent", None, None, 360_000, 30_000])
+        income.append(["Golfhome rent", None, None, 168_000, 14_000])
+
+    for sheet_name in ("CURRENT ASSET", "Final XIRR", "EQUITY", "GOALS", "Gera office roi"):
         workbook.create_sheet(sheet_name)
 
     ignored = workbook.create_sheet("MF discont.")

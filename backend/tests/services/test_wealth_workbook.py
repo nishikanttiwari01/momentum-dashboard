@@ -1,3 +1,7 @@
+from io import BytesIO
+
+from openpyxl import load_workbook
+
 from tests.fixtures.wealth_workbook_factory import make_real_layout_workbook_bytes, make_workbook_bytes
 
 from app.services.wealth_workbook import parse_workbook
@@ -8,6 +12,41 @@ def test_parser_extracts_assets_transactions_and_valuations():
     assert result.counts == {"assets": 1, "transactions": 1, "valuations": 1}
     assert result.assets[0].name == "Example Mid Cap"
     assert result.transactions[0].occurred_on.isoformat() == "2025-03-06"
+
+
+def test_parser_reconciles_latest_household_wealth_without_double_counting_fixed_components():
+    result = parse_workbook(make_workbook_bytes(include_household=True), "investment.xlsx")
+    assert result.household.as_of_label == "FY-2026"
+    assert result.household.financial_market_value == 44_658_852.25
+    assert result.household.property_market_value == 38_400_000
+    assert result.household.total_market_value == 83_058_852.25
+    assert result.household.invested_capital == 58_663_055.25
+    assert result.household.monthly_rent == 44_000
+    assert [item.market_value for item in result.fixed_assets] == [21_600_000, 6_800_000, 10_000_000]
+    assert sum(item.market_value for item in result.fixed_assets) == result.household.property_market_value
+    assert not result.reconciliation_warnings
+
+
+def test_parser_warns_when_property_or_rent_is_missing():
+    payload = make_workbook_bytes(include_household=True)
+    book = load_workbook(BytesIO(payload))
+    book["BALANCE SHEET"]["C7"] = None
+    book["MNTHLY INCOM PLAN"]["E4"] = None
+    stream = BytesIO()
+    book.save(stream)
+    result = parse_workbook(stream.getvalue(), "missing.xlsx")
+    codes = {issue.code for issue in result.reconciliation_warnings}
+    assert {"missing_property_value", "missing_rent"} <= codes
+
+
+def test_parser_warns_when_balance_sheet_total_does_not_reconcile():
+    payload = make_workbook_bytes(include_household=True)
+    book = load_workbook(BytesIO(payload))
+    book["BALANCE SHEET"]["C9"] = 83_058_854
+    stream = BytesIO()
+    book.save(stream)
+    result = parse_workbook(stream.getvalue(), "mismatch.xlsx")
+    assert any(issue.code == "household_total_mismatch" for issue in result.reconciliation_warnings)
 
 
 def test_parser_reports_ignored_sheet_without_reading_cells():
