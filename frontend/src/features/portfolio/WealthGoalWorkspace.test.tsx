@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrimaryGoalResponse } from './wealthTypes';
 import type { FamilyPlanResponse, FamilyScenarioProjection, GoalHealth, PassiveIncomeAnalysis } from './wealthTypes';
 import { FamilyPlanAssumptions, familyPlanDraftFromResponse, familyPlanUpdateFromDraft } from './FamilyPlanAssumptions';
+import { FamilyScenarioMatrix } from './FamilyScenarioMatrix';
 import { FamilyWealthRunwayChart, RUNWAY_LINE_ANIMATION_ACTIVE, RunwayTooltipContent, aggregateRunwayEvents, runwayTooltipLines } from './FamilyWealthRunwayChart';
 import { FamilyGoalCards } from './FamilyGoalCards';
 import { PassiveIncomePanel, type PassiveIncomePanelData } from './PassiveIncomePanel';
@@ -404,10 +405,19 @@ describe('family plan assumptions', () => {
     const draft = familyPlanDraftFromResponse(familyPlan);
     const html = renderToStaticMarkup(<FamilyPlanWorkspaceView data={familyPlan} draft={draft} onDraftChange={vi.fn()} onSave={vi.fn()} onRestore={vi.fn()} isSaving={false} />);
     expect(html.indexOf('Primary family finish line')).toBeLessThan(html.indexOf('Family wealth runway'));
-    expect(html.indexOf('Family wealth runway')).toBeLessThan(html.indexOf('Linked goals'));
-    expect(html.indexOf('Linked goals')).toBeLessThan(html.indexOf('Scenario comparison'));
+    expect(html.indexOf('Family wealth runway')).toBeLessThan(html.indexOf('Scenario comparison'));
+    expect(html.indexOf('Scenario comparison')).toBeLessThan(html.indexOf('Linked goals'));
     expect(html).toContain('Edit assumptions');
     expect(familyPlanQueryOptions.queryKey).toEqual(['wealth-family-plan']);
+  });
+
+  it('renders compact responsive scenario controls without duplicated floating labels or mojibake', () => {
+    const draft = familyPlanDraftFromResponse(familyPlan);
+    const html = renderToStaticMarkup(<FamilyScenarioMatrix data={familyPlan} draft={draft} onChange={vi.fn()} onSave={vi.fn()} toUpdate={familyPlanUpdateFromDraft} dirty={false} disabled={false} fieldErrors={{}} />);
+    expect(html).toContain('data-testid="compact-scenario-input"');
+    expect(html).toContain('data-testid="scenario-mobile-cards"');
+    expect(html).toContain('₹15 Cr · Dec 2029');
+    expect(html).not.toMatch(/â‚¹|Â·|Savingâ€¦/);
   });
 
   it('maps server validation fields and keeps generic failures retryable', () => {

@@ -212,9 +212,9 @@ export const FamilyPlanWorkspaceView: React.FC<{
       {dirty && <Alert severity="warning" sx={{ mt: 2 }}>Draft assumptions are ready to review. The runway below remains the last saved server calculation.</Alert>}
     </Paper>
     <Paper component="section" variant="outlined" sx={{ ...cardSx, p: { xs: 1.5, md: 2.5 }, minWidth: 0 }}><FamilyWealthRunwayChart projections={data.scenario_projections} /></Paper>
+    <FamilyScenarioMatrix data={data} draft={draft} onChange={onDraftChange} onSave={onSave} toUpdate={familyPlanUpdateFromDraft} dirty={dirty} disabled={isSaving} fieldErrors={fieldErrors}/>
     <Box component="section"><Typography variant="h5" fontWeight={900} mb={1.25}>Linked goals</Typography><FamilyGoalCards goals={expected?.goal_health ?? []} linkedGoals={data.goals} /></Box>
     {passive && <PassiveIncomePanel analysis={passive} />}
-    <FamilyScenarioMatrix data={data} draft={draft} onChange={onDraftChange} onSave={onSave} toUpdate={familyPlanUpdateFromDraft} dirty={dirty} disabled={isSaving} fieldErrors={fieldErrors}/>
     {saved && <Alert severity="success">Family plan saved and recalculated.</Alert>}
     {saveError && <Alert severity="error" action={onRetry && <Button color="inherit" disabled={isSaving} onClick={onRetry}>Retry</Button>}>{saveError}</Alert>}
     <Drawer anchor="right" open={drawerOpen} onClose={() => !isSaving && setDrawerOpen(false)} PaperProps={{ sx: { maxWidth: '100%' } }}><FamilyPlanAssumptions value={draft} onChange={onDraftChange} fieldErrors={fieldErrors} disabled={isSaving} dirty={dirty} /><Stack direction="row" spacing={1} sx={{ position: 'sticky', bottom: 0, bgcolor: '#fff', borderTop: '1px solid #DCE7F2', p: 2, zIndex: 1 }}><Button variant="contained" disabled={!dirty || isSaving} onClick={() => onSave(familyPlanUpdateFromDraft(draft))}>{isSaving ? 'Saving…' : 'Save and recalculate'}</Button><Button disabled={isSaving} onClick={onRestore}>Restore defaults</Button></Stack></Drawer>

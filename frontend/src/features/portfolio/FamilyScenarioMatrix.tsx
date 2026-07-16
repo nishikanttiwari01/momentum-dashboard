@@ -1,33 +1,53 @@
-import React from "react";
+import React from 'react';
 import {
   Alert,
   Box,
   Button,
-  Checkbox,
-  FormControlLabel,
+  InputAdornment,
+  Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
-} from "@mui/material";
-import { formatCrore } from "./familyWealthMath";
-import type { FamilyPlanDraft } from "./FamilyPlanAssumptions";
-import type { FamilyPlanResponse, FamilyPlanUpdate } from "./wealthTypes";
+} from '@mui/material';
+import { formatCrore } from './familyWealthMath';
+import type { FamilyPlanDraft } from './FamilyPlanAssumptions';
+import type { FamilyPlanResponse, FamilyPlanUpdate } from './wealthTypes';
 
 type Props = {
   data: FamilyPlanResponse;
   draft: FamilyPlanDraft;
-  onChange: (d: FamilyPlanDraft) => void;
-  onSave: (p: FamilyPlanUpdate) => void;
-  toUpdate: (d: FamilyPlanDraft) => FamilyPlanUpdate;
+  onChange: (draft: FamilyPlanDraft) => void;
+  onSave: (payload: FamilyPlanUpdate) => void;
+  toUpdate: (draft: FamilyPlanDraft) => FamilyPlanUpdate;
   dirty: boolean;
   disabled: boolean;
   fieldErrors: Partial<Record<string, string>>;
 };
+
+type ScenarioDraft = FamilyPlanDraft['scenarios'][number];
+type NumericKey = Exclude<keyof ScenarioDraft, 'scenario_key' | 'step_up_enabled'>;
+
 const labels = {
-  conservative: "Conservative",
-  expected: "Expected",
-  optimistic: "Optimistic",
+  conservative: 'Conservative',
+  expected: 'Expected',
+  optimistic: 'Optimistic',
 } as const;
+
+const tones = {
+  conservative: { border: '#D98A00', bg: '#FFF9ED' },
+  expected: { border: '#2563EB', bg: '#F3F7FF' },
+  optimistic: { border: '#7357B6', bg: '#F8F5FF' },
+} as const;
+
+const rows: Array<{ key: NumericKey; label: string; suffix: string; width: number }> = [
+  { key: 'financial_return_pct', label: 'Financial return', suffix: '%', width: 96 },
+  { key: 'property_growth_pct', label: 'Property growth', suffix: '%', width: 96 },
+  { key: 'monthly_contribution_inr', label: 'Monthly investment', suffix: '₹L/mo', width: 118 },
+  { key: 'step_up_pct', label: 'Step-up', suffix: '%', width: 96 },
+  { key: 'contribution_stop_age', label: 'Contribution stop', suffix: 'age', width: 104 },
+];
+
 export const FamilyScenarioMatrix: React.FC<Props> = ({
   data,
   draft,
@@ -38,147 +58,142 @@ export const FamilyScenarioMatrix: React.FC<Props> = ({
   disabled,
   fieldErrors,
 }) => {
-  const change = (i: number, key: string, value: string | boolean) =>
+  const change = (index: number, key: keyof ScenarioDraft, value: string | boolean) =>
     onChange({
       ...draft,
-      scenarios: draft.scenarios.map((s, n) =>
-        n === i ? { ...s, [key]: value } : s,
+      scenarios: draft.scenarios.map((scenario, at) =>
+        at === index ? { ...scenario, [key]: value } : scenario,
       ),
     });
-  const field = (
-    i: number,
-    key: keyof FamilyPlanDraft["scenarios"][number],
-    label: string,
-  ) => (
-    <TextField
-      size="small"
-      label={label}
-      type="number"
-      value={String(draft.scenarios[i][key])}
-      disabled={
-        disabled ||
-        (key === "step_up_pct" && !draft.scenarios[i].step_up_enabled)
-      }
-      onChange={(e) => change(i, key, e.target.value)}
-      error={!!fieldErrors[`scenarios.${i}.${key}`]}
-      helperText={fieldErrors[`scenarios.${i}.${key}`]}
-      inputProps={{ step: 0.1 }}
-    />
-  );
-  return (
-    <Box component="section" aria-labelledby="scenario-matrix-title">
-      <Typography id="scenario-matrix-title" variant="h5" fontWeight={900}>
-        Scenario comparison
-      </Typography>
-      <Typography color="text.secondary" mb={1}>
-        Tune financial and property assumptions independently. Results remain
-        last saved until recalculated.
-      </Typography>
-      {dirty && (
-        <Alert severity="warning" sx={{ mb: 1 }}>
-          Draft values are not yet reflected in the calculated results.
-        </Alert>
-      )}
-      <Box
-        sx={{ overflowX: "auto", maxWidth: "100%" }}
-        data-testid="scenario-matrix-scroll"
-      >
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "160px repeat(3,minmax(220px,1fr))",
-            minWidth: 820,
-            gap: 1,
-          }}
-        >
-          <Box />
-          <>
-            {draft.scenarios.map((s) => (
-              <Typography key={s.scenario_key} fontWeight={900}>
-                {labels[s.scenario_key]}
-              </Typography>
-            ))}
-          </>
-          {(
-            [
-              "Financial return (%)",
-              "Property growth (%)",
-              "Monthly investment",
-              "Annual step-up",
-              "Step-up (%)",
-              "Contribution stop age",
-            ] as const
-          ).map((label, row) => (
-            <React.Fragment key={label}>
-              <Typography alignSelf="center" fontWeight={700}>
-                {label}
-              </Typography>
-              {draft.scenarios.map((s, i) =>
-                row === 3 ? (
-                  <FormControlLabel
-                    key={s.scenario_key}
-                    control={
-                      <Checkbox
-                        checked={s.step_up_enabled}
-                        onChange={(e) =>
-                          change(i, "step_up_enabled", e.target.checked)
-                        }
-                      />
-                    }
-                    label={s.step_up_enabled ? "On" : "Off"}
-                  />
-                ) : (
-                  field(
-                    i,
-                    (
-                      [
-                        "financial_return_pct",
-                        "property_growth_pct",
-                        "monthly_contribution_inr",
-                        "step_up_enabled",
-                        "step_up_pct",
-                        "contribution_stop_age",
-                      ] as const
-                    )[row],
-                    label,
-                  )
-                ),
-              )}
-            </React.Fragment>
-          ))}
-          <Typography fontWeight={700}>
-            Ending net worth · age {data.projection_end_age}
-          </Typography>
-          {data.scenario_projections.map((p) => (
-            <Typography key={p.settings.scenario_key} fontWeight={900}>
-              {formatCrore(p.ending_total_net_worth_inr)}
-            </Typography>
-          ))}
-          <Typography fontWeight={700}>₹15 Cr · Dec 2029</Typography>
-          {data.scenario_projections.map((p) => (
-            <Typography
-              key={p.settings.scenario_key}
-              color={
-                p.december_2029_milestone?.on_track
-                  ? "success.main"
-                  : "error.main"
-              }
-              fontWeight={800}
-            >
-              {p.december_2029_milestone?.on_track ? "On track" : "Shortfall"} ·{" "}
-              {formatCrore(p.december_2029_milestone?.projected_value_inr)}
-            </Typography>
-          ))}
-        </Box>
+
+  const displayValue = (scenario: ScenarioDraft, key: NumericKey) =>
+    key === 'monthly_contribution_inr'
+      ? String(Number(scenario[key] || 0) / 100_000)
+      : String(scenario[key]);
+
+  const storeValue = (key: NumericKey, value: string) =>
+    key === 'monthly_contribution_inr'
+      ? value === '' ? '' : String(Number(value) * 100_000)
+      : value;
+
+  const input = (scenario: ScenarioDraft, index: number, row: typeof rows[number]) => {
+    const error = fieldErrors[`scenarios.${index}.${row.key}`];
+    return (
+      <TextField
+        key={`${scenario.scenario_key}-${row.key}`}
+        data-testid="compact-scenario-input"
+        size="small"
+        hiddenLabel
+        type="number"
+        value={displayValue(scenario, row.key)}
+        disabled={disabled || (row.key === 'step_up_pct' && !scenario.step_up_enabled)}
+        onChange={(event) => change(index, row.key, storeValue(row.key, event.target.value))}
+        error={Boolean(error)}
+        helperText={error}
+        inputProps={{
+          'aria-label': `${labels[scenario.scenario_key]} ${row.label}`,
+          step: row.key === 'contribution_stop_age' ? 1 : 0.1,
+        }}
+        InputProps={{ endAdornment: <InputAdornment position="end">{row.suffix}</InputAdornment> }}
+        sx={{
+          width: row.width,
+          '& .MuiInputBase-root': { height: 36, bgcolor: '#fff' },
+          '& .MuiFormHelperText-root': { mx: 0, maxWidth: row.width },
+        }}
+      />
+    );
+  };
+
+  const projectionFor = (scenario: ScenarioDraft) =>
+    data.scenario_projections.find((item) => item.settings.scenario_key === scenario.scenario_key);
+
+  const result = (scenario: ScenarioDraft) => {
+    const projection = projectionFor(scenario);
+    const milestone = projection?.december_2029_milestone;
+    return (
+      <Box sx={{ p: 1.25, borderRadius: 2, bgcolor: tones[scenario.scenario_key].bg, minWidth: 0 }}>
+        <Typography variant="caption" color="text.secondary">Ending net worth · age {data.projection_end_age}</Typography>
+        <Typography fontWeight={900}>{formatCrore(projection?.ending_total_net_worth_inr)}</Typography>
+        <Typography variant="caption" color="text.secondary">₹15 Cr · Dec 2029</Typography>
+        <Typography fontWeight={800} color={milestone?.on_track ? 'success.main' : 'error.main'}>
+          {milestone?.on_track ? 'On track' : 'Shortfall'} · {formatCrore(milestone?.projected_value_inr)}
+        </Typography>
       </Box>
-      <Button
-        sx={{ mt: 2 }}
-        variant="contained"
-        disabled={!dirty || disabled}
-        onClick={() => onSave(toUpdate(draft))}
+    );
+  };
+
+  return (
+    <Box component="section" aria-labelledby="scenario-matrix-title" sx={{ minWidth: 0, maxWidth: '100%' }}>
+      <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" alignItems={{ sm: 'center' }} gap={1} mb={1.25}>
+        <Box>
+          <Typography id="scenario-matrix-title" variant="h5" fontWeight={900}>Scenario comparison</Typography>
+          <Typography variant="body2" color="text.secondary">Tune assumptions and recalculate the chart above.</Typography>
+        </Box>
+        <Button size="small" variant="contained" disabled={!dirty || disabled} onClick={() => onSave(toUpdate(draft))}>
+          {disabled ? 'Saving…' : 'Save & recalculate'}
+        </Button>
+      </Stack>
+
+      {dirty && <Alert severity="warning" sx={{ mb: 1 }}>Draft values are not yet reflected in the calculated results.</Alert>}
+
+      <Box
+        data-testid="scenario-desktop-matrix"
+        sx={{
+          display: { xs: 'none', md: 'grid' },
+          gridTemplateColumns: '170px repeat(3,minmax(180px,1fr))',
+          columnGap: 1.5,
+          rowGap: 1,
+          alignItems: 'center',
+        }}
       >
-        {disabled ? "Saving…" : "Save and recalculate"}
-      </Button>
+        <Box />
+        {draft.scenarios.map((scenario) => (
+          <Typography key={scenario.scenario_key} fontWeight={900} sx={{ borderTop: `3px solid ${tones[scenario.scenario_key].border}`, pt: .75 }}>
+            {labels[scenario.scenario_key]}
+          </Typography>
+        ))}
+        {rows.slice(0, 3).map((row) => (
+          <React.Fragment key={row.key}>
+            <Typography variant="body2" fontWeight={750}>{row.label}</Typography>
+            {draft.scenarios.map((scenario, index) => input(scenario, index, row))}
+          </React.Fragment>
+        ))}
+        <Typography variant="body2" fontWeight={750}>Annual step-up</Typography>
+        {draft.scenarios.map((scenario, index) => (
+          <Stack key={`${scenario.scenario_key}-step-up`} direction="row" alignItems="center" spacing={.5}>
+            <Switch size="small" checked={scenario.step_up_enabled} disabled={disabled} inputProps={{ 'aria-label': `${labels[scenario.scenario_key]} annual step-up` }} onChange={(event) => change(index, 'step_up_enabled', event.target.checked)} />
+            {input(scenario, index, rows[3])}
+          </Stack>
+        ))}
+        <Typography variant="body2" fontWeight={750}>{rows[4].label}</Typography>
+        {draft.scenarios.map((scenario, index) => input(scenario, index, rows[4]))}
+        <Typography variant="body2" fontWeight={750}>Projected result</Typography>
+        {draft.scenarios.map((scenario) => <React.Fragment key={`${scenario.scenario_key}-result`}>{result(scenario)}</React.Fragment>)}
+      </Box>
+
+      <Stack data-testid="scenario-mobile-cards" spacing={1.25} sx={{ display: { xs: 'flex', md: 'none' } }}>
+        {draft.scenarios.map((scenario, index) => (
+          <Paper key={scenario.scenario_key} variant="outlined" sx={{ p: 1.5, borderTop: `3px solid ${tones[scenario.scenario_key].border}`, minWidth: 0 }}>
+            <Typography fontWeight={900} mb={1}>{labels[scenario.scenario_key]}</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 1, alignItems: 'center' }}>
+              {rows.slice(0, 3).map((row) => (
+                <React.Fragment key={row.key}>
+                  <Typography variant="body2" fontWeight={700}>{row.label}</Typography>
+                  {input(scenario, index, row)}
+                </React.Fragment>
+              ))}
+              <Typography variant="body2" fontWeight={700}>Annual step-up</Typography>
+              <Stack direction="row" alignItems="center" spacing={.5}>
+                <Switch size="small" checked={scenario.step_up_enabled} disabled={disabled} inputProps={{ 'aria-label': `${labels[scenario.scenario_key]} annual step-up` }} onChange={(event) => change(index, 'step_up_enabled', event.target.checked)} />
+                {input(scenario, index, rows[3])}
+              </Stack>
+              <Typography variant="body2" fontWeight={700}>{rows[4].label}</Typography>
+              {input(scenario, index, rows[4])}
+            </Box>
+            <Box mt={1.25}>{result(scenario)}</Box>
+          </Paper>
+        ))}
+      </Stack>
     </Box>
   );
 };
