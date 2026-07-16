@@ -7,6 +7,8 @@ import type {
   ImportPreview,
   PrimaryGoalResponse,
   WealthSummary,
+  AnnualReviewOverrideUpdate,
+  AnnualReviewResponse,
 } from './wealthTypes';
 
 export async function previewWorkbook(file: File): Promise<ImportPreview> {
@@ -47,4 +49,22 @@ export async function updateFamilyPlan(payload: FamilyPlanUpdate): Promise<Famil
 
 export async function restoreFamilyPlanDefaults(): Promise<FamilyPlanResponse> {
   return (await axios.post<FamilyPlanResponse>(`${FAMILY_PLAN_URL}/restore-defaults`)).data;
+}
+
+const ANNUAL_REVIEWS_URL = '/api/v1/wealth-portfolio/annual-reviews';
+
+export async function fetchAnnualReviews(): Promise<AnnualReviewResponse[]> {
+  return (await axios.get<AnnualReviewResponse[]>(ANNUAL_REVIEWS_URL)).data;
+}
+
+export async function fetchAnnualReview(year: number): Promise<AnnualReviewResponse> {
+  return (await axios.get<AnnualReviewResponse>(`${ANNUAL_REVIEWS_URL}/${year}`)).data;
+}
+
+export async function saveAnnualReviewOverrides(year: number, payload: AnnualReviewOverrideUpdate): Promise<AnnualReviewResponse> {
+  return (await axios.put<AnnualReviewResponse>(`${ANNUAL_REVIEWS_URL}/${year}`, payload)).data;
+}
+
+export async function deleteAnnualReviewOverrides(year: number): Promise<AnnualReviewResponse> {
+  return (await axios.delete<AnnualReviewResponse>(`${ANNUAL_REVIEWS_URL}/${year}`)).data;
 }

@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   commitWorkbook,
   fetchFamilyPlan,
+  fetchAnnualReviews,
+  saveAnnualReviewOverrides,
+  deleteAnnualReviewOverrides,
   fetchPrimaryGoal,
   previewWorkbook,
   restoreFamilyPlanDefaults,
@@ -154,5 +157,20 @@ describe('wealthApi', () => {
     mockedAxios.post.mockResolvedValueOnce({ data: familyPlan });
     await expect(restoreFamilyPlanDefaults()).resolves.toBe(familyPlan);
     expect(mockedAxios.post).toHaveBeenCalledWith('/api/v1/wealth-portfolio/goals/family-plan/restore-defaults');
+  });
+
+  it('lists, saves, and deletes annual review overrides', async () => {
+    mockedAxios.get.mockResolvedValueOnce({ data: [] });
+    await fetchAnnualReviews();
+    expect(mockedAxios.get).toHaveBeenCalledWith('/api/v1/wealth-portfolio/annual-reviews');
+
+    const response = { year: 2025 };
+    mockedAxios.put.mockResolvedValueOnce({ data: response });
+    await saveAnnualReviewOverrides(2025, { rent_received_inr: 600000 });
+    expect(mockedAxios.put).toHaveBeenCalledWith('/api/v1/wealth-portfolio/annual-reviews/2025', { rent_received_inr: 600000 });
+
+    mockedAxios.delete.mockResolvedValueOnce({ data: response });
+    await deleteAnnualReviewOverrides(2025);
+    expect(mockedAxios.delete).toHaveBeenCalledWith('/api/v1/wealth-portfolio/annual-reviews/2025');
   });
 });

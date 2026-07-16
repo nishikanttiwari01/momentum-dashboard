@@ -40,6 +40,25 @@ export type WealthSummary = {
 
 export type WealthDataHealth = 'empty' | 'fresh' | 'warning' | 'unavailable';
 
+export type AnnualReviewSource = 'manual' | 'calculated' | 'imported' | 'estimated' | 'missing';
+export type AnnualReviewField = { value: number | null; calculated_value: number | null; source: AnnualReviewSource; explanation: string };
+export type AnnualReviewOverrideUpdate = Partial<{
+  opening_net_worth_inr: number | null; contributions_inr: number | null;
+  investment_gain_inr: number | null; property_gain_inr: number | null;
+  rent_received_inr: number | null; withdrawals_inr: number | null;
+  closing_net_worth_inr: number | null; investment_xirr_pct: number | null;
+  notes: string | null;
+}>;
+export type AnnualReviewResponse = {
+  year: number; opening_snapshot_date: string | null; closing_snapshot_date: string | null;
+  opening_net_worth_inr: AnnualReviewField; contributions_inr: AnnualReviewField;
+  investment_gain_inr: AnnualReviewField; property_gain_inr: AnnualReviewField;
+  rent_received_inr: AnnualReviewField; withdrawals_inr: AnnualReviewField;
+  closing_net_worth_inr: AnnualReviewField; investment_xirr_pct: AnnualReviewField;
+  reconciliation: { status: 'reconciled' | 'needs_review' | 'incomplete'; expected_closing_inr: number | null; difference_inr: number | null };
+  notes: string | null;
+};
+
 export type GoalSettings = {
   name: string;
   target_amount_inr: number;
