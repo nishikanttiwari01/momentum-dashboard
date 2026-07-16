@@ -36,6 +36,7 @@ from app.api.v1 import (
     candidate_pool,
     simulator,
     etfs,
+    market_indices,
 )
 from app.api.errors import (
     on_validation_error,
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(candidate_pool.router, prefix=prefix, tags=["Screener"])
     app.include_router(simulator.router,   prefix=prefix, tags=["Simulator"])
     app.include_router(etfs.router,        prefix=prefix, tags=["ETFs"])
+    app.include_router(market_indices.router, prefix=prefix)
 
     return app
 
