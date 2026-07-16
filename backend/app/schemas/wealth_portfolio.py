@@ -85,6 +85,49 @@ class WealthSummary(BaseModel):
     data_health: Literal["empty", "fresh", "warning", "unavailable"] = "empty"
 
 
+class AnnualReviewOverrideUpdate(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    opening_net_worth_inr: float | None = Field(None, ge=0)
+    contributions_inr: float | None = Field(None, ge=0)
+    investment_gain_inr: float | None = None
+    property_gain_inr: float | None = None
+    rent_received_inr: float | None = Field(None, ge=0)
+    withdrawals_inr: float | None = Field(None, ge=0)
+    closing_net_worth_inr: float | None = Field(None, ge=0)
+    investment_xirr_pct: float | None = Field(None, ge=-100, le=1000)
+    notes: str | None = Field(None, max_length=2000)
+
+
+class AnnualReviewField(BaseModel):
+    value: float | None = None
+    calculated_value: float | None = None
+    source: Literal["manual", "calculated", "imported", "estimated", "missing"]
+    explanation: str
+
+
+class AnnualReviewReconciliation(BaseModel):
+    status: Literal["reconciled", "needs_review", "incomplete"]
+    expected_closing_inr: float | None = None
+    difference_inr: float | None = None
+
+
+class AnnualReviewResponse(BaseModel):
+    year: int = Field(ge=2000)
+    opening_snapshot_date: date | None = None
+    closing_snapshot_date: date | None = None
+    opening_net_worth_inr: AnnualReviewField
+    contributions_inr: AnnualReviewField
+    investment_gain_inr: AnnualReviewField
+    property_gain_inr: AnnualReviewField
+    rent_received_inr: AnnualReviewField
+    withdrawals_inr: AnnualReviewField
+    closing_net_worth_inr: AnnualReviewField
+    investment_xirr_pct: AnnualReviewField
+    reconciliation: AnnualReviewReconciliation
+    notes: str | None = None
+
+
 ScenarioKey = Literal["conservative", "expected", "optimistic"]
 GoalType = Literal["education", "house", "marriage", "passive_income"]
 FundingTreatment = Literal["expense", "asset_conversion", "income_target"]

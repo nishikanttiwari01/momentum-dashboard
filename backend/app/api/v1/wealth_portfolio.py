@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from fastapi import (
@@ -7,6 +8,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Path as ApiPath,
     Response,
     UploadFile,
     status,
@@ -27,6 +29,14 @@ from app.schemas.wealth_portfolio import (
     PrimaryGoalResponse,
     FamilyPlanResponse,
     FamilyPlanUpdate,
+    AnnualReviewOverrideUpdate,
+    AnnualReviewResponse,
+)
+from app.services.annual_review_service import (
+    delete_annual_review_overrides,
+    get_annual_review,
+    list_annual_reviews,
+    save_annual_review_overrides,
 )
 from app.services.family_wealth_plan_service import (
     FamilyPlanNotFound,
@@ -172,6 +182,36 @@ def latest_snapshot(session: Session = Depends(get_session)) -> SnapshotSummary:
 @router.get("/summary", response_model=WealthSummary)
 def summary(session: Session = Depends(get_session)) -> WealthSummary:
     return build_summary(session)
+
+
+@router.get("/annual-reviews", response_model=list[AnnualReviewResponse])
+def annual_reviews(session: Session = Depends(get_session)) -> list[AnnualReviewResponse]:
+    return list_annual_reviews(session)
+
+
+@router.get("/annual-reviews/{year}", response_model=AnnualReviewResponse)
+def annual_review(
+    year: int = ApiPath(ge=2000, le=date.today().year),
+    session: Session = Depends(get_session),
+) -> AnnualReviewResponse:
+    return get_annual_review(session, year)
+
+
+@router.put("/annual-reviews/{year}", response_model=AnnualReviewResponse)
+def replace_annual_review_overrides(
+    payload: AnnualReviewOverrideUpdate,
+    year: int = ApiPath(ge=2000, le=date.today().year),
+    session: Session = Depends(get_session),
+) -> AnnualReviewResponse:
+    return save_annual_review_overrides(session, year, payload)
+
+
+@router.delete("/annual-reviews/{year}", response_model=AnnualReviewResponse)
+def remove_annual_review_overrides(
+    year: int = ApiPath(ge=2000, le=date.today().year),
+    session: Session = Depends(get_session),
+) -> AnnualReviewResponse:
+    return delete_annual_review_overrides(session, year)
 
 
 @router.get("/goals/primary", response_model=PrimaryGoalResponse)

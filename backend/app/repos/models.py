@@ -287,6 +287,24 @@ class PortfolioFxRate(Base):
     __table_args__ = (UniqueConstraint("base_currency", "quote_currency", "effective_on"),)
 
 
+class PortfolioAnnualReviewOverride(Base):
+    __tablename__ = "portfolio_annual_review_overrides"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    year: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    opening_net_worth_inr: Mapped[Optional[float]] = mapped_column(Float)
+    contributions_inr: Mapped[Optional[float]] = mapped_column(Float)
+    investment_gain_inr: Mapped[Optional[float]] = mapped_column(Float)
+    property_gain_inr: Mapped[Optional[float]] = mapped_column(Float)
+    rent_received_inr: Mapped[Optional[float]] = mapped_column(Float)
+    withdrawals_inr: Mapped[Optional[float]] = mapped_column(Float)
+    closing_net_worth_inr: Mapped[Optional[float]] = mapped_column(Float)
+    investment_xirr_pct: Mapped[Optional[float]] = mapped_column(Float)
+    notes: Mapped[Optional[str]] = mapped_column(String(2000))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
+
+
 class WealthGoal(Base):
     __tablename__ = "wealth_goals"
 
