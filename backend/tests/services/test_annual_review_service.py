@@ -1,10 +1,11 @@
-from datetime import date
+from datetime import date, datetime
 from uuid import uuid4
 
 from app.repos.models import (
     PortfolioAnnualReviewOverride,
     PortfolioAsset,
     PortfolioImport,
+    PortfolioFxRate,
     PortfolioSnapshot,
     PortfolioTransaction,
 )
@@ -62,3 +63,15 @@ def test_missing_snapshots_remain_missing_instead_of_zero(session):
     assert review.closing_net_worth_inr.value is None
     assert review.contributions_inr.value is None
     assert review.reconciliation.status == "incomplete"
+
+
+def test_converts_historical_usd_assets_with_persisted_fx(session):
+    import_id, snapshot_id = str(uuid4()), str(uuid4())
+    session.add(PortfolioImport(id=import_id, source_sha256="c" * 64, filename="usd.xlsx", status="SUCCEEDED", issue_counts={}))
+    session.add(PortfolioSnapshot(id=snapshot_id, import_id=import_id, as_of=date(2025, 12, 31)))
+    session.add(PortfolioAsset(id=str(uuid4()), snapshot_id=snapshot_id, source_key="qqq", asset_type="etf", name="QQQ", market="US", currency="USD", invested_amount=1000, market_value=1200, source_ref={}))
+    session.add(PortfolioFxRate(base_currency="USD", quote_currency="INR", effective_on=date(2025, 12, 30), rate=85, source="test", fetched_at=datetime(2025, 12, 30)))
+    session.commit()
+
+    review = get_annual_review(session, 2025)
+    assert review.closing_net_worth_inr.value == 102_000

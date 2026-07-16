@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.repos.models import PortfolioAnnualReviewOverride, PortfolioAsset, PortfolioSnapshot, PortfolioTransaction
+from app.repos.models import PortfolioAnnualReviewOverride, PortfolioAsset, PortfolioFxRate, PortfolioSnapshot, PortfolioTransaction
 from app.schemas.wealth_portfolio import AnnualReviewField, AnnualReviewOverrideUpdate, AnnualReviewReconciliation, AnnualReviewResponse
 from app.services.portfolio_service import xirr
 
@@ -24,18 +24,36 @@ def _snapshot_on_or_before(session: Session, on: date, *, within_year: int | Non
     return session.scalar(query.order_by(PortfolioSnapshot.as_of.desc(), PortfolioSnapshot.created_at.desc()).limit(1))
 
 
+def _inr_value(session: Session, amount: float | None, currency: str, on: date) -> float | None:
+    if amount is None:
+        return 0.0
+    if currency == "INR":
+        return amount
+    if currency != "USD":
+        return None
+    rate = session.scalar(
+        select(PortfolioFxRate.rate).where(
+            PortfolioFxRate.base_currency == "USD",
+            PortfolioFxRate.quote_currency == "INR",
+            PortfolioFxRate.effective_on <= on,
+        ).order_by(PortfolioFxRate.effective_on.desc()).limit(1)
+    )
+    return amount * rate if rate is not None else None
+
+
 def _totals(session: Session, snapshot: PortfolioSnapshot | None) -> tuple[float | None, float | None]:
     if snapshot is None:
         return None, None
     assets = list(session.scalars(select(PortfolioAsset).where(PortfolioAsset.snapshot_id == snapshot.id)))
-    if any(asset.currency != "INR" and asset.market_value is not None for asset in assets):
+    converted = [(asset, _inr_value(session, asset.market_value, asset.currency, snapshot.as_of)) for asset in assets]
+    if any(value is None for _, value in converted):
         return None, None
-    financial = sum((asset.market_value or 0) for asset in assets if asset.asset_type not in PROPERTY_TYPES)
-    property_value = sum((asset.market_value or 0) for asset in assets if asset.asset_type in PROPERTY_TYPES)
+    financial = sum(value or 0 for asset, value in converted if asset.asset_type not in PROPERTY_TYPES)
+    property_value = sum(value or 0 for asset, value in converted if asset.asset_type in PROPERTY_TYPES)
     return financial, property_value
 
 
-def _flows(session: Session, snapshot: PortfolioSnapshot | None, year: int) -> tuple[float | None, float | None, list[PortfolioTransaction]]:
+def _flows(session: Session, snapshot: PortfolioSnapshot | None, year: int) -> tuple[float | None, float | None, list[tuple[date, str, float]]]:
     if snapshot is None:
         return None, None, []
     rows = list(session.scalars(select(PortfolioTransaction).where(
@@ -43,11 +61,12 @@ def _flows(session: Session, snapshot: PortfolioSnapshot | None, year: int) -> t
         PortfolioTransaction.occurred_on >= date(year, 1, 1),
         PortfolioTransaction.occurred_on <= date(year, 12, 31),
     )))
-    if any(row.currency != "INR" for row in rows):
+    converted = [(row, _inr_value(session, row.amount, row.currency, row.occurred_on)) for row in rows]
+    if any(value is None for _, value in converted):
         return None, None, []
-    buys = sum(row.amount for row in rows if row.kind.lower() in {"buy", "contribution", "invest"})
-    sells = sum(abs(row.amount) for row in rows if row.kind.lower() in {"sell", "withdrawal", "redeem"})
-    return buys, sells, rows
+    buys = sum(value or 0 for row, value in converted if row.kind.lower() in {"buy", "contribution", "invest"})
+    sells = sum(abs(value or 0) for row, value in converted if row.kind.lower() in {"sell", "withdrawal", "redeem"})
+    return buys, sells, [(row.occurred_on, row.kind.lower(), float(value)) for row, value in converted if value is not None]
 
 
 def _field(calculated: float | None, source: str, explanation: str, override: float | None) -> AnnualReviewField:
@@ -69,11 +88,11 @@ def get_annual_review(session: Session, year: int) -> AnnualReviewResponse:
     investment_xirr = None
     if open_financial is not None and close_financial is not None:
         cashflows = [(date(year, 1, 1), -open_financial)]
-        for transaction in transactions:
-            if transaction.kind.lower() in {"buy", "contribution", "invest"}:
-                cashflows.append((transaction.occurred_on, -abs(transaction.amount)))
-            elif transaction.kind.lower() in {"sell", "withdrawal", "redeem"}:
-                cashflows.append((transaction.occurred_on, abs(transaction.amount)))
+        for occurred_on, kind, amount_inr in transactions:
+            if kind in {"buy", "contribution", "invest"}:
+                cashflows.append((occurred_on, -abs(amount_inr)))
+            elif kind in {"sell", "withdrawal", "redeem"}:
+                cashflows.append((occurred_on, abs(amount_inr)))
         cashflows.append((date(year, 12, 31), close_financial))
         investment_xirr = xirr(cashflows)
     override = session.scalar(select(PortfolioAnnualReviewOverride).where(PortfolioAnnualReviewOverride.year == year))
