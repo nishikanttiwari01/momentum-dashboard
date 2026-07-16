@@ -169,10 +169,12 @@ const MoversTable: React.FC<MoversTableProps> = ({ title, rows, onSelect, cataly
 );
 
 
-const SectionBand: React.FC<{ color: string; label: string }> = ({ color, label }) => (
+const SectionBand: React.FC<{ color: string; label: string; headingId: string }> = ({ color, label, headingId }) => (
   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, px: { xs: 1, md: 2 }, pt: 2.5, pb: 1 }}>
     <Box sx={{ width: 8, height: 8, borderRadius: '2px', bgcolor: color }} />
     <Typography
+      component="h2"
+      id={headingId}
       sx={{ fontFamily: 'Poppins, Inter, sans-serif', fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', color: 'text.secondary', textTransform: 'uppercase' }}
     >
       {label}
@@ -381,8 +383,8 @@ export default function Dashboard() {
         <DataHealthPanel />
       </Box>
 
-      <SectionBand color="#7C3AED" label="Markets — India & US" />
-      <Grid container spacing={2} sx={{ px: { xs: 1, md: 2 } }} alignItems="stretch">
+      <SectionBand color="#7C3AED" label="Markets — India & US" headingId="markets-heading" />
+      <Grid container spacing={2} sx={{ px: { xs: 1, md: 2 } }} alignItems="stretch" aria-labelledby="markets-heading">
         <Grid item xs={12} lg={6}>
           <MarketIndexChartCard marketKey="sensex" />
         </Grid>
@@ -391,8 +393,8 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
-      <SectionBand color="#00B386" label="My investments — open trades" />
-      <Grid container spacing={2} sx={{ px: { xs: 1, md: 2 } }} alignItems="stretch">
+      <SectionBand color="#00B386" label="My investments — open trades" headingId="investments-heading" />
+      <Grid container spacing={2} sx={{ px: { xs: 1, md: 2 } }} alignItems="stretch" aria-labelledby="investments-heading">
         <Grid item xs={12} lg={8}>
           <TradePositionsPanel
             rows={positionRows}
@@ -411,8 +413,8 @@ export default function Dashboard() {
         </Grid>
       </Grid>
 
-      <SectionBand color="#2E90FA" label="Market analysis — trends & opportunities" />
-      <Stack spacing={2} sx={{ px: { xs: 1, md: 2 }, pb: 2 }}>
+      <SectionBand color="#2E90FA" label="Market analysis — trends & opportunities" headingId="market-analysis-heading" />
+      <Stack spacing={2} sx={{ px: { xs: 1, md: 2 }, pb: 2 }} aria-labelledby="market-analysis-heading">
         <SectorHeatmap refetchIntervalMs={refetchIntervalMs} />
 
         <Grid container spacing={2} alignItems="stretch">

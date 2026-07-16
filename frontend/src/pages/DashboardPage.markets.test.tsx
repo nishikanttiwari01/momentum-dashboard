@@ -1,46 +1,52 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import * as React from 'react';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import DashboardPage from './DashboardPage';
 
-const source = readFileSync(fileURLToPath(new URL('./DashboardPage.tsx', import.meta.url)), 'utf8');
-const marketsLabel = '<SectionBand color="#7C3AED" label="Markets — India & US" />';
-const investmentsLabel = '<SectionBand color="#00B386" label="My investments — open trades" />';
+vi.mock('react-router-dom', () => ({ useOutletContext: () => ({ refetchIntervalMs: 0 }) }));
+vi.mock('@tanstack/react-query', () => ({
+  useQuery: () => ({ data: undefined }),
+  useQueries: () => [],
+}));
+vi.mock('@/lib/api/client', () => ({
+  getGetApiV1InstrumentsSymbolDetailQueryOptions: vi.fn(),
+  useGetApiV1Positions: () => ({ data: undefined, isLoading: false, isError: false }),
+  useGetTopMovers: () => ({ data: undefined, isLoading: false, isError: false }),
+  useGetCandidatePool: () => ({ data: undefined, isLoading: false, isError: false }),
+}));
 
-function expectMarketsPlacement(pageSource: string) {
-  const dataHealthPanel = pageSource.indexOf('<DataHealthPanel />');
-  const marketsBand = pageSource.indexOf(marketsLabel);
-  const investmentsBand = pageSource.indexOf(investmentsLabel);
+vi.mock('../components/DataHealthPanel', () => ({ default: () => <div data-testid="data-health" /> }));
+vi.mock('../components/MarketIndexChartCard', () => ({
+  default: ({ marketKey }: { marketKey: string }) => <div data-testid={`market-${marketKey}`} />,
+}));
+vi.mock('../components/TradePositionsPanel', () => ({ default: () => <div data-testid="investments" /> }));
+vi.mock('../components/SectorHeatmap', () => ({ default: () => null }));
+vi.mock('../components/AccumulationWatchCard', () => ({ default: () => null }));
+vi.mock('../components/EtfWatchCard', () => ({ default: () => null }));
+vi.mock('../components/TopPerformersCard', () => ({ default: () => null }));
+vi.mock('../components/RelevantNewsCard', () => ({ default: () => null }));
+vi.mock('@/features/detail/RightDrawer', () => ({ default: () => null }));
 
-  expect(dataHealthPanel).toBeGreaterThan(-1);
-  expect(marketsBand).toBeGreaterThan(dataHealthPanel);
-  expect(investmentsBand).toBeGreaterThan(marketsBand);
-  expect(pageSource).toMatch(
-    /<Box sx=\{\{ px: \{ xs: 1, md: 2 \}, pt: 1 \}\}>\s*<DataHealthPanel \/>\s*<\/Box>\s*<SectionBand color="#7C3AED" label="Markets — India & US" \/>/,
-  );
-}
+afterEach(cleanup);
 
 describe('DashboardPage markets composition', () => {
-  it('places both responsive market index cards before open investments', () => {
-    expect(source).toContain("import MarketIndexChartCard from '../components/MarketIndexChartCard';");
+  it('renders semantic section order and both market cards', () => {
+    render(<DashboardPage />);
 
-    expectMarketsPlacement(source);
+    const dataHealth = screen.getByTestId('data-health');
+    const marketsHeading = screen.getByRole('heading', { level: 2, name: 'Markets — India & US' });
+    const investmentsHeading = screen.getByRole('heading', { level: 2, name: 'My investments — open trades' });
+    const sensex = screen.getByTestId('market-sensex');
+    const sp500 = screen.getByTestId('market-sp500');
 
-    const marketsBand = source.indexOf(marketsLabel);
-    const investmentsBand = source.indexOf(investmentsLabel);
-    const marketsSection = source.slice(marketsBand, investmentsBand);
-    expect(marketsSection).toMatch(
-      /<Grid container[^>]*>[\s\S]*?<Grid item xs=\{12\} lg=\{6\}>\s*<MarketIndexChartCard marketKey="sensex" \/>\s*<\/Grid>[\s\S]*?<Grid item xs=\{12\} lg=\{6\}>\s*<MarketIndexChartCard marketKey="sp500" \/>\s*<\/Grid>[\s\S]*?<\/Grid>/,
-    );
-  });
-
-  it('rejects moving the markets section above data health', () => {
-    const marketsStart = source.indexOf(marketsLabel);
-    const investmentsStart = source.indexOf(investmentsLabel);
-    const marketsSection = source.slice(marketsStart, investmentsStart);
-    const withoutMarkets = source.slice(0, marketsStart) + source.slice(investmentsStart);
-    const dataHealthBox = withoutMarkets.indexOf('<Box sx={{ px: { xs: 1, md: 2 }, pt: 1 }}>');
-    const misplacedSource = withoutMarkets.slice(0, dataHealthBox) + marketsSection + withoutMarkets.slice(dataHealthBox);
-
-    expect(() => expectMarketsPlacement(misplacedSource)).toThrow();
+    expect(marketsHeading.id).toBe('markets-heading');
+    expect(sensex.closest('[aria-labelledby="markets-heading"]')).toBeTruthy();
+    expect(screen.getByTestId('investments').closest('[aria-labelledby="investments-heading"]')).toBeTruthy();
+    expect(dataHealth.compareDocumentPosition(marketsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(marketsHeading.compareDocumentPosition(investmentsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(marketsHeading.compareDocumentPosition(sensex) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sensex.compareDocumentPosition(sp500) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sp500.compareDocumentPosition(investmentsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
