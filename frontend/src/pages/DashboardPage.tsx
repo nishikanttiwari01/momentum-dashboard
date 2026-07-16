@@ -47,6 +47,7 @@ import AccumulationWatchCard from '../components/AccumulationWatchCard';
 import EtfWatchCard from '../components/EtfWatchCard';
 import TopPerformersCard from '../components/TopPerformersCard';
 import RelevantNewsCard from '../components/RelevantNewsCard';
+import MarketIndexChartCard from '../components/MarketIndexChartCard';
 import TradePositionsPanel, { PositionRow } from '../components/TradePositionsPanel';
 import { displaySymbol, displayDate, displayDateTime } from '@/lib/formatters';
 import InfoTooltip from '@/components/InfoTooltip';
@@ -379,6 +380,16 @@ export default function Dashboard() {
       <Box sx={{ px: { xs: 1, md: 2 }, pt: 1 }}>
         <DataHealthPanel />
       </Box>
+
+      <SectionBand color="#7C3AED" label="Markets — India & US" />
+      <Grid container spacing={2} sx={{ px: { xs: 1, md: 2 } }} alignItems="stretch">
+        <Grid item xs={12} lg={6}>
+          <MarketIndexChartCard marketKey="sensex" />
+        </Grid>
+        <Grid item xs={12} lg={6}>
+          <MarketIndexChartCard marketKey="sp500" />
+        </Grid>
+      </Grid>
 
       <SectionBand color="#00B386" label="My investments — open trades" />
       <Grid container spacing={2} sx={{ px: { xs: 1, md: 2 } }} alignItems="stretch">
