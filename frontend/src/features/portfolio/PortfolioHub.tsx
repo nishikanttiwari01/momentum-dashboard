@@ -1,16 +1,22 @@
 import React from 'react';
-import { Alert, Box, Tab, Tabs } from '@mui/material';
+import { Box, Tab, Tabs } from '@mui/material';
 import PortfolioDataImport from './PortfolioDataImport';
 import PortfolioSummaryHeader from './PortfolioSummaryHeader';
 import WealthGoalWorkspace from './WealthGoalWorkspace';
+import PortfolioOverview from './PortfolioOverview';
+import PortfolioAnnualReview from './PortfolioAnnualReview';
+import PortfolioPropertiesRent from './PortfolioPropertiesRent';
 
 const TAB_LABELS = ['Overview', 'Annual Review', 'Investments', 'Properties & Rent', 'Goals', 'Data Import'] as const;
 
 export const portfolioPanelForTab = (tab: number, investments: React.ReactNode, setTab: (tab: number) => void): React.ReactNode => {
+  if (tab === 0) return <PortfolioOverview />;
+  if (tab === 1) return <PortfolioAnnualReview />;
   if (tab === 2) return investments;
+  if (tab === 3) return <PortfolioPropertiesRent />;
   if (tab === 4) return <WealthGoalWorkspace onOpenDataImport={() => setTab(5)} />;
   if (tab === 5) return <PortfolioDataImport />;
-  return <Alert severity="info">{TAB_LABELS[tab]} will be activated in the next portfolio delivery phase. No placeholder values are shown.</Alert>;
+  return null;
 };
 
 const PortfolioHub: React.FC<{ investments: React.ReactNode }> = ({ investments }) => {
