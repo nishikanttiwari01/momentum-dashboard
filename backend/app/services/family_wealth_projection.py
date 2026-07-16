@@ -55,6 +55,11 @@ class ProjectionInput:
     amber_margin_pct: Decimal
     annual_financial_return_pct: Decimal
     goals: tuple[ProjectionGoal, ...] = ()
+    birth_year: int = 1984
+    birth_month: int = 7
+    contribution_stop_age: int = 120
+    milestone_date: date | None = None
+    milestone_target_amount: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -94,11 +99,13 @@ class MonthlyRunwayPoint:
 class AnnualRunwayPoint:
     year: int
     on: date
+    age: int
     financial_assets: Decimal
     property_value: Decimal
     total_net_worth: Decimal
     annual_contributions: Decimal
     annual_reinvested_rent: Decimal
+    annual_rent_received: Decimal
     annual_financial_growth: Decimal
     annual_property_growth: Decimal
     annual_goal_outflows: Decimal
@@ -132,6 +139,16 @@ class ProjectionResult:
     ending_property: Decimal
     ending_total: Decimal
     first_underfunded_goal_key: str | None
+    milestone: MilestoneResult | None
+
+
+@dataclass(frozen=True)
+class MilestoneResult:
+    target_date: date
+    target_amount: Decimal
+    projected_value: Decimal
+    surplus_or_shortfall: Decimal
+    on_track: bool
 
 
 def as_decimal(value: Decimal | int | float | str, field: str = "value") -> Decimal:
@@ -176,6 +193,10 @@ def _normalize(data: ProjectionInput) -> ProjectionInput:
     normalized_values = {
         field: as_decimal(getattr(data, field), field) for field in decimal_fields
     }
+    if data.milestone_target_amount is not None:
+        normalized_values["milestone_target_amount"] = as_decimal(
+            data.milestone_target_amount, "milestone_target_amount"
+        )
     normalized_goals = tuple(
         replace(
             goal,
@@ -277,7 +298,9 @@ def _inflated_cost(goal: ProjectionGoal, calculated_on: date) -> Decimal:
         return money(goal.current_value_amount * ((ONE + rate) ** months))
 
 
-def _annual_points(points: Iterable[MonthlyRunwayPoint]) -> tuple[AnnualRunwayPoint, ...]:
+def _annual_points(
+    points: Iterable[MonthlyRunwayPoint], birth_year: int, birth_month: int
+) -> tuple[AnnualRunwayPoint, ...]:
     grouped: dict[int, list[MonthlyRunwayPoint]] = {}
     for point in points:
         grouped.setdefault(point.on.year, []).append(point)
@@ -286,10 +309,13 @@ def _annual_points(points: Iterable[MonthlyRunwayPoint]) -> tuple[AnnualRunwayPo
         last = items[-1]
         events = tuple(event for item in items for event in item.events)
         result.append(AnnualRunwayPoint(
-            year=year, on=last.on, financial_assets=last.closing_financial,
+            year=year, on=last.on,
+            age=last.on.year - birth_year - (last.on.month < birth_month),
+            financial_assets=last.closing_financial,
             property_value=last.closing_property, total_net_worth=last.total_net_worth,
             annual_contributions=money(sum((p.contribution for p in items), ZERO)),
             annual_reinvested_rent=money(sum((p.reinvested_rent for p in items), ZERO)),
+            annual_rent_received=money(sum((p.projected_monthly_rent for p in items), ZERO)),
             annual_financial_growth=money(sum((p.financial_growth for p in items), ZERO)),
             annual_property_growth=money(sum((p.property_growth for p in items), ZERO)),
             annual_goal_outflows=money(sum((p.goal_outflows for p in items), ZERO)),
@@ -327,6 +353,7 @@ def project_family_wealth(data: ProjectionInput) -> ProjectionResult:
 
     for index in range(start, end + 1):
         on = _month_end(index)
+        age = on.year - data.birth_year - (on.month < data.birth_month)
         # Rent is a calendar-year assumption; every January receives its step.
         if on.month == 1 and on.year > data.calculated_on.year:
             if (
@@ -342,7 +369,7 @@ def project_family_wealth(data: ProjectionInput) -> ProjectionResult:
         property_growth = money(opening_property * property_rate)
         financial = money(opening_financial + financial_growth)
         property_value = money(opening_property + property_growth)
-        contribution_out = money(contribution)
+        contribution_out = money(contribution if age < data.contribution_stop_age else ZERO)
         financial = money(financial + contribution_out)
         projected_rent = money(rent)
         reinvested = (
@@ -404,12 +431,31 @@ def project_family_wealth(data: ProjectionInput) -> ProjectionResult:
         ))
 
     passive = _passive_result(passive_goals, points, goal_results, inflated, data)
+    milestone = None
+    if data.milestone_date is not None and data.milestone_target_amount is not None:
+        milestone_point = next(
+            (p for p in points if _month_index(p.on) == _month_index(data.milestone_date)),
+            None,
+        )
+        if milestone_point is None:
+            raise UnsafeProjection("milestone falls outside projection horizon")
+        projected = milestone_point.total_net_worth
+        milestone = MilestoneResult(
+            target_date=data.milestone_date,
+            target_amount=data.milestone_target_amount,
+            projected_value=projected,
+            surplus_or_shortfall=money(projected - data.milestone_target_amount),
+            on_track=projected >= data.milestone_target_amount,
+        )
     return ProjectionResult(
-        monthly_points=tuple(points), annual_points=_annual_points(points),
+        monthly_points=tuple(points), annual_points=_annual_points(
+            points, data.birth_year, data.birth_month
+        ),
         goal_results=tuple(goal_results), passive_income=passive,
         ending_financial=financial, ending_property=property_value,
         ending_total=money(financial + property_value),
         first_underfunded_goal_key=first_underfunded,
+        milestone=milestone,
     )
 
 

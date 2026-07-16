@@ -548,7 +548,7 @@ def test_restore_family_plan_defaults_exactly(session):
     assert (plan.base_age, plan.monthly_contribution_inr, plan.contribution_step_up_enabled,
             plan.contribution_step_up_pct, plan.monthly_rent_inr, plan.rent_growth_pct,
             plan.reinvest_rent_until, plan.property_growth_pct, plan.withdrawal_rate_pct,
-            plan.amber_margin_pct) == (42, 600_000, False, 6, 45_000, 6,
+                                        plan.amber_margin_pct) == (42, 600_000, False, 6, 44_000, 6,
                                       date(2029, 12, 31), 6, 3.5, 10)
     assert restored.assumptions.monthly_contribution_inr == 600_000
     assert restored.assumptions.reinvest_rent_until == date(2029, 12, 31)
@@ -610,7 +610,7 @@ def test_rejects_zero_withdrawal_rate() -> None:
                 {"scenario_key": "expected", "annual_return_pct": 9},
                 {"scenario_key": "optimistic", "annual_return_pct": 12},
             ],
-            ("scenarios", 1, "annual_return_pct"),
+            ("scenarios", 1, "financial_return_pct"),
         ),
     ],
 )

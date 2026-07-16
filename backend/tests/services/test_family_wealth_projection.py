@@ -67,6 +67,24 @@ def test_flat_contribution_and_step_up_after_full_plan_year() -> None:
     assert stepped.monthly_points[-1].contribution == D("636000.00")
 
 
+def test_lifetime_stop_age_rent_and_total_wealth_milestone() -> None:
+    result = project_family_wealth(_input(
+        calculated_on=date(2043, 6, 1), end_date=date(2044, 8, 31),
+        birth_year=1984, birth_month=7, contribution_stop_age=60,
+        opening_financial=D("44658852.25"), opening_property=D("38400000"),
+        reinvest_rent_until=date(2043, 12, 31),
+        milestone_date=date(2044, 7, 31), milestone_target_amount=D("100000000"),
+    ))
+
+    assert next(p for p in result.monthly_points if p.on == date(2044, 7, 31)).contribution == 0
+    assert result.annual_points[-1].age == 60
+    assert result.annual_points[-1].annual_rent_received > 0
+    assert result.annual_points[-1].annual_reinvested_rent == 0
+    assert result.milestone.projected_value == next(
+        p.total_net_worth for p in result.monthly_points if p.on == date(2044, 7, 31)
+    )
+
+
 def test_december_plan_does_not_step_until_second_january() -> None:
     result = project_family_wealth(
         _input(end_date=date(2028, 1, 31), contribution_step_up_enabled=True)

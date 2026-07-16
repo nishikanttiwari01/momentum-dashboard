@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 import uuid
@@ -19,7 +20,7 @@ from app.schemas.wealth_portfolio import (
     AnnualRunwayEvent, AnnualRunwayPoint, FamilyPlanAssumptions,
     FamilyPlanResponse, FamilyPlanUpdate, FamilyScenarioProjection,
     FamilyScenarioSettings, GoalHealth, LinkedGoalSettings,
-    PassiveIncomeAnalysis, WealthSummary,
+    PassiveIncomeAnalysis, WealthSummary, December2029Milestone,
 )
 from app.services.family_wealth_projection import (
     ProjectionGoal, ProjectionInput, UnsafeProjection, project_family_wealth,
@@ -216,10 +217,12 @@ def _projection(settings, goals, result):
         funded_amount_inr=float(item.funded_amount), shortfall_inr=float(item.shortfall),
     )
     points = [AnnualRunwayPoint(
-        on=item.on, financial_assets_inr=float(item.financial_assets),
+        on=item.on, age=item.age, financial_assets_inr=float(item.financial_assets),
         property_value_inr=float(item.property_value), total_net_worth_inr=float(item.total_net_worth),
         annual_contributions_inr=float(item.annual_contributions),
         annual_rent_inr=float(item.annual_reinvested_rent),
+        rent_received_inr=float(item.annual_rent_received),
+        rent_reinvested_inr=float(item.annual_reinvested_rent),
         financial_growth_inr=float(item.annual_financial_growth),
         property_growth_inr=float(item.annual_property_growth),
         goal_outflows_inr=float(item.annual_goal_outflows), events=[event(x) for x in item.events],
@@ -241,10 +244,18 @@ def _projection(settings, goals, result):
             on_track=item.on_track, later_goals_protected=item.later_goals_protected,
             earliest_sustainable_date=item.earliest_sustainable_date,
         )
+    milestone = None if result.milestone is None else December2029Milestone(
+        target_date=result.milestone.target_date,
+        target_amount_inr=float(result.milestone.target_amount),
+        projected_value_inr=float(result.milestone.projected_value),
+        surplus_or_shortfall_inr=float(result.milestone.surplus_or_shortfall),
+        on_track=result.milestone.on_track,
+    )
     return FamilyScenarioProjection(
         settings=settings, annual_points=points, goal_health=health, passive_income=passive,
         ending_financial_assets_inr=float(result.ending_financial), ending_property_value_inr=float(result.ending_property),
         ending_total_net_worth_inr=float(result.ending_total), first_underfunded_goal_key=result.first_underfunded_goal_key,
+        december_2029_milestone=milestone,
     )
 
 
@@ -263,7 +274,10 @@ def _family_plan_response(session: Session, calculated_on: date, fx: FxResult | 
     )
     primary = get_primary_goal_response(session, today=calculated_on, summary=summary)
     enabled = [goal for goal in goals if goal.enabled]
-    end_date = max((goal.target_date for goal in enabled), default=calculated_on)
+    end_year = plan.birth_year + plan.projection_end_age
+    end_date = date(
+        end_year, plan.birth_month, monthrange(end_year, plan.birth_month)[1]
+    )
     projection_goals = tuple(ProjectionGoal(
         key=g.goal_key, name=g.name, goal_type=g.goal_type,
         funding_treatment=g.funding_treatment, current_value_amount=_decimal(g.current_value_amount_inr),
@@ -272,19 +286,33 @@ def _family_plan_response(session: Session, calculated_on: date, fx: FxResult | 
     projections = []
     try:
         for row in scenario_rows:
-            scenario = FamilyScenarioSettings(scenario_key=row.scenario_key, annual_return_pct=row.annual_return_pct)
+            scenario = FamilyScenarioSettings(
+                scenario_key=row.scenario_key,
+                financial_return_pct=row.annual_return_pct,
+                property_growth_pct=row.property_growth_pct,
+                monthly_contribution_inr=row.monthly_contribution_inr,
+                step_up_enabled=row.step_up_enabled,
+                step_up_pct=row.step_up_pct,
+                contribution_stop_age=row.contribution_stop_age,
+            )
             result = project_family_wealth(ProjectionInput(
                 calculated_on=calculated_on, end_date=end_date,
                 opening_financial=opening_financial, opening_property=opening_property,
-                monthly_contribution=_decimal(assumptions.monthly_contribution_inr),
-                contribution_step_up_enabled=assumptions.contribution_step_up_enabled,
-                contribution_step_up_pct=_decimal(assumptions.contribution_step_up_pct), monthly_rent=_decimal(assumptions.monthly_rent_inr),
+                monthly_rent=_decimal(assumptions.monthly_rent_inr),
                 rent_growth_pct=_decimal(assumptions.rent_growth_pct), reinvest_rent_until=assumptions.reinvest_rent_until,
-                property_growth_pct=_decimal(assumptions.property_growth_pct), withdrawal_rate_pct=_decimal(assumptions.withdrawal_rate_pct),
+                property_growth_pct=_decimal(row.property_growth_pct), withdrawal_rate_pct=_decimal(assumptions.withdrawal_rate_pct),
                 amber_margin_pct=_decimal(assumptions.amber_margin_pct), annual_financial_return_pct=_decimal(row.annual_return_pct), goals=projection_goals,
+                birth_year=plan.birth_year, birth_month=plan.birth_month,
+                contribution_stop_age=row.contribution_stop_age,
+                monthly_contribution=_decimal(row.monthly_contribution_inr),
+                contribution_step_up_enabled=row.step_up_enabled,
+                contribution_step_up_pct=_decimal(row.step_up_pct),
+                milestone_date=primary.goal.deadline,
+                milestone_target_amount=_decimal(primary.goal.target_amount_inr),
             ))
             projections.append(_projection(scenario, goals, result))
-        return FamilyPlanResponse(primary_goal=primary, calculated_on=calculated_on, snapshot_id=snapshot.id if snapshot else None,
+        return FamilyPlanResponse(birth_year=plan.birth_year, birth_month=plan.birth_month,
+            projection_end_age=plan.projection_end_age, primary_goal=primary, calculated_on=calculated_on, snapshot_id=snapshot.id if snapshot else None,
             data_health=health, assumptions=assumptions, goals=goals, scenario_projections=projections)
     except UnsafeProjection:
         raise
@@ -301,6 +329,9 @@ def get_family_plan_response(session: Session, today: date | None = None) -> Fam
 def _apply(session, plan, payload, *, base_age: int | None = None):
     if base_age is not None:
         plan.base_age = base_age
+    plan.birth_year = payload.birth_year
+    plan.birth_month = payload.birth_month
+    plan.projection_end_age = payload.projection_end_age
     for field, value in payload.assumptions.model_dump().items():
         setattr(plan, field, value)
     existing = {row.goal_key: row for row in session.scalars(select(FamilyWealthGoal).where(FamilyWealthGoal.plan_id == plan.id))}
@@ -322,7 +353,23 @@ def _apply(session, plan, payload, *, base_age: int | None = None):
         primary.deadline = payload.primary_goal.deadline
     for row, scenario in zip(scenarios, payload.scenarios):
         row.annual_return_pct = scenario.annual_return_pct
-        row.monthly_contribution_inr = payload.assumptions.monthly_contribution_inr
+        row.property_growth_pct = (
+            scenario.property_growth_pct if "property_growth_pct" in scenario.model_fields_set
+            else payload.assumptions.property_growth_pct
+        )
+        row.monthly_contribution_inr = (
+            scenario.monthly_contribution_inr if "monthly_contribution_inr" in scenario.model_fields_set
+            else payload.assumptions.monthly_contribution_inr
+        )
+        row.step_up_enabled = (
+            scenario.step_up_enabled if "step_up_enabled" in scenario.model_fields_set
+            else payload.assumptions.contribution_step_up_enabled
+        )
+        row.step_up_pct = (
+            scenario.step_up_pct if "step_up_pct" in scenario.model_fields_set
+            else payload.assumptions.contribution_step_up_pct
+        )
+        row.contribution_stop_age = scenario.contribution_stop_age
 
 
 def _save_family_plan(
@@ -357,9 +404,13 @@ def _defaults() -> FamilyPlanUpdate:
         ("child_2_marriage", "Child 2 marriage", "marriage", 5_000_000, date(2044,12,31), 6, "expense"),
     ]
     return FamilyPlanUpdate.model_validate({
+        "birth_year": 1984, "birth_month": 7, "projection_end_age": 80,
         "primary_goal": {"name": "₹15 Cr by 2029", "target_amount_inr": 150_000_000, "deadline": date(2029,12,31)},
-        "assumptions": {"monthly_contribution_inr":600_000,"contribution_step_up_enabled":False,"contribution_step_up_pct":6,"monthly_rent_inr":45_000,"rent_growth_pct":6,"reinvest_rent_until":date(2029,12,31),"property_growth_pct":6,"withdrawal_rate_pct":3.5,"amber_margin_pct":10},
-        "scenarios": [{"scenario_key":key,"annual_return_pct":rate} for key,rate in zip(SCENARIO_KEYS,(7,10,13))],
+        "assumptions": {"monthly_contribution_inr":600_000,"contribution_step_up_enabled":False,"contribution_step_up_pct":6,"monthly_rent_inr":44_000,"rent_growth_pct":6,"reinvest_rent_until":date(2029,12,31),"property_growth_pct":6,"withdrawal_rate_pct":3.5,"amber_margin_pct":10},
+        "scenarios": [{"scenario_key":key,"financial_return_pct":rate,
+            "property_growth_pct": growth, "monthly_contribution_inr": 600_000,
+            "step_up_enabled": False, "step_up_pct": 6, "contribution_stop_age": 60}
+            for key,rate,growth in zip(SCENARIO_KEYS,(7,10,13),(4,6,8))],
         "goals": [{"goal_key":key,"name":name,"goal_type":kind,"current_value_amount_inr":amount,"target_date":target,"inflation_pct":inflation,"funding_treatment":treatment,"priority":i+1,"enabled":True,"display_order":i} for i,(key,name,kind,amount,target,inflation,treatment) in enumerate(goal_data)],
     })
 
