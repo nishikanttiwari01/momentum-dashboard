@@ -43,7 +43,7 @@ import UsInvestmentsSection from '../features/portfolio/UsInvestmentsSection';
 import AddFundTransactionDialog from '../features/portfolio/AddFundTransactionDialog';
 import PortfolioAllocation from '../features/portfolio/PortfolioAllocation';
 import PortfolioHub from '../features/portfolio/PortfolioHub';
-import { PortfolioAssetPanels, PortfolioBalanceSheet, PortfolioWealthGrowth } from '../features/portfolio/PortfolioWorkbookSnapshot';
+import { PortfolioAssetPanels, PortfolioBalanceSheet } from '../features/portfolio/PortfolioWorkbookSnapshot';
 import { buildFundChartSeries, getFundChartDomain } from '../features/portfolio/fundChartData';
 import { PortfolioMetricTile, PortfolioSectionHeader } from '../features/portfolio/PortfolioVisuals';
 import { sortFunds, type FundSortKey, type SortDirection } from '../features/portfolio/fundTableSort';
@@ -376,24 +376,12 @@ export const PortfolioInvestmentsPanel: React.FC = () => {
         ) : null}
       </Paper>
 
-      <Box
-        data-testid="portfolio-overview-grid"
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: { xs: '1fr', lg: 'minmax(390px, 0.72fr) minmax(0, 1.28fr)' },
-          gap: 2,
-          alignItems: 'stretch',
-        }}
-      >
-        {data.allocation.length ? (
+      {data.allocation.length ? (
         <Paper variant="outlined" sx={{ p: 2.25, minWidth: 0, borderRadius: 3, borderColor: '#E4EAF3', boxShadow: '0 10px 28px rgba(20,33,61,0.055)' }}>
           <PortfolioSectionHeader icon={<DonutLargeRoundedIcon fontSize="small" />} title="Allocation by category" detail="Invested amount across mutual-fund categories" />
           <PortfolioAllocation allocation={data.allocation} />
         </Paper>
-        ) : <Box />}
-
-        <PortfolioWealthGrowth />
-      </Box>
+      ) : null}
 
       <PortfolioAssetPanels />
       <PortfolioBalanceSheet />

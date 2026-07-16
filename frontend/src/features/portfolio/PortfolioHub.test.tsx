@@ -35,4 +35,12 @@ describe('PortfolioHub', () => {
     const panel = portfolioPanelForTab(tab as number, <div>Investments</div>, () => undefined);
     expect((panel as React.ReactElement).type).toBe(Component);
   });
+
+  it('shows the workbook wealth-growth chart on Overview', () => {
+    const panel = portfolioPanelForTab(0, <div>Investments</div>, () => undefined);
+    const html = renderToStaticMarkup(panel as React.ReactElement);
+
+    expect(html).toContain('data-testid="portfolio-wealth-growth"');
+    expect(html).toContain('Wealth growth over years');
+  });
 });

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
-import { Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import { PortfolioWealthGrowth } from './PortfolioWorkbookSnapshot';
 
 const allocation = [
   { name: 'Mutual funds', value: 3.16, color: '#2563EB' },
@@ -8,13 +9,6 @@ const allocation = [
   { name: 'US holdings', value: 0.54, color: '#7C3AED' },
   { name: 'Property', value: 3.84, color: '#F59E0B' },
   { name: 'Debt & cash', value: 0.42, color: '#10B981' },
-];
-
-const wealthHistory = [
-  { year: '2023', invested: 5.1, market: 5.8 },
-  { year: '2024', invested: 6.4, market: 7.2 },
-  { year: '2025', invested: 7.6, market: 8.8 },
-  { year: '2026', invested: 8.1, market: 9.44 },
 ];
 
 const money = (value: number) => `₹${value.toFixed(2)} Cr`;
@@ -45,14 +39,7 @@ const PortfolioOverview: React.FC = () => {
     </Box>
 
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1.35fr) minmax(300px, .65fr)' }, gap: 1.5 }}>
-      <Paper variant="outlined" sx={{ p: 2, borderRadius: 2.5, borderColor: '#E5EAF1' }}>
-        <Typography fontWeight={800}>Wealth growth</Typography><Typography variant="caption" color="text.secondary">Market value versus invested capital · ₹ Cr</Typography>
-        <Box sx={{ height: 260, mt: 1 }}><ResponsiveContainer width="100%" height="100%"><AreaChart data={wealthHistory} margin={{ top: 12, right: 12, left: -18, bottom: 0 }}>
-          <defs><linearGradient id="wealthFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#2563EB" stopOpacity={.24}/><stop offset="100%" stopColor="#2563EB" stopOpacity={.02}/></linearGradient></defs>
-          <CartesianGrid stroke="#E9EEF5" vertical={false} strokeDasharray="3 4"/><XAxis dataKey="year" tick={{ fontSize: 11 }}/><YAxis tick={{ fontSize: 10 }} tickFormatter={v => `₹${v} Cr`}/><Tooltip formatter={(v: number) => money(v)}/>
-          <Area type="monotone" dataKey="market" name="Market value" stroke="#2563EB" strokeWidth={3} fill="url(#wealthFill)" isAnimationActive={false}/><Area type="monotone" dataKey="invested" name="Invested capital" stroke="#94A3B8" strokeWidth={2} fill="transparent" isAnimationActive={false}/>
-        </AreaChart></ResponsiveContainer></Box>
-      </Paper>
+      <PortfolioWealthGrowth />
 
       <Paper variant="outlined" sx={{ p: 2, borderRadius: 2.5, borderColor: '#E5EAF1' }}>
         <Typography fontWeight={800}>Allocation by asset</Typography><Typography variant="caption" color="text.secondary">Current market value</Typography>
