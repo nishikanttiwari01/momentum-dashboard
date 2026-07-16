@@ -5,6 +5,7 @@ from datetime import date, datetime
 from typing import Literal
 
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -221,7 +222,22 @@ class FamilyScenarioSettings(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     scenario_key: ScenarioKey
-    annual_return_pct: float = Field(ge=-25, le=50)
+    financial_return_pct: float = Field(
+        ge=-25, le=50,
+        validation_alias=AliasChoices("financial_return_pct", "annual_return_pct"),
+    )
+    property_growth_pct: float = Field(default=6, ge=-25, le=30)
+    monthly_contribution_inr: float = Field(
+        default=600_000, ge=0, le=1_000_000_000_000
+    )
+    step_up_enabled: bool = False
+    step_up_pct: float = Field(default=6, ge=0, le=25)
+    contribution_stop_age: int = Field(default=60, ge=18, le=120)
+
+    @property
+    def annual_return_pct(self) -> float:
+        """Compatibility accessor for staged service migration."""
+        return self.financial_return_pct
 
 
 def _contract_error(
@@ -274,12 +290,15 @@ def _validate_ordered_scenarios(
                 model_title,
                 "scenario_return_order",
                 "scenario returns must satisfy conservative <= expected <= optimistic",
-                (root, index, *key_path, "annual_return_pct"),
+                (root, index, *key_path, "financial_return_pct"),
                 rates[index],
             )
 
 
 class FamilyPlanUpdate(BaseModel):
+    birth_year: int = Field(default=1984, ge=1900, le=date.today().year)
+    birth_month: int = Field(default=7, ge=1, le=12)
+    projection_end_age: int = Field(default=80, ge=18, le=120)
     primary_goal: GoalSettings | None = None
     assumptions: FamilyPlanAssumptions
     scenarios: list[FamilyScenarioSettings]
@@ -288,10 +307,36 @@ class FamilyPlanUpdate(BaseModel):
     @model_validator(mode="after")
     def validate_plan_contract(self):
         keys = [scenario.scenario_key for scenario in self.scenarios]
-        rates = [scenario.annual_return_pct for scenario in self.scenarios]
+        rates = [scenario.financial_return_pct for scenario in self.scenarios]
         _validate_ordered_scenarios(
             "FamilyPlanUpdate", keys, rates, "scenarios"
         )
+
+        today = date.today()
+        current_age = today.year - self.birth_year - (
+            (today.month, today.day) < (self.birth_month, 1)
+        )
+        if self.projection_end_age < current_age:
+            raise _contract_error(
+                "FamilyPlanUpdate", "projection_horizon_past",
+                "projection_end_age cannot be below current age",
+                ("projection_end_age",), self.projection_end_age,
+            )
+        for index, scenario in enumerate(self.scenarios):
+            if scenario.contribution_stop_age < current_age:
+                raise _contract_error(
+                    "FamilyPlanUpdate", "contribution_stop_age_past",
+                    "contribution_stop_age cannot be below current age",
+                    ("scenarios", index, "contribution_stop_age"),
+                    scenario.contribution_stop_age,
+                )
+            if scenario.contribution_stop_age > self.projection_end_age:
+                raise _contract_error(
+                    "FamilyPlanUpdate", "contribution_stop_after_horizon",
+                    "contribution_stop_age cannot exceed projection_end_age",
+                    ("scenarios", index, "contribution_stop_age"),
+                    scenario.contribution_stop_age,
+                )
 
         goal_keys = [goal.goal_key for goal in self.goals]
         if len(goal_keys) != len(set(goal_keys)):
@@ -368,11 +413,14 @@ class AnnualRunwayPoint(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
     on: date
+    age: int | None = Field(default=None, ge=0, le=150)
     financial_assets_inr: float = Field(ge=0)
     property_value_inr: float = Field(ge=0)
     total_net_worth_inr: float = Field(ge=0)
     annual_contributions_inr: float = Field(ge=0)
     annual_rent_inr: float = Field(ge=0)
+    rent_received_inr: float = Field(default=0, ge=0)
+    rent_reinvested_inr: float = Field(default=0, ge=0)
     financial_growth_inr: float
     property_growth_inr: float
     goal_outflows_inr: float = Field(ge=0)
@@ -425,6 +473,16 @@ class PassiveIncomeAnalysis(BaseModel):
     earliest_sustainable_date: date | None = None
 
 
+class December2029Milestone(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    target_date: date
+    target_amount_inr: float = Field(gt=0)
+    projected_value_inr: float = Field(ge=0)
+    surplus_or_shortfall_inr: float
+    on_track: bool
+
+
 class FamilyScenarioProjection(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
 
@@ -436,6 +494,7 @@ class FamilyScenarioProjection(BaseModel):
     ending_property_value_inr: float = Field(ge=0)
     ending_total_net_worth_inr: float = Field(ge=0)
     first_underfunded_goal_key: str | None = None
+    december_2029_milestone: December2029Milestone | None = None
 
     @model_validator(mode="after")
     def validate_ending_net_worth_total(self):
@@ -450,6 +509,9 @@ class FamilyScenarioProjection(BaseModel):
 
 
 class FamilyPlanResponse(BaseModel):
+    birth_year: int = Field(default=1984, ge=1900, le=date.today().year)
+    birth_month: int = Field(default=7, ge=1, le=12)
+    projection_end_age: int = Field(default=80, ge=18, le=120)
     primary_goal: PrimaryGoalResponse
     calculated_on: date
     snapshot_id: str | None = None
@@ -461,7 +523,7 @@ class FamilyPlanResponse(BaseModel):
     @model_validator(mode="after")
     def validate_response_contract(self):
         keys = [item.settings.scenario_key for item in self.scenario_projections]
-        rates = [item.settings.annual_return_pct for item in self.scenario_projections]
+        rates = [item.settings.financial_return_pct for item in self.scenario_projections]
         _validate_ordered_scenarios(
             "FamilyPlanResponse",
             keys,

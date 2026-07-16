@@ -53,6 +53,9 @@ def reset_family_plan(client):
 def _configuration(client) -> dict:
     body = client.get(URL).json()
     return {
+        "birth_year": body["birth_year"],
+        "birth_month": body["birth_month"],
+        "projection_end_age": body["projection_end_age"],
         "assumptions": body["assumptions"],
         "scenarios": [item["settings"] for item in body["scenario_projections"]],
         "goals": body["goals"],
@@ -108,7 +111,7 @@ def test_get_empty_family_plan_does_not_invent_current_wealth(client):
 def test_put_persists_complete_family_configuration(client):
     payload = _configuration(client)
     payload["assumptions"]["monthly_contribution_inr"] = 725_000
-    payload["scenarios"][1]["annual_return_pct"] = 11
+    payload["scenarios"][1]["financial_return_pct"] = 11
     payload["goals"][0]["name"] = "University fund"
 
     response = client.put(URL, json=payload)
@@ -116,6 +119,49 @@ def test_put_persists_complete_family_configuration(client):
     assert response.status_code == 200
     reloaded = _configuration(client)
     assert reloaded == payload
+
+
+def test_lifetime_contract_serializes_independent_scenario_inputs(client):
+    payload = _configuration(client)
+    payload["birth_year"] = 1984
+    payload["birth_month"] = 7
+    payload["projection_end_age"] = 80
+    payload["scenarios"][1].update(
+        financial_return_pct=10,
+        property_growth_pct=6,
+        monthly_contribution_inr=600_000,
+        step_up_enabled=True,
+        step_up_pct=6,
+        contribution_stop_age=60,
+    )
+    payload["scenarios"][1].pop("annual_return_pct", None)
+
+    response = client.put(URL, json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {key: body[key] for key in ("birth_year", "birth_month", "projection_end_age")} == {
+        "birth_year": 1984, "birth_month": 7, "projection_end_age": 80,
+    }
+    assert body["scenario_projections"][1]["settings"] == payload["scenarios"][1]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "loc"),
+    [
+        (lambda p: p.update(birth_month=13), ["body", "birth_month"]),
+        (lambda p: p.update(projection_end_age=59), ["body", "scenarios", 0, "contribution_stop_age"]),
+        (lambda p: p["scenarios"][1].update(contribution_stop_age=40), ["body", "scenarios", 1, "contribution_stop_age"]),
+        (lambda p: p["scenarios"][1].update(financial_return_pct=51), ["body", "scenarios", 1, "financial_return_pct"]),
+        (lambda p: p["scenarios"][1].update(property_growth_pct=51), ["body", "scenarios", 1, "property_growth_pct"]),
+    ],
+)
+def test_lifetime_contract_errors_are_field_addressable(client, mutate, loc):
+    payload = _configuration(client)
+    mutate(payload)
+    response = client.put(URL, json=payload)
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["loc"] == loc
 
 
 @pytest.mark.parametrize(
@@ -248,7 +294,7 @@ def test_restore_defaults_after_edit(client):
 def test_restore_failure_leaves_configuration_unchanged(client, monkeypatch):
     edited = _configuration(client)
     edited["assumptions"]["monthly_rent_inr"] = 99_000
-    edited["scenarios"][1]["annual_return_pct"] = 11
+    edited["scenarios"][1]["financial_return_pct"] = 11
     edited["goals"][0]["name"] = "Edited university fund"
     assert client.put(URL, json=edited).status_code == 200
     before_restore = _configuration(client)
