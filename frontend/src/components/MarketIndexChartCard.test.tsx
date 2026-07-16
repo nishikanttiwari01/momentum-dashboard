@@ -53,6 +53,7 @@ describe('MarketIndexChartCard', () => {
     renderCard();
 
     expect(await screen.findByText('S&P BSE Sensex')).toBeTruthy();
+    expect(screen.getByText('^BSESN')).toBeTruthy();
     expect(screen.getByText('81,234.56')).toBeTruthy();
     expect(screen.getByText('+1,234.50 (+1.54%)')).toBeTruthy();
     expect(mockedAxios.get).toHaveBeenCalledWith('/api/v1/market-indices/sensex/history', {

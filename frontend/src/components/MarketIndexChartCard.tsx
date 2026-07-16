@@ -68,7 +68,10 @@ const MarketIndexChartCard: React.FC<Props> = ({ marketKey }) => {
             <><Skeleton width={150} height={27} /><Skeleton width={110} height={36} /></>
           ) : (
             <>
-              <Typography variant="subtitle1" fontWeight={800} noWrap>{data?.name ?? FALLBACK_NAME[marketKey]}</Typography>
+              <Stack direction="row" alignItems="baseline" spacing={0.75}>
+                <Typography variant="subtitle1" fontWeight={800} noWrap>{data?.name ?? FALLBACK_NAME[marketKey]}</Typography>
+                {data ? <Typography variant="caption" color="text.secondary">{data.symbol}</Typography> : null}
+              </Stack>
               {data ? (
                 <Stack direction="row" alignItems="baseline" spacing={1} flexWrap="wrap">
                   <Typography variant="h5" fontWeight={750} sx={{ fontVariantNumeric: 'tabular-nums' }}>
