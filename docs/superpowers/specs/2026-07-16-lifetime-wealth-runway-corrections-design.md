@@ -43,11 +43,15 @@ Monthly investment defaults to ₹6,00,000. The optional annual step-up defaults
 
 Existing education, house, marriage and passive-income goals remain dated milestone events. The December 2029 ₹15 Cr target is visually stronger than secondary milestones.
 
+Cash-funded goals use financial assets only. When an education, marriage or other expense milestone is reached, its funded amount is deducted from available financial assets. Existing property assets are never reduced, sold or treated as cash unless the user later records an explicit property-sale event. If financial assets cannot fully fund the goal, financial assets stop at zero and the unfunded balance is reported as a shortfall; property remains unchanged. The lifetime runway continues from those post-event balances.
+
 ## Property treatment
 
 The property series starts immediately at ₹3.84 Cr and grows every projection year. A single property-growth rate applies to the combined property portfolio within each scenario.
 
 The future Bangalore-house asset-conversion event transfers the funded amount from financial assets into property assets. It changes asset composition but does not create net worth or represent the first property holding. Goal shortfalls remain explicit.
+
+The Bangalore-house conversion is also limited by available financial assets. It may transfer only the funded amount into property; any unfunded portion remains a visible shortfall. Existing property holdings cannot be liquidated automatically to fund the conversion.
 
 ## Rental treatment
 
@@ -145,6 +149,8 @@ Automated coverage must include:
 - Existing property growth from the first projection year.
 - Rent received continuing after rent reinvestment stops.
 - Bangalore-house asset conversion preserving total value before costs/shortfall.
+- Education, marriage and other expense goals deducting only financial assets, never property.
+- Insufficient financial assets flooring at zero and producing a shortfall while property remains unchanged.
 - Independent scenario financial/property assumptions.
 - Atomic scenario edits and field errors.
 - Composition and comparison chart modes.
