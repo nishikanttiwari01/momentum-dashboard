@@ -316,7 +316,7 @@ class WealthGoal(Base):
     )
 
 
-class WealthGoalScenario(Base):
+class FamilyWealthScenario(Base):
     __tablename__ = "wealth_goal_scenarios"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -324,7 +324,17 @@ class WealthGoalScenario(Base):
     scenario_key: Mapped[str] = mapped_column(String(16))
     annual_return_pct: Mapped[float] = mapped_column(Float)
     monthly_contribution_inr: Mapped[float] = mapped_column(
-        Float, default=0, server_default="0"
+        Float, default=600000, server_default="600000"
+    )
+    property_growth_pct: Mapped[float] = mapped_column(
+        Float, default=6, server_default="6"
+    )
+    step_up_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="0"
+    )
+    step_up_pct: Mapped[float] = mapped_column(Float, default=6, server_default="6")
+    contribution_stop_age: Mapped[int] = mapped_column(
+        Integer, default=60, server_default="60"
     )
     display_order: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
@@ -340,10 +350,20 @@ class WealthGoalScenario(Base):
     __table_args__ = (UniqueConstraint("goal_id", "scenario_key"),)
 
 
+# Preserve the established service/API import while the lifetime contract adopts
+# the more precise family-specific name.
+WealthGoalScenario = FamilyWealthScenario
+
+
 class FamilyWealthPlan(Base):
     __tablename__ = "family_wealth_plans"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    birth_year: Mapped[int] = mapped_column(Integer, default=1984, server_default="1984")
+    birth_month: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
+    projection_end_age: Mapped[int] = mapped_column(
+        Integer, default=80, server_default="80"
+    )
     base_age: Mapped[int] = mapped_column(Integer)
     monthly_contribution_inr: Mapped[float] = mapped_column(Float)
     contribution_step_up_enabled: Mapped[bool] = mapped_column(Boolean)

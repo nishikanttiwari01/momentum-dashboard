@@ -93,7 +93,7 @@ def test_wealth_goal_defaults_are_seeded():
             "00000000-0000-0000-0000-000000000015",
             "conservative",
             7.0,
-            0.0,
+            600000.0,
             0,
         ),
         (
@@ -101,7 +101,7 @@ def test_wealth_goal_defaults_are_seeded():
             "00000000-0000-0000-0000-000000000015",
             "expected",
             10.0,
-            0.0,
+            600000.0,
             1,
         ),
         (
@@ -109,7 +109,7 @@ def test_wealth_goal_defaults_are_seeded():
             "00000000-0000-0000-0000-000000000015",
             "optimistic",
             13.0,
-            0.0,
+            600000.0,
             2,
         ),
     ]
@@ -196,6 +196,64 @@ def test_family_wealth_goal_defaults_enabled_and_goal_key_is_unique_per_plan():
             )
 
     dispose_engine()
+
+
+def test_lifetime_runway_assumptions_upgrade_from_0009_and_round_trip():
+    tmpdir = tempfile.mkdtemp()
+    db_path = Path(tmpdir) / "test_lifetime_runway_round_trip.db"
+    backend_dir = Path(__file__).resolve().parents[1]
+    cfg = AlembicConfig(str(backend_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path.as_posix()}")
+
+    alembic_command.upgrade(cfg, "20260715_0009")
+    alembic_command.upgrade(cfg, "20260716_0010")
+
+    with sqlite3.connect(db_path) as conn:
+        plan = conn.execute(
+            "select birth_year, birth_month, projection_end_age "
+            "from family_wealth_plans"
+        ).fetchone()
+        scenarios = {
+            row[0]: row[1:]
+            for row in conn.execute(
+                "select scenario_key, annual_return_pct, property_growth_pct, "
+                "monthly_contribution_inr, step_up_enabled, step_up_pct, "
+                "contribution_stop_age from wealth_goal_scenarios"
+            )
+        }
+
+    assert plan == (1984, 7, 80)
+    assert scenarios == {
+        "conservative": (7.0, 4.0, 600000.0, 0, 6.0, 60),
+        "expected": (10.0, 6.0, 600000.0, 0, 6.0, 60),
+        "optimistic": (13.0, 8.0, 600000.0, 0, 6.0, 60),
+    }
+
+    alembic_command.downgrade(cfg, "20260715_0009")
+    with sqlite3.connect(db_path) as conn:
+        plan_columns = {row[1] for row in conn.execute("pragma table_info(family_wealth_plans)")}
+        scenario_columns = {row[1] for row in conn.execute("pragma table_info(wealth_goal_scenarios)")}
+        returns = conn.execute(
+            "select scenario_key, annual_return_pct from wealth_goal_scenarios "
+            "order by display_order"
+        ).fetchall()
+    assert {"birth_year", "birth_month", "projection_end_age"}.isdisjoint(plan_columns)
+    assert {
+        "property_growth_pct", "step_up_enabled", "step_up_pct", "contribution_stop_age"
+    }.isdisjoint(scenario_columns)
+    assert returns == [("conservative", 7.0), ("expected", 10.0), ("optimistic", 13.0)]
+
+    alembic_command.upgrade(cfg, "20260716_0010")
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "select birth_year, birth_month, projection_end_age from family_wealth_plans"
+        ).fetchone() == (1984, 7, 80)
+        assert conn.execute(
+            "select property_growth_pct, monthly_contribution_inr, step_up_enabled, "
+            "step_up_pct, contribution_stop_age from wealth_goal_scenarios "
+            "where scenario_key = 'expected'"
+        ).fetchone() == (6.0, 600000.0, 0, 6.0, 60)
 
 
 def test_multiple_non_primary_wealth_goals_can_coexist():
