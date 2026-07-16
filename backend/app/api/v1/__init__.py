@@ -20,6 +20,7 @@ from . import positions
 from . import momentum
 from . import candidate_pool
 from . import simulator
+from . import market_indices
 
 __all__: list[str] = [
     "health",
@@ -38,4 +39,5 @@ __all__: list[str] = [
     "momentum",
     "candidate_pool",
     "simulator",
+    "market_indices",
 ]
