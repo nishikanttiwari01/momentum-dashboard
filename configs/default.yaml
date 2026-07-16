@@ -10,7 +10,7 @@ app:
   name: momentum-dashboard
   env: development
   api_prefix: /api/v1
-  timezone: Asia/Singapore
+  timezone: Asia/Kolkata   # single source of truth: Indian market hours everywhere
   backfill_on_start: true
 
 server:
@@ -49,6 +49,14 @@ backfill_runtime:
 screener:
   default_universe: ALL
   table_page_size: 100
+  # Optional eligibility gate for Top Movers. Off by default so the section
+  # remains a full-market FYI view. Set enabled: true to hide penny/illiquid/
+  # circuit-style movers.
+  top_movers:
+    enabled: false
+    min_price: 20.0                # INR; excludes penny stocks
+    min_avg_traded_value_cr: 1.0   # 20d avg traded value in INR crore
+    max_abs_change_pct: 19.0       # near-circuit moves excluded; set null to disable
 
 scheduler:
   enabled: true
@@ -86,7 +94,7 @@ data:
 #   `news.providers` list. A mismatch here = zero hits ingested. If you're
 #   adding a source, pick the right slot below.
 news:
-  enabled: false
+  enabled: true   # master switch: ingest pipeline on
   #refresh_minutes: ${NEWS_REFRESH_MINUTES:-60}   # scheduler polls this often
   refresh_minutes: 60
   since_days: 7
@@ -111,11 +119,10 @@ news:
   # ── SOURCES (dict, read by news_provider._collect_hits) ─────────────────
   sources:
     # RSS / JSON feeds we poll directly. `mode: rss` (default) or `nse_json`.
+    # NOTE: NSE Announcements (nse_json) removed 2026-07-11 — the endpoint
+    # blocks non-browser clients without cookie handling and stalled ingest.
+    # Re-add with nsepython-style session handling if official filings needed.
     official:
-      - name: NSE Announcements
-        mode: nse_json
-        url: https://www.nseindia.com/api/corporate-announcements?index=equities
-        weight: 1.0
       - name: SEBI Press/Filings
         mode: rss
         url: https://www.sebi.gov.in/sebiweb/rss/news.xml
@@ -152,6 +159,13 @@ news:
       query_template: "site:{site} ({symbol} OR {alias})"
       max_per_site: 6
       lookback_minutes: 720
+
+    # Yahoo Finance per-ticker news via yfinance (already a dependency for
+    # prices). Free, no key, works with .NS tickers. Second per-symbol source
+    # alongside google_news.
+    yahoo_news:
+      enabled: true
+      max_per_symbol: 8
 
   # Optional whitelist used by attribution/scoring; not required for ingest.
   sources_whitelist:
@@ -385,6 +399,9 @@ selection_policy:
     fast_ma_period: 50
     slow_ma_period: 200
     breadth:
+      # NOTE: this selection-gate flag is not yet consumed by the code
+      # (breadth_pct_50dma IS computed and feeds scoring). Keep false until
+      # the gate is implemented in the selection policy.
       enabled: false
       min_ratio: 1.2
       lookback_days: 5

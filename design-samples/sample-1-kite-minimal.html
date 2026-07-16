@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Sample 1 — Broker minimal (Kite-inspired)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font-family:Inter,sans-serif;background:#fff;color:#212121;font-size:13px}
+.num{font-variant-numeric:tabular-nums}
+nav{display:flex;gap:28px;align-items:center;padding:0 24px;height:48px;border-bottom:1px solid #eee}
+nav .logo{color:#ff5722;font-weight:600;font-size:15px}
+nav a{color:#666;text-decoration:none}nav a.on{color:#387ed1;font-weight:500}
+.kpis{display:flex;gap:56px;padding:20px 24px;border-bottom:1px solid #eee}
+.kpis .l{font-size:11px;color:#9b9b9b;text-transform:uppercase;letter-spacing:.06em}
+.kpis .v{font-size:22px;font-weight:500;margin-top:2px}
+.kpis .s{font-size:12px;color:#9b9b9b}
+.g{color:#4caf50}.r{color:#e53935}.mut{color:#9b9b9b}
+main{display:grid;grid-template-columns:1.25fr 1fr;gap:0}
+section{padding:18px 24px;border-bottom:1px solid #eee}
+.left{border-right:1px solid #eee}
+h2{font-size:13px;font-weight:600;color:#444;margin-bottom:12px}
+h2 small{font-weight:400;color:#9b9b9b;margin-left:8px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:#9b9b9b;font-weight:500;text-align:right;padding:4px 0;border-bottom:1px solid #eee}
+th:first-child,td:first-child{text-align:left}
+td{padding:7px 0;border-bottom:1px solid #f5f5f5;text-align:right;font-size:13px}
+.sym{font-weight:500}
+.news{font-size:11.5px;color:#387ed1;margin-top:1px}
+.secgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.sec{padding:8px;border-radius:3px;font-size:11px}
+.sec b{display:block;font-size:11.5px;font-weight:600}
+.pillrow{display:flex;gap:8px;margin-bottom:12px}
+.pill{border:1px solid #e0e0e0;border-radius:2px;padding:3px 10px;font-size:11px;color:#666;cursor:pointer}
+.pill.on{border-color:#387ed1;color:#387ed1}
+.bar{height:5px;background:#f0f0f0;border-radius:3px;margin:4px 0 10px}
+.bar i{display:block;height:5px;border-radius:3px;background:#387ed1}
+footer{padding:14px 24px;color:#bbb;font-size:11px}
+</style></head><body>
+<nav><span class="logo">◆ Momentum</span><a class="on" href="#">Today</a><a href="#">Portfolio</a><a href="#">Screener</a><a href="#">News</a><a href="#">Trades</a>
+<span style="margin-left:auto;color:#9b9b9b;font-size:11px">scores 1h ago · news 12m ago · NSE closed</span></nav>
+
+<div class="kpis num">
+<div><div class="l">Net worth</div><div class="v">₹8.31 Cr</div><div class="s g">+9.0% FY26</div></div>
+<div><div class="l">Principal</div><div class="v">₹5.87 Cr</div><div class="s">across 2 holders</div></div>
+<div><div class="l">Trades P/L</div><div class="v r">−₹4,980</div><div class="s">3 open</div></div>
+<div><div class="l">Goal · 15 Cr by 2029</div><div class="v">55%</div><div class="s">on track</div></div>
+<div style="margin-left:auto"><div class="l">View</div><div class="pillrow" style="margin-top:6px"><span class="pill on">All</span><span class="pill">Nishi</span><span class="pill">Supriya</span><span class="pill on">🇮🇳+🇸🇬</span></div></div>
+</div>
+
+<main>
+<div class="left">
+<section><h2>Sector momentum <small>10 Jul EOD · Yahoo · 1D | 1W | 1M</small></h2>
+<div class="secgrid">
+<div class="sec" style="background:#e8f5e9"><b>REALTY</b><span class="g">+7.8%</span></div>
+<div class="sec" style="background:#f1f8f2"><b>IT</b><span class="g">+2.1%</span></div>
+<div class="sec" style="background:#f7fbf8"><b>FMCG</b><span class="g">+1.4%</span></div>
+<div class="sec" style="background:#f7fbf8"><b>METAL</b><span class="g">+1.2%</span></div>
+<div class="sec" style="background:#fdf3f2"><b>MEDIA</b><span class="r">−1.3%</span></div>
+<div class="sec" style="background:#fbe9e7"><b>PSU BK</b><span class="r">−2.7%</span></div>
+</div></section>
+
+<section><h2>Buy candidates <small>10 active · pool refreshed 07 Jul</small></h2>
+<table class="num"><tr><th>Symbol</th><th>Score</th><th>ADX</th><th>R</th><th>52W</th><th>Age</th></tr>
+<tr><td class="sym">INDUSINDBK <span style="color:#ff9800;font-size:10px">★ top</span></td><td>88</td><td>26</td><td>2.05</td><td>−1.5%</td><td class="mut">4d</td></tr>
+<tr><td class="sym">PNBHOUSING</td><td>87</td><td>24</td><td>1.98</td><td>−0.4%</td><td class="mut">4d</td></tr>
+<tr><td class="sym">AKUMS</td><td>87</td><td>43</td><td>1.62</td><td>−1.4%</td><td class="mut">4d</td></tr>
+<tr><td class="sym">CHOLAFIN</td><td>81</td><td>37</td><td>2.14</td><td>−1.2%</td><td class="mut">5d</td></tr></table></section>
+
+<section><h2>Top movers <small>with why</small></h2>
+<table class="num"><tr><th>Symbol</th><th>Price</th><th>Change</th></tr>
+<tr><td><div class="sym">KALYANKJIL</div><div class="news">Q1 revenue up 31% YoY; board meets on bonus issue — ET</div></td><td>₹443.00</td><td class="g">+18.4%</td></tr>
+<tr><td><div class="sym">MASTERTR</div><div class="news">Block deal: promoter stake sale 2.1% — Moneycontrol</div></td><td>₹94.80</td><td class="g">+17.8%</td></tr>
+<tr><td><div class="sym">TRENT</div><div class="news">FY guidance cut on weak store metrics — Reuters</div></td><td>₹2,927.80</td><td class="r">−12.4%</td></tr>
+<tr><td><div class="sym">DRREDDY</div><div class="news">USFDA observations at Srikakulam plant — BSE filing</div></td><td>₹1,269.50</td><td class="r">−5.9%</td></tr></table></section>
+</div>
+
+<div>
+<section><h2>Active trades <small>3 open · click row for chart</small></h2>
+<table class="num"><tr><th>Symbol</th><th>Qty@Entry</th><th>LTP</th><th>P/L%</th></tr>
+<tr style="background:#fafcff"><td class="sym">▸ CENTURYPLY</td><td>100@840</td><td>773.6</td><td class="r">−7.9</td></tr>
+<tr><td class="sym">RADICO</td><td>50@2,210</td><td>2,318</td><td class="g">+4.9</td></tr>
+<tr><td class="sym">GLAND</td><td>30@1,742</td><td>1,731</td><td class="r">−0.6</td></tr></table>
+<div style="margin-top:10px;font-size:11px;color:#9b9b9b">CENTURYPLY · 30d · entry — · stop ┄</div>
+<div style="height:150px"><canvas id="trade"></canvas></div></section>
+
+<section><h2>Net worth trend <small>from snapshots · Nov 23 → Jul 26</small></h2>
+<div style="height:130px"><canvas id="nw"></canvas></div></section>
+
+<section><h2>Fund signals</h2>
+<table class="num">
+<tr><td class="sym" style="text-align:left">Motilal Oswal Midcap</td><td style="color:#ef6c00">−7.2% off high · watch</td></tr>
+<tr><td class="sym" style="text-align:left">UTI Nifty 50 Index</td><td style="color:#ef6c00">−7.5% off high · watch</td></tr>
+<tr><td class="sym" style="text-align:left">Parag Parikh Flexi</td><td class="mut">−5.7% · early</td></tr></table></section>
+
+<section><h2>Goals</h2>
+<div style="display:flex;justify-content:space-between"><span>₹15 Cr by 2029</span><span class="num">55%</span></div><div class="bar"><i style="width:55%"></i></div>
+<div style="display:flex;justify-content:space-between"><span>Education 2034</span><span class="num">31%</span></div><div class="bar"><i style="width:31%;background:#4caf50"></i></div>
+<div style="display:flex;justify-content:space-between"><span>Retirement 2044</span><span class="num">17%</span></div><div class="bar"><i style="width:17%;background:#ff9800"></i></div></section>
+</div>
+</main>
+<footer>Design sample 1 of 5 — “Broker minimal” (Zerodha Kite-inspired). Static data from your excel.</footer>
+<script>
+const gopt={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:10},color:'#9b9b9b'}},y:{grid:{color:'#f5f5f5'},ticks:{font:{size:10},color:'#9b9b9b'}}}};
+new Chart(trade,{type:'line',data:{labels:['10 Jun','17 Jun','24 Jun','1 Jul','9 Jul'],datasets:[{data:[812,796,768,784,774],borderColor:'#387ed1',borderWidth:1.5,pointRadius:0,tension:.3},{data:[840,840,840,840,840],borderColor:'#bbb',borderWidth:1,pointRadius:0,borderDash:[4,3]},{data:[798,798,798,798,798],borderColor:'#e53935',borderWidth:1,pointRadius:0,borderDash:[4,3]}]},options:gopt});
+new Chart(nw,{type:'line',data:{labels:['Nov 23','Apr 24','Sep 24','Feb 25','Jul 25','Dec 25','Jul 26'],datasets:[{data:[5.83,6.4,7.1,7.7,8.0,8.25,8.31],borderColor:'#387ed1',backgroundColor:'rgba(56,126,209,.06)',fill:true,borderWidth:1.5,pointRadius:0,tension:.35}]},options:gopt});
+</script></body></html>

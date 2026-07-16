@@ -11,6 +11,11 @@ import type { AnnualReviewField, AnnualReviewOverrideUpdate, AnnualReviewRespons
 const money = (value: number | null) => value == null ? 'Missing' : `${value < 0 ? '−' : ''}₹${(Math.abs(value) / 10_000_000).toFixed(2)} Cr`;
 const sourceLabel = (source: AnnualReviewField['source']) => source === 'manual' ? 'Manual override' : source[0].toUpperCase() + source.slice(1);
 const sourceColor = (source: AnnualReviewField['source']) => source === 'manual' ? 'warning' : source === 'missing' ? 'default' : 'info';
+const sourceMetricLabels: Record<string, string> = {
+  financial_principal: 'Financial principal', financial_market_value: 'Financial market',
+  property_principal: 'Property principal', property_market_value: 'Property market',
+};
+const sourceDate = (value: string) => new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T00:00:00Z`));
 const keyFields: { key: keyof AnnualReviewResponse; label: string; color: string; percent?: boolean }[] = [
   { key: 'opening_net_worth_inr', label: 'Opening value', color: '#475569' },
   { key: 'contributions_inr', label: 'Cash deployed', color: '#2563EB' },
@@ -40,6 +45,8 @@ export const PortfolioAnnualReviewView: React.FC<ViewProps> = ({ reviews, select
       <Stack direction="row" gap={1}><Select size="small" value={row.year} onChange={event => onSelectYear(Number(event.target.value))} aria-label="Review year">{reviews.map(item => <MenuItem key={item.year} value={item.year}>{item.year}</MenuItem>)}</Select>{onAddYear ? <Button startIcon={<AddRoundedIcon/>} onClick={onAddYear}>Add year</Button> : null}<Button variant="outlined" startIcon={<EditRoundedIcon/>} onClick={onEdit}>Edit year</Button></Stack>
     </Stack>
 
+    {row.reporting_label ? <Paper variant="outlined" sx={{ px: 1.5, py: 1, borderRadius: 2, borderColor: '#DCE7F5', bgcolor: '#F7FAFF' }}><Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ md: 'center' }} gap={1}><Typography variant="caption" fontWeight={800} color="#1E3A5F" sx={{ whiteSpace: 'nowrap' }}>{row.reporting_label} source period</Typography><Box sx={{ width: 1, height: 18, bgcolor: '#D6E2F0', display: { xs: 'none', md: 'block' } }}/><Stack direction="row" gap={0.75} flexWrap="wrap" useFlexGap>{Object.entries(row.source_dates).map(([metric, value]) => <Chip key={metric} size="small" label={`${sourceMetricLabels[metric] ?? metric} ${sourceDate(value)}`} variant="outlined" sx={{ height: 22, bgcolor: '#fff', fontSize: 10 }}/>)}</Stack></Stack></Paper> : null}
+
     <Alert severity={reconciliation.color === 'default' ? 'info' : reconciliation.color} action={<Chip size="small" label={reconciliation.label} color={reconciliation.color} variant="outlined"/>}>{reconciliation.message}{row.reconciliation.difference_inr != null && row.reconciliation.status === 'needs_review' ? ` Difference ${money(row.reconciliation.difference_inr)}.` : ''}</Alert>
 
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 1 }}>
@@ -53,7 +60,7 @@ export const PortfolioAnnualReviewView: React.FC<ViewProps> = ({ reviews, select
 };
 
 const emptyField: AnnualReviewField = { value: null, calculated_value: null, source: 'missing', explanation: 'No source data is available' };
-const emptyReview = (year: number): AnnualReviewResponse => ({ year, opening_snapshot_date: null, closing_snapshot_date: null, opening_net_worth_inr: emptyField, contributions_inr: emptyField, investment_gain_inr: emptyField, property_gain_inr: emptyField, rent_received_inr: emptyField, withdrawals_inr: emptyField, closing_net_worth_inr: emptyField, investment_xirr_pct: emptyField, reconciliation: { status: 'incomplete', expected_closing_inr: null, difference_inr: null }, notes: null });
+const emptyReview = (year: number): AnnualReviewResponse => ({ year, opening_snapshot_date: null, closing_snapshot_date: null, reporting_label: null, selection_method: 'legacy_snapshot', source_dates: {}, opening_net_worth_inr: emptyField, contributions_inr: emptyField, investment_gain_inr: emptyField, property_gain_inr: emptyField, rent_received_inr: emptyField, withdrawals_inr: emptyField, closing_net_worth_inr: emptyField, investment_xirr_pct: emptyField, reconciliation: { status: 'incomplete', expected_closing_inr: null, difference_inr: null }, notes: null });
 
 const PortfolioAnnualReview: React.FC = () => {
   const client = useQueryClient();

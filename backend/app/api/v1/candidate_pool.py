@@ -35,6 +35,14 @@ def list_candidate_pool(s: Session = Depends(_require_session())):
 
     now = datetime.now(timezone.utc)
     trading_day = now.date()
+
+    # Evict anything past the age limit before rendering; the dashboard must
+    # never display candidates the exit rules have already condemned.
+    try:
+        service.expire_stale_entries(now_utc=now, trading_day=trading_day)
+    except Exception:
+        pass
+
     rows = repo.list_entries(active_only=True)
 
     entries = []

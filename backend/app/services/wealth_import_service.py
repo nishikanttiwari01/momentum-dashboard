@@ -14,6 +14,11 @@ from app.repos.models import (
     PortfolioSnapshot,
     PortfolioTransaction,
     PortfolioValuation,
+    WealthAsset,
+    WealthAssetObservation,
+    WealthCashFlow,
+    WealthReportingPeriod,
+    WealthReportingPeriodSource,
 )
 from app.schemas.wealth_portfolio import ImportCommitResult, ImportPreview
 from app.services.wealth_workbook import ParsedWorkbook, parse_workbook
@@ -163,6 +168,70 @@ def _insert_valuations(
         ))
 
 
+def _insert_source_ledger(session: Session, import_id: str, parsed: ParsedWorkbook) -> None:
+    asset_ids: dict[str, str] = {}
+    for item in parsed.ledger_assets:
+        existing = session.scalar(select(WealthAsset).where(WealthAsset.source_key == item.source_key))
+        if existing is None:
+            existing = WealthAsset(
+                id=str(uuid4()), source_key=item.source_key, owner=item.owner, name=item.name,
+                category=item.category, asset_class=item.asset_class, market=item.market,
+                currency=item.currency, source_ref=item.source_ref,
+            )
+            session.add(existing)
+        asset_ids[item.source_key] = existing.id
+    session.flush()
+
+    existing_observations = set(session.scalars(select(WealthAssetObservation.source_key)).all())
+    for item in parsed.asset_observations:
+        if item.source_key in existing_observations:
+            continue
+        session.add(WealthAssetObservation(
+            id=str(uuid4()), import_id=import_id, asset_id=asset_ids[item.asset_source_key],
+            source_key=item.source_key, observed_on=item.observed_on, principal=item.principal,
+            market_value=item.market_value, currency=item.currency, source_ref=item.source_ref,
+        ))
+
+    existing_flows = set(session.scalars(select(WealthCashFlow.source_key)).all())
+    for item in parsed.ledger_cash_flows:
+        if item.source_key in existing_flows:
+            continue
+        session.add(WealthCashFlow(
+            id=str(uuid4()), import_id=import_id,
+            asset_id=asset_ids.get(item.asset_source_key) if item.asset_source_key else None,
+            source_key=item.source_key, occurred_on=item.occurred_on, flow_type=item.flow_type,
+            amount=item.amount, currency=item.currency, source_ref=item.source_ref,
+        ))
+
+    existing_periods = {
+        row.year: row for row in session.scalars(
+            select(WealthReportingPeriod).where(WealthReportingPeriod.import_id == import_id)
+        ).all()
+    }
+    for item in parsed.reporting_periods:
+        period = existing_periods.get(item.year)
+        if period is None:
+            period = WealthReportingPeriod(
+                id=str(uuid4()), import_id=import_id, year=item.year,
+                label=item.label, controls=item.controls,
+            )
+            session.add(period)
+            session.flush()
+        existing_metrics = set(session.scalars(
+            select(WealthReportingPeriodSource.metric).where(
+                WealthReportingPeriodSource.period_id == period.id
+            )
+        ).all())
+        for source in item.sources:
+            if source.metric in existing_metrics:
+                continue
+            session.add(WealthReportingPeriodSource(
+                id=str(uuid4()), period_id=period.id, metric=source.metric,
+                source_sheet=source.source_sheet, source_cell=source.source_cell,
+                observed_on=source.observed_on,
+            ))
+
+
 class WealthImportService:
     def __init__(self, store: PreviewStore | None = None) -> None:
         self.store = store or PreviewStore()
@@ -193,12 +262,14 @@ class WealthImportService:
                 )
                 if snapshot is None:
                     raise RuntimeError("portfolio import exists without snapshot")
+                _insert_source_ledger(session, existing.id, parsed)
                 return ImportCommitResult(snapshot_id=snapshot.id, created=False)
-            _, snapshot = _insert_import_and_snapshot(session, parsed)
+            import_row, snapshot = _insert_import_and_snapshot(session, parsed)
             snapshot_id = snapshot.id
             asset_ids = _insert_assets(session, snapshot.id, parsed)
             _insert_transactions(session, snapshot.id, parsed, asset_ids)
             _insert_valuations(session, snapshot.id, parsed, asset_ids)
+            _insert_source_ledger(session, import_row.id, parsed)
         return ImportCommitResult(snapshot_id=snapshot_id, created=True)
 
 

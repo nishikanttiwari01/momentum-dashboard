@@ -1,19 +1,26 @@
-// frontend/src/features/layout/AppTopBar.tsx
+﻿// frontend/src/features/layout/AppTopBar.tsx
+// Approved design: brand + Momentum | Portfolio tabs on the left,
+// auto-refresh controls on the right. No title banner.
 import * as React from 'react';
 import {
   AppBar, Toolbar, Box, Stack,
   FormControl, InputLabel, Select, MenuItem,
-  IconButton, Typography
+  IconButton, Typography, Tabs, Tab,
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 type RefreshOpt = 'off' | '15' | '30' | '60' | 'focus';
 
-const HEADER_HEIGHT = 52; // room for primary + secondary lines
+const HEADER_HEIGHT = 52;
 
 export default function AppTopBar({
   refresh, setRefresh, navWidth,
 }: { refresh: RefreshOpt; setRefresh: (r: RefreshOpt) => void; navWidth: number; }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const tab = location.pathname.startsWith('/portfolio') ? '/portfolio' : '/';
+
   return (
     <AppBar
       position="fixed"
@@ -25,68 +32,57 @@ export default function AppTopBar({
         mt: 0,
         mr: 0,
         borderRadius: 0,
-        color: 'common.white',
-        background: 'linear-gradient(135deg,#6D28D9 0%,#7C3AED 40%,#8B5CF6 100%)',
-        boxShadow: '0 6px 18px rgba(124,58,237,0.18)',
+        color: 'text.primary',
+        background: '#fff',
+        borderBottom: '1px solid #ECECEC',
+        boxShadow: 'none',
       })}
     >
-      <Toolbar sx={{ minHeight: HEADER_HEIGHT, px: 2, position: 'relative' }}>
-        {/* Centered title block (clicks pass through so controls remain interactive) */}
-        <Box
+      <Toolbar sx={{ minHeight: HEADER_HEIGHT, px: 2, gap: 2 }}>
+        <Typography
           sx={{
-            position: 'absolute',
-            left: '50%',
-            top: '50%',
-            transform: 'translate(-50%, -50%)',
-            textAlign: 'center',
-            px: 1,
-            pointerEvents: 'none',
+            fontFamily: 'Poppins, Inter, sans-serif',
+            fontWeight: 600,
+            fontSize: 15,
+            color: 'secondary.main',
+            whiteSpace: 'nowrap',
+            cursor: 'pointer',
+          }}
+          onClick={() => navigate('/')}
+        >
+          ◆ Momentum
+        </Typography>
+
+        <Tabs
+          value={tab}
+          onChange={(_, v) => navigate(v)}
+          sx={{
+            minHeight: HEADER_HEIGHT,
+            '& .MuiTab-root': {
+              minHeight: HEADER_HEIGHT,
+              textTransform: 'none',
+              fontFamily: 'Poppins, Inter, sans-serif',
+              fontWeight: 500,
+              fontSize: 13.5,
+              px: 2,
+            },
           }}
         >
-          <Typography
-            variant="subtitle1"
-            sx={{
-              fontWeight: 900,
-              letterSpacing: 0.4,
-              lineHeight: 1,
-              textShadow: '0 1px 0 rgba(0,0,0,0.25)',
-            }}
-          >
-            Indian Stock Momentum Screener
-          </Typography>
+          <Tab label="Momentum" value="/" />
+          <Tab label="Portfolio" value="/portfolio" />
+        </Tabs>
 
-          <Typography
-            variant="caption"
-            sx={{
-              display: 'block',
-              mt: 0.25,
-              opacity: 0.95,
-              fontWeight: 600,
-              textShadow: '0 1px 0 rgba(0,0,0,0.18)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Concept by Fingrow Solutions - Powered by Vermilion Tech Craft
-          </Typography>
-        </Box>
+        <Box sx={{ flexGrow: 1 }} />
 
-        {/* Right-side controls */}
-        <Stack direction="row" spacing={1} sx={{ ml: 'auto' }} alignItems="center">
+        <Stack direction="row" spacing={1} alignItems="center">
           <FormControl size="small" variant="outlined">
-            <InputLabel id="auto-refresh-label" sx={{ color: 'common.white' }}>Auto refresh</InputLabel>
+            <InputLabel id="auto-refresh-label">Auto refresh</InputLabel>
             <Select
               labelId="auto-refresh-label"
               label="Auto refresh"
               value={refresh}
               onChange={(e) => setRefresh(e.target.value as RefreshOpt)}
-              sx={{
-                color: 'common.white',
-                minWidth: 132,
-                '.MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.28)' },
-                '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.45)' },
-                '.MuiSvgIcon-root': { color: 'inherit' },
-                height: 32,
-              }}
+              sx={{ minWidth: 132, height: 32 }}
               MenuProps={{ MenuListProps: { dense: true } }}
             >
               <MenuItem value="off">Off</MenuItem>
@@ -100,7 +96,6 @@ export default function AppTopBar({
             aria-label="refresh-now"
             title="Refresh now"
             onClick={() => window.dispatchEvent(new Event('focus'))}
-            sx={{ color: 'common.white' }}
             size="small"
           >
             <RefreshIcon fontSize="small" />

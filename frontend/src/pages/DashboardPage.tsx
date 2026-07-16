@@ -1,4 +1,4 @@
-// src/pages/Dashboard.tsx
+﻿// src/pages/Dashboard.tsx
 import * as React from 'react';
 import { useOutletContext } from 'react-router-dom';
 import type { OutletCtx } from '../layouts/AppShell';
@@ -22,7 +22,7 @@ import {
   Button,
 } from '@mui/material';
 import dayjs from 'dayjs';
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import SparklineRe, { SparklineRange } from '@/features/detail/SparklineRe';
 import {
   getGetApiV1InstrumentsSymbolDetailQueryOptions,
@@ -42,6 +42,12 @@ import type {
 } from '@/lib/api/types';
 import RightDrawer from '@/features/detail/RightDrawer';
 import SectorHeatmap from '../components/SectorHeatmap';
+import DataHealthPanel from '../components/DataHealthPanel';
+import AccumulationWatchCard from '../components/AccumulationWatchCard';
+import EtfWatchCard from '../components/EtfWatchCard';
+import TopPerformersCard from '../components/TopPerformersCard';
+import RelevantNewsCard from '../components/RelevantNewsCard';
+import TradePositionsPanel, { PositionRow } from '../components/TradePositionsPanel';
 import { displaySymbol, displayDate, displayDateTime } from '@/lib/formatters';
 import InfoTooltip from '@/components/InfoTooltip';
 
@@ -80,15 +86,22 @@ const formatPercentCompact = (value?: number | null) => {
   return `${percentFormatter.format(value)}%`;
 };
 
-const rangeSinceTrade = (_createdAt?: string) => '';
+
+type Catalyst = {
+  headline?: string | null;
+  url?: string | null;
+  source?: string | null;
+  published_at?: string | null;
+};
 
 interface MoversTableProps {
   title: string;
   rows: TopMoverEntry[];
   onSelect?: (symbol: string) => void;
+  catalysts?: Record<string, Catalyst>;
 }
 
-const MoversTable: React.FC<MoversTableProps> = ({ title, rows, onSelect }) => (
+const MoversTable: React.FC<MoversTableProps> = ({ title, rows, onSelect, catalysts }) => (
   <Stack spacing={1} sx={{ height: '100%' }}>
     <Typography variant="subtitle2">{title}</Typography>
     <Table size="small">
@@ -120,8 +133,24 @@ const MoversTable: React.FC<MoversTableProps> = ({ title, rows, onSelect }) => (
                   {displaySymbol(row.symbol)}
                 </Typography>
                 {row.name ? (
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" color="text.secondary" display="block">
                     {row.name}
+                  </Typography>
+                ) : null}
+                {catalysts?.[row.symbol]?.headline ? (
+                  <Typography
+                    variant="caption"
+                    color="info.main"
+                    display="block"
+                    sx={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const url = catalysts[row.symbol]?.url;
+                      if (url) window.open(url, '_blank', 'noopener');
+                    }}
+                    title={catalysts[row.symbol]?.headline ?? undefined}
+                  >
+                    📰 {catalysts[row.symbol]?.headline}
                   </Typography>
                 ) : null}
               </TableCell>
@@ -136,6 +165,19 @@ const MoversTable: React.FC<MoversTableProps> = ({ title, rows, onSelect }) => (
       </TableBody>
     </Table>
   </Stack>
+);
+
+
+const SectionBand: React.FC<{ color: string; label: string }> = ({ color, label }) => (
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, px: { xs: 1, md: 2 }, pt: 2.5, pb: 1 }}>
+    <Box sx={{ width: 8, height: 8, borderRadius: '2px', bgcolor: color }} />
+    <Typography
+      sx={{ fontFamily: 'Poppins, Inter, sans-serif', fontSize: 11, fontWeight: 600, letterSpacing: '0.12em', color: 'text.secondary', textTransform: 'uppercase' }}
+    >
+      {label}
+    </Typography>
+    <Box sx={{ flexGrow: 1, height: '1px', bgcolor: 'divider' }} />
+  </Box>
 );
 
 export default function Dashboard() {
@@ -160,6 +202,28 @@ export default function Dashboard() {
   );
 
   const moversData = moversQuery.data?.data;
+
+  const moverSymbols = React.useMemo(() => {
+    const syms = [
+      ...(moversData?.gainers ?? []).map((r) => r.symbol),
+      ...(moversData?.losers ?? []).map((r) => r.symbol),
+    ];
+    return Array.from(new Set(syms));
+  }, [moversData]);
+
+  const catalystsQuery = useQuery({
+    queryKey: ['mover-catalysts', moverSymbols.join(',')],
+    enabled: moverSymbols.length > 0,
+    staleTime: 10 * 60 * 1000,
+    retry: 0,
+    queryFn: async () => {
+      const res = await axios.get<{ catalysts: Record<string, any> }>('/api/v1/news/catalysts', {
+        params: { symbols: moverSymbols.join(',') },
+      });
+      return res.data.catalysts ?? {};
+    },
+  });
+  const moverCatalysts = catalystsQuery.data ?? {};
 
   const candidatePoolQuery = useGetCandidatePool(undefined, {
     axios: { baseURL: '' },
@@ -269,9 +333,85 @@ export default function Dashboard() {
     return map;
   }, [detailQueries, activeTrades]);
 
+  const positionRows: PositionRow[] = React.useMemo(() => {
+    return activeTrades.map((p, idx) => {
+      const detail = detailBySymbol.get(p.symbol);
+      const sparkData = detail?.sparkline as DrawerSparkline | undefined;
+      const prices = Array.isArray(sparkData?.prices_30d)
+        ? (sparkData!.prices_30d as any[]).map(Number).filter(Number.isFinite)
+        : [];
+      const dates = Array.isArray((sparkData as any)?.dates_30d) ? ((sparkData as any).dates_30d as string[]) : [];
+      // backend sends price: 0 when the run has no current quote — treat as missing
+      const headerPrice = typeof detail?.header?.price === 'number' && detail.header.price > 0 ? detail.header.price : undefined;
+      const flatPrice = typeof (detail as any)?.price === 'number' && (detail as any).price > 0 ? (detail as any).price : undefined;
+      const lastSpark = prices.length && prices[prices.length - 1] > 0 ? prices[prices.length - 1] : undefined;
+      const ltp = headerPrice ?? flatPrice ?? lastSpark;
+      const qty = typeof p.qty === 'number' ? p.qty : undefined;
+      const entry = typeof p.entry_price_locked === 'number' ? p.entry_price_locked : undefined;
+      const invested = qty && entry ? qty * entry : undefined;
+      const current = qty && typeof ltp === 'number' ? qty * ltp : undefined;
+      const pl = current != null && invested != null ? current - invested : undefined;
+      const plPct = invested && invested > 0 && typeof current === 'number' ? (current / invested - 1) * 100 : undefined;
+      const stopRaw = (detail as any)?.next_action?.refs?.stop ?? (detail as any)?.stop;
+      const stop = typeof stopRaw === 'number' && Number.isFinite(stopRaw) ? stopRaw : undefined;
+      return {
+        id: p.id ?? p.symbol,
+        symbol: p.symbol,
+        qty,
+        entry,
+        ltp: typeof ltp === 'number' ? ltp : undefined,
+        invested,
+        current,
+        pl,
+        plPct,
+        createdAt: p.created_at,
+        stop,
+        isFetching: detailQueries[idx]?.isLoading || detailQueries[idx]?.isFetching,
+        sparkPrices: prices,
+        sparkDates: dates,
+      };
+    });
+  }, [activeTrades, detailBySymbol, detailQueries]);
+
+
   return (
-    <Stack spacing={3}>
-      <SectorHeatmap refetchIntervalMs={refetchIntervalMs} />
+    <Stack spacing={0}>
+      <Box sx={{ px: { xs: 1, md: 2 }, pt: 1 }}>
+        <DataHealthPanel />
+      </Box>
+
+      <SectionBand color="#00B386" label="My investments — open trades" />
+      <Grid container spacing={2} sx={{ px: { xs: 1, md: 2 } }} alignItems="stretch">
+        <Grid item xs={12} lg={8}>
+          <TradePositionsPanel
+            rows={positionRows}
+            loading={positionsQuery.isLoading}
+            error={positionsQuery.isError}
+            rangeForSymbol={rangeFor}
+            onRangeChange={(symbol, next) => setSparklineRanges((prev) => ({ ...prev, [symbol]: next }))}
+            onOpenDrawer={(symbol) => handleOpenDrawer(symbol, poolData?.as_of)}
+          />
+        </Grid>
+        <Grid item xs={12} lg={4}>
+          <Stack spacing={2}>
+            <RelevantNewsCard />
+            <AccumulationWatchCard />
+          </Stack>
+        </Grid>
+      </Grid>
+
+      <SectionBand color="#2E90FA" label="Market analysis — trends & opportunities" />
+      <Stack spacing={2} sx={{ px: { xs: 1, md: 2 }, pb: 2 }}>
+        <SectorHeatmap refetchIntervalMs={refetchIntervalMs} />
+
+        <Grid container spacing={2} alignItems="stretch">
+          <Grid item xs={12} lg={6}>
+            <TopPerformersCard onOpenSymbol={(symbol) => handleOpenDrawer(symbol, poolData?.as_of)} />
+          </Grid>
+          <Grid item xs={12} lg={6}>
+            <EtfWatchCard />
+          </Grid>
+        </Grid>
 
       <Paper sx={{ p: 2, width: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
@@ -408,7 +548,7 @@ export default function Dashboard() {
         </Typography>
       </Paper>
 
-      <Paper sx={{ p: 2, width: '100%' }}>
+      <Paper sx={{ p: 2, width: '100%', height: '100%' }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, flexWrap: 'wrap', gap: 1 }}>
           <Stack direction="row" spacing={1} alignItems="center" sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
@@ -441,146 +581,26 @@ export default function Dashboard() {
           </Stack>
         ) : (
           <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} lg={6}>
               <MoversTable
                 title="Top Gainers"
                 rows={moversData?.gainers ?? []}
+                catalysts={moverCatalysts}
                 onSelect={(sym) => handleOpenDrawer(sym, moversData?.as_of)}
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} lg={6}>
               <MoversTable
                 title="Top Losers"
                 rows={moversData?.losers ?? []}
+                catalysts={moverCatalysts}
                 onSelect={(sym) => handleOpenDrawer(sym, moversData?.as_of)}
               />
             </Grid>
           </Grid>
         )}
       </Paper>
-
-      <Paper sx={{ p: 2, width: '100%' }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1, gap: 1, flexWrap: 'wrap' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: '.02em' }}>
-            Active Trades
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            Price evolution from trade start; updates with live feed
-          </Typography>
-        </Stack>
-        <Divider sx={{ mb: 1 }} />
-        {positionsQuery.isError ? (
-          <Typography color="error">Unable to load active trades right now.</Typography>
-        ) : positionsQuery.isLoading ? (
-          <Stack alignItems="center" justifyContent="center" sx={{ py: 4 }}>
-            <CircularProgress size={24} />
-          </Stack>
-        ) : activeTrades.length === 0 ? (
-          <Typography color="text.secondary" sx={{ py: 2 }}>
-            No active trades to display.
-          </Typography>
-        ) : (
-          <Grid container spacing={2}>
-            {activeTrades.map((p, idx) => {
-              const detail = detailBySymbol.get(p.symbol);
-                const sparkData = detail?.sparkline as DrawerSparkline | undefined;
-                const detailQuery = detailQueries[idx];
-                const rangeLabel = rangeSinceTrade(p.created_at);
-              const ltp =
-                typeof detail?.header?.price === 'number'
-                  ? detail.header.price
-                  : typeof detail?.price === 'number'
-                  ? detail.price
-                  : Array.isArray(sparkData?.prices_30d) && sparkData!.prices_30d.length > 0
-                  ? Number(sparkData!.prices_30d[sparkData!.prices_30d.length - 1])
-                  : undefined;
-
-              const qty = typeof p.qty === 'number' ? p.qty : undefined;
-              const entry = typeof p.entry_price_locked === 'number' ? p.entry_price_locked : undefined;
-              const invested = qty && entry ? qty * entry : undefined;
-              const current = qty && typeof ltp === 'number' ? qty * ltp : undefined;
-              const pl = current != null && invested != null ? current - invested : undefined;
-              const plPct =
-                invested && invested > 0 && typeof current === 'number' ? ((current / invested - 1) * 100) : undefined;
-              const plColor =
-                typeof pl === 'number' ? (pl > 0 ? 'success.main' : pl < 0 ? 'error.main' : 'text.secondary') : 'text.secondary';
-              const startedOn = dayjs(p.created_at).isValid()
-                ? displayDateTime(p.created_at)
-                : 'Unknown';
-              return (
-                <Grid item xs={12} md={6} lg={4} key={p.id}>
-                  <Paper variant="outlined" sx={{ p: 1.5, height: '100%' }}>
-                    <Stack direction="row" alignItems="baseline" justifyContent="space-between" sx={{ mb: 1 }}>
-                      <Box
-                        sx={{ cursor: 'pointer' }}
-                        onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? poolData?.as_of)}
-                      >
-                        <Stack direction="row" spacing={1} alignItems="baseline" flexWrap="wrap">
-                          <Typography variant="subtitle1" fontWeight={700}>
-                            {displaySymbol(p.symbol)}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Qty: {p.qty ?? '--'} | Entry: {formatPrice(p.entry_price_locked)}
-                          </Typography>
-                        </Stack>
-                      </Box>
-                      <Typography variant="caption" color="text.secondary">
-                        {rangeLabel}
-                      </Typography>
-                    </Stack>
-                    <Box sx={{ cursor: 'pointer' }} onClick={() => handleOpenDrawer(p.symbol, detail?.as_of ?? poolData?.as_of)}>
-                      <SparklineRe
-                        data={sparkData as any}
-                        height={180}
-                        showHeader={false}
-                        range={rangeFor(p.symbol)}
-                        onRangeChange={(next) =>
-                          setSparklineRanges((prev) => ({ ...prev, [p.symbol]: next }))
-                        }
-                      />
-                    </Box>
-                    <Stack direction="row" spacing={2} sx={{ mt: 0.5, mb: 0.5, flexWrap: 'wrap' }}>
-                      <Stack spacing={0} minWidth={120}>
-                        <Typography variant="caption" color="text.secondary">
-                          Invested
-                        </Typography>
-                        <Typography variant="body2">{formatPrice(invested)}</Typography>
-                      </Stack>
-                      <Stack spacing={0} minWidth={120}>
-                        <Typography variant="caption" color="text.secondary">
-                          Current
-                        </Typography>
-                        <Typography variant="body2">{formatPrice(current)}</Typography>
-                      </Stack>
-                      <Stack spacing={0} minWidth={120}>
-                        <Typography variant="caption" color="text.secondary">
-                          P/L
-                        </Typography>
-                        <Typography variant="body2" sx={{ color: plColor, fontWeight: 700 }}>
-                          {formatPrice(pl)} {plPct != null ? `(${percentFormatter.format(plPct)}%)` : ''}
-                        </Typography>
-                      </Stack>
-                    </Stack>
-                    <Stack direction="row" justifyContent="space-between" alignItems="center">
-                      <Typography variant="caption" color="text.secondary">
-                        Started: {startedOn}
-                      </Typography>
-                      {detailQuery?.isLoading || detailQuery?.isFetching ? (
-                        <Stack direction="row" alignItems="center" spacing={0.5}>
-                          <CircularProgress size={12} />
-                          <Typography variant="caption" color="text.secondary">
-                            Updating
-                          </Typography>
-                        </Stack>
-                      ) : null}
-                    </Stack>
-                  </Paper>
-                </Grid>
-              );
-            })}
-          </Grid>
-        )}
-      </Paper>
+      </Stack>
 
       <RightDrawer symbol={drawerSymbol} open={drawerOpen} onClose={handleCloseDrawer} asOf={drawerAsOf} />
     </Stack>

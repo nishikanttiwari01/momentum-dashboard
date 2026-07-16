@@ -2,7 +2,11 @@ from io import BytesIO
 
 from openpyxl import load_workbook
 
-from tests.fixtures.wealth_workbook_factory import make_real_layout_workbook_bytes, make_workbook_bytes
+from tests.fixtures.wealth_workbook_factory import (
+    make_real_layout_workbook_bytes,
+    make_source_ledger_workbook_bytes,
+    make_workbook_bytes,
+)
 
 from app.services.wealth_workbook import parse_workbook
 
@@ -102,3 +106,46 @@ def test_paired_layout_warns_when_cash_flow_amount_has_no_date():
     )
     issues = [item for item in result.issues if item.code == "incomplete_cash_flow"]
     assert issues[-1].severity == "warning"
+
+
+def test_parser_extracts_source_ledger_assets_observations_and_property_capital():
+    result = parse_workbook(make_source_ledger_workbook_bytes(), "investment.xlsx")
+
+    assert {(asset.owner, asset.name) for asset in result.ledger_assets} == {
+        ("Nishi", "Mutual funds"), ("Supriya", "Bank deposits"),
+        (None, "Brigade land"), (None, "Gera Office"),
+    }
+    mutual_fund = next(asset for asset in result.ledger_assets if asset.name == "Mutual funds")
+    observations = [item for item in result.asset_observations if item.asset_source_key == mutual_fund.source_key]
+    assert [(item.observed_on.isoformat(), item.principal, item.market_value) for item in observations] == [
+        ("2024-12-31", None, 1_100_000),
+        ("2025-12-31", 1_000_000, 1_250_000),
+        ("2026-04-25", 1_100_000, 1_300_000),
+    ]
+    assert [(flow.occurred_on.isoformat(), flow.amount) for flow in result.ledger_cash_flows] == [
+        ("2024-06-01", 500_000), ("2025-06-01", 1_000_000), ("2026-02-01", 500_000),
+    ]
+
+
+def test_parser_preserves_balance_sheet_reporting_lineage_without_importing_totals_as_facts():
+    result = parse_workbook(make_source_ledger_workbook_bytes(), "investment.xlsx")
+
+    assert [period.label for period in result.reporting_periods] == ["FY-2024", "FY-2025", "FY-2026"]
+    fy_2026 = result.reporting_periods[-1]
+    assert {(source.metric, source.source_sheet, source.source_cell) for source in fy_2026.sources} == {
+        ("financial_principal", "CURRENT ASSET", "G6"),
+        ("financial_market_value", "CURRENT ASSET", "H6"),
+        ("property_principal", "FIXED ASSET", "H4"),
+        ("property_market_value", "FIXED ASSET", "I4"),
+    }
+    assert fy_2026.sources[0].observed_on.isoformat() == "2026-04-25"
+    assert len(result.asset_observations) == 12
+    assert {asset.name for asset in result.ledger_assets}.isdisjoint({"Sub total", "Total", "Notes"})
+
+
+def test_parser_deduplicates_repeated_columns_for_same_asset_observation():
+    result = parse_workbook(
+        make_source_ledger_workbook_bytes(duplicate_property_observation=True),
+        "investment.xlsx",
+    )
+    assert len(result.asset_observations) == 12

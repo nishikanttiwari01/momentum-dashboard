@@ -7,6 +7,8 @@ import type { AnnualReviewField, AnnualReviewResponse } from './wealthTypes';
 const field = (value: number | null, source: AnnualReviewField['source'] = 'calculated'): AnnualReviewField => ({ value, calculated_value: value, source: value == null ? 'missing' : source, explanation: 'Test source' });
 const review: AnnualReviewResponse = {
   year: 2025, opening_snapshot_date: '2024-12-31', closing_snapshot_date: '2025-12-31',
+  reporting_label: 'FY-2025', selection_method: 'workbook_formula_lineage',
+  source_dates: { financial_market_value: '2025-12-31', property_market_value: '2025-09-01' },
   opening_net_worth_inr: field(80_000_000, 'imported'), contributions_inr: field(6_000_000),
   investment_gain_inr: field(5_000_000), property_gain_inr: field(2_000_000),
   rent_received_inr: field(600_000, 'manual'), withdrawals_inr: field(100_000),
@@ -17,6 +19,8 @@ const review: AnnualReviewResponse = {
 describe('PortfolioAnnualReviewView', () => {
   it('shows effective values, provenance, and reconciliation', () => {
     const html = renderToStaticMarkup(<PortfolioAnnualReviewView reviews={[review]} selectedYear={2025} onSelectYear={vi.fn()} onEdit={vi.fn()} />);
+    expect(html).toContain('FY-2025 source period');
+    expect(html).toContain('Financial market 31 Dec 2025');
     expect(html).toContain('Annual wealth review');
     expect(html).toContain('Manual override');
     expect(html).toContain('Reconciled');

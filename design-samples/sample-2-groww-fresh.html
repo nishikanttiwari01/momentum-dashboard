@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Sample 2 — Fintech fresh (Groww/INDmoney-inspired)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font-family:Inter,sans-serif;background:#f6f7fb;color:#22262e;font-size:13.5px}
+.num{font-variant-numeric:tabular-nums}
+h1,h2,.disp{font-family:Poppins,sans-serif}
+nav{display:flex;gap:26px;align-items:center;padding:0 28px;height:56px;background:#fff;border-bottom:1px solid #ebedf3}
+nav .logo{color:#5367ff;font-weight:600;font-size:17px;font-family:Poppins}
+nav a{color:#7a8194;text-decoration:none;font-weight:500}nav a.on{color:#22262e}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 28px}
+.hero{background:linear-gradient(120deg,#5367ff,#7b5cff);border-radius:18px;color:#fff;padding:22px 26px;display:flex;gap:48px;align-items:center}
+.hero .l{font-size:12px;opacity:.75}.hero .v{font-size:28px;font-weight:600;font-family:Poppins}
+.hero .chip{background:rgba(255,255,255,.16);border-radius:20px;padding:5px 14px;font-size:12px;margin-right:6px;cursor:pointer}
+.hero .chip.on{background:#fff;color:#5367ff;font-weight:500}
+.grid{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:16px}
+.panel{background:#fff;border-radius:16px;padding:18px 20px;border:1px solid #eef0f5}
+h2{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;align-items:baseline;gap:8px}
+h2 small{font-family:Inter;font-weight:400;color:#9aa1b1;font-size:11.5px}
+.g{color:#00b386}.r{color:#eb5b3c}.mut{color:#9aa1b1}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:#9aa1b1;text-align:right;font-weight:500;padding:4px 0}
+th:first-child,td:first-child{text-align:left}
+td{text-align:right;padding:8px 0;border-top:1px solid #f2f4f8}
+.sym{font-weight:500}
+.news{font-size:11.5px;color:#5367ff;margin-top:1px}
+.secgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.sec{border-radius:10px;padding:10px;font-size:11.5px}
+.sec b{display:block;font-size:12px}
+.tag{font-size:10.5px;border-radius:6px;padding:2px 8px;font-weight:500}
+.bar{height:6px;background:#eef0f5;border-radius:4px;margin:5px 0 12px}
+.bar i{display:block;height:6px;border-radius:4px}
+footer{color:#b6bcc9;font-size:11px;padding:16px 28px;text-align:center}
+</style></head><body>
+<nav><span class="logo">⬢ momentum</span><a class="on" href="#">Today</a><a href="#">Portfolio</a><a href="#">Screener</a><a href="#">News</a>
+<span style="margin-left:auto;color:#9aa1b1;font-size:11.5px">All data live · scores 1h · news 12m</span></nav>
+<div class="wrap">
+
+<div class="hero num">
+<div><div class="l">Family net worth</div><div class="v">₹8.31 Cr</div><div style="font-size:12.5px">▲ +9.0% this FY · +₹68.9 L</div></div>
+<div><div class="l">Invested</div><div class="v" style="font-size:20px">₹5.87 Cr</div></div>
+<div><div class="l">Goal 2029</div><div class="v" style="font-size:20px">55%</div></div>
+<div style="margin-left:auto">
+<div><span class="chip on">All</span><span class="chip">Nishi</span><span class="chip">Supriya</span></div>
+<div style="margin-top:8px"><span class="chip on">🇮🇳 India</span><span class="chip">🇸🇬 SG</span></div>
+</div>
+</div>
+
+<div class="grid">
+<div>
+<div class="panel"><h2>Market pulse <small>10 Jul EOD · 1D | 1W | 1M</small></h2>
+<div class="secgrid">
+<div class="sec" style="background:#e2f8ef;color:#046648"><b>REALTY</b>+7.8%</div>
+<div class="sec" style="background:#ecfaf3;color:#046648"><b>IT</b>+2.1%</div>
+<div class="sec" style="background:#f3fcf7;color:#046648"><b>FMCG</b>+1.4%</div>
+<div class="sec" style="background:#f3fcf7;color:#046648"><b>METAL</b>+1.2%</div>
+<div class="sec" style="background:#fdf0ec;color:#9c2f12"><b>MEDIA</b>−1.3%</div>
+<div class="sec" style="background:#fbe3dc;color:#9c2f12"><b>PSU BK</b>−2.7%</div>
+</div></div>
+
+<div class="panel" style="margin-top:16px"><h2>Buy candidates <small>momentum pool · 10 active</small></h2>
+<table class="num"><tr><th>Symbol</th><th>Score</th><th>ADX</th><th>R</th><th>Age</th></tr>
+<tr><td class="sym">INDUSINDBK <span class="tag" style="background:#fff4e0;color:#b26a00">top pick</span></td><td>88</td><td>26</td><td>2.05</td><td class="mut">4d</td></tr>
+<tr><td class="sym">PNBHOUSING</td><td>87</td><td>24</td><td>1.98</td><td class="mut">4d</td></tr>
+<tr><td class="sym">AKUMS</td><td>87</td><td>43</td><td>1.62</td><td class="mut">4d</td></tr>
+<tr><td class="sym">CHOLAFIN</td><td>81</td><td>37</td><td>2.14</td><td class="mut">5d</td></tr></table></div>
+
+<div class="panel" style="margin-top:16px"><h2>Top movers <small>and why they moved</small></h2>
+<table class="num"><tr><th>Symbol</th><th>Price</th><th>1D</th></tr>
+<tr><td><div class="sym">KALYANKJIL</div><div class="news">Q1 revenue +31% YoY; bonus issue on table — ET</div></td><td>₹443.00</td><td class="g">+18.4%</td></tr>
+<tr><td><div class="sym">MASTERTR</div><div class="news">Promoter block deal 2.1% — Moneycontrol</div></td><td>₹94.80</td><td class="g">+17.8%</td></tr>
+<tr><td><div class="sym">TRENT</div><div class="news">Guidance cut on weak store metrics — Reuters</div></td><td>₹2,927.80</td><td class="r">−12.4%</td></tr></table></div>
+</div>
+
+<div>
+<div class="panel"><h2>My trades <small>3 open</small></h2>
+<table class="num"><tr><th>Symbol</th><th>Qty@Entry</th><th>P/L%</th></tr>
+<tr style="background:#f8f9ff"><td class="sym">▸ CENTURYPLY</td><td>100@840</td><td class="r">−7.9</td></tr>
+<tr><td class="sym">RADICO</td><td>50@2,210</td><td class="g">+4.9</td></tr>
+<tr><td class="sym">GLAND</td><td>30@1,742</td><td class="r">−0.6</td></tr></table>
+<div style="height:140px;margin-top:10px"><canvas id="trade"></canvas></div></div>
+
+<div class="panel" style="margin-top:16px"><h2>Wealth trend <small>Nov 23 → Jul 26</small></h2>
+<div style="height:120px"><canvas id="nw"></canvas></div></div>
+
+<div class="panel" style="margin-top:16px"><h2>Goals</h2>
+<div style="display:flex;justify-content:space-between"><span>₹15 Cr by 2029</span><b class="num">55%</b></div><div class="bar"><i style="width:55%;background:#5367ff"></i></div>
+<div style="display:flex;justify-content:space-between"><span>Education 2034</span><b class="num">31%</b></div><div class="bar"><i style="width:31%;background:#00b386"></i></div>
+<div style="display:flex;justify-content:space-between"><span>Retirement 2044</span><b class="num">17%</b></div><div class="bar"><i style="width:17%;background:#f5a623"></i></div></div>
+
+<div class="panel" style="margin-top:16px"><h2>Fund dip signals</h2>
+<table class="num">
+<tr><td class="sym">Motilal Oswal Midcap</td><td><span class="tag" style="background:#fff4e0;color:#b26a00">watch · −7.2%</span></td></tr>
+<tr><td class="sym">UTI Nifty 50 Index</td><td><span class="tag" style="background:#fff4e0;color:#b26a00">watch · −7.5%</span></td></tr>
+<tr><td class="sym">Parag Parikh Flexi</td><td><span class="tag" style="background:#eef0f5;color:#7a8194">early · −5.7%</span></td></tr></table></div>
+</div>
+</div>
+</div>
+<footer>Design sample 2 of 5 — “Fintech fresh” (Groww/INDmoney-inspired). Static data from your excel.</footer>
+<script>
+const gopt={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:10},color:'#9aa1b1'}},y:{grid:{color:'#f2f4f8'},ticks:{font:{size:10},color:'#9aa1b1'}}}};
+new Chart(trade,{type:'line',data:{labels:['10 Jun','17 Jun','24 Jun','1 Jul','9 Jul'],datasets:[{data:[812,796,768,784,774],borderColor:'#5367ff',borderWidth:2,pointRadius:0,tension:.35},{data:[840,840,840,840,840],borderColor:'#c3c9d6',borderWidth:1,pointRadius:0,borderDash:[4,3]},{data:[798,798,798,798,798],borderColor:'#eb5b3c',borderWidth:1,pointRadius:0,borderDash:[4,3]}]},options:gopt});
+new Chart(nw,{type:'line',data:{labels:['Nov 23','Sep 24','Jul 25','Jul 26'],datasets:[{data:[5.83,7.1,8.0,8.31],borderColor:'#00b386',backgroundColor:'rgba(0,179,134,.08)',fill:true,borderWidth:2,pointRadius:0,tension:.4}]},options:gopt});
+</script></body></html>

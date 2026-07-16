@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Sample 5 — Family office (executive wealth)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font-family:Inter,sans-serif;background:#faf8f4;color:#1b2a41;font-size:13.5px}
+.num{font-variant-numeric:tabular-nums}
+.disp{font-family:'Playfair Display',serif}
+nav{display:flex;gap:30px;align-items:center;padding:0 36px;height:60px;border-bottom:1px solid #e8e2d6;background:#faf8f4}
+nav .logo{font-family:'Playfair Display',serif;font-size:19px;color:#1b2a41}
+nav .logo i{color:#b98a2f;font-style:normal}
+nav a{color:#8a8574;text-decoration:none;font-size:13px}nav a.on{color:#1b2a41;border-bottom:2px solid #b98a2f;padding-bottom:19px}
+.wrap{max-width:1160px;margin:0 auto;padding:30px 36px}
+.hero{display:flex;align-items:baseline;gap:44px;padding-bottom:24px;border-bottom:1px solid #e8e2d6}
+.hero .big{font-family:'Playfair Display',serif;font-size:44px;color:#1b2a41}
+.hero .l{font-size:11px;letter-spacing:.14em;color:#8a8574;text-transform:uppercase}
+.hero .v{font-size:19px;font-family:'Playfair Display',serif;margin-top:2px}
+.g{color:#2e7d5b}.r{color:#b3402e}.mut{color:#8a8574}
+.cols{display:grid;grid-template-columns:1.35fr 1fr;gap:40px;margin-top:26px}
+h2{font-size:11px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:#8a8574;margin:26px 0 12px;display:flex;justify-content:space-between}
+h2:first-child{margin-top:0}
+h2 em{font-style:normal;letter-spacing:0;text-transform:none;color:#b9b3a2;font-size:11px}
+table{width:100%;border-collapse:collapse}
+td{padding:8px 0;border-bottom:1px solid #efe9dd;text-align:right}
+td:first-child{text-align:left}
+.sym{font-weight:500}
+.news{font-size:11.5px;color:#b98a2f;margin-top:1px}
+.secrow{display:flex;gap:6px}
+.sec{flex:1;text-align:center;padding:10px 4px;border:1px solid #e8e2d6;border-radius:2px;font-size:11px;background:#fff}
+.sec b{display:block;font-size:11px;letter-spacing:.04em}
+.sec .pct{font-size:13px;font-family:'Playfair Display',serif;margin-top:2px}
+.bar{height:3px;background:#efe9dd;margin:6px 0 14px}
+.bar i{display:block;height:3px;background:#b98a2f}
+.pillrow{display:flex;gap:10px;margin-left:auto}
+.pill{border:1px solid #d8d0bf;padding:4px 14px;font-size:11.5px;border-radius:2px;color:#8a8574;cursor:pointer}
+.pill.on{background:#1b2a41;color:#faf8f4;border-color:#1b2a41}
+footer{color:#c2bcab;font-size:11px;text-align:center;padding:22px}
+</style></head><body>
+<nav><span class="logo">Momentum <i>&amp; Wealth</i></span><a class="on" href="#">Today</a><a href="#">Portfolio</a><a href="#">Screener</a><a href="#">News</a>
+<div class="pillrow"><span class="pill on">All</span><span class="pill">Nishi</span><span class="pill">Supriya</span><span class="pill on">IN + SG</span></div></nav>
+<div class="wrap">
+
+<div class="hero num">
+<div><div class="l">Family net worth</div><div class="big">₹8.31 <span style="font-size:22px">Cr</span></div></div>
+<div><div class="l">This financial year</div><div class="v g">+9.0% · +₹68.9 L</div></div>
+<div><div class="l">Principal invested</div><div class="v">₹5.87 Cr</div></div>
+<div><div class="l">2029 target · ₹15 Cr</div><div class="v">55% <span style="font-size:13px;color:#8a8574">on track</span></div></div>
+</div>
+
+<div class="cols">
+<div>
+<h2>Market pulse <em>10 Jul EOD · 1D | 1W | 1M</em></h2>
+<div class="secrow num">
+<div class="sec"><b>REALTY</b><span class="pct g">+7.8</span></div>
+<div class="sec"><b>IT</b><span class="pct g">+2.1</span></div>
+<div class="sec"><b>FMCG</b><span class="pct g">+1.4</span></div>
+<div class="sec"><b>METAL</b><span class="pct g">+1.2</span></div>
+<div class="sec"><b>MEDIA</b><span class="pct r">−1.3</span></div>
+<div class="sec"><b>PSU BK</b><span class="pct r">−2.7</span></div>
+</div>
+
+<h2>Buy candidates <em>momentum pool</em></h2>
+<table class="num">
+<tr><td class="sym">IndusInd Bank <span style="color:#b98a2f;font-size:10.5px">— top pick</span></td><td>score 88</td><td>R 2.05</td><td class="mut">4d</td></tr>
+<tr><td class="sym">PNB Housing</td><td>score 87</td><td>R 1.98</td><td class="mut">4d</td></tr>
+<tr><td class="sym">Akums Drugs</td><td>score 87</td><td>R 1.62</td><td class="mut">4d</td></tr>
+<tr><td class="sym">Cholamandalam Fin</td><td>score 81</td><td>R 2.14</td><td class="mut">5d</td></tr></table>
+
+<h2>Movers worth knowing <em>with the reason</em></h2>
+<table class="num">
+<tr><td><div class="sym">Kalyan Jewellers <span class="g">+18.4%</span></div><div class="news">Q1 revenue up 31% YoY; bonus issue on table — Economic Times</div></td><td>₹443.00</td></tr>
+<tr><td><div class="sym">Trent <span class="r">−12.4%</span></div><div class="news">Guidance cut after weak store metrics — Reuters</div></td><td>₹2,927.80</td></tr>
+<tr><td><div class="sym">Dr Reddy's <span class="r">−5.9%</span></div><div class="news">USFDA observations at Srikakulam — BSE filing</div></td><td>₹1,269.50</td></tr></table>
+
+<h2>Wealth trend <em>₹ Cr · from your snapshots</em></h2>
+<div style="height:150px;background:#fff;border:1px solid #e8e2d6;padding:10px"><canvas id="nw"></canvas></div>
+</div>
+
+<div>
+<h2>Open positions <em>3</em></h2>
+<table class="num">
+<tr style="background:#fdfcf9"><td class="sym">▸ Century Plyboards</td><td>100 @ 840</td><td class="r">−7.9%</td></tr>
+<tr><td class="sym">Radico Khaitan</td><td>50 @ 2,210</td><td class="g">+4.9%</td></tr>
+<tr><td class="sym">Gland Pharma</td><td>30 @ 1,742</td><td class="r">−0.6%</td></tr></table>
+<div style="height:140px;background:#fff;border:1px solid #e8e2d6;padding:10px;margin-top:12px"><canvas id="trade"></canvas></div>
+
+<h2>Accumulation counsel <em>rule-based, not advice</em></h2>
+<table>
+<tr><td class="sym">Motilal Oswal Midcap</td><td style="color:#a2732a">watch · −7.2% off high</td></tr>
+<tr><td class="sym">UTI Nifty 50 Index</td><td style="color:#a2732a">watch · −7.5% off high</td></tr>
+<tr><td class="sym">Parag Parikh Flexi</td><td class="mut">early · −5.7%</td></tr></table>
+
+<h2>Goals</h2>
+<div class="num" style="font-size:12.5px">
+<div style="display:flex;justify-content:space-between"><span>₹15 Cr by 2029</span><span>55%</span></div><div class="bar"><i style="width:55%"></i></div>
+<div style="display:flex;justify-content:space-between"><span>Vaibhav's education · 2034</span><span>31%</span></div><div class="bar"><i style="width:31%"></i></div>
+<div style="display:flex;justify-content:space-between"><span>Retirement · 2044</span><span>17%</span></div><div class="bar"><i style="width:17%"></i></div></div>
+
+<h2>Remittances <em>SGD → INR</em></h2>
+<table class="num">
+<tr><td>23 Jun</td><td>S$1,507</td><td>₹1,00,761</td></tr>
+<tr><td>19 May</td><td>S$1,005</td><td>₹65,807</td></tr></table>
+</div>
+</div>
+</div>
+<footer>Design sample 5 of 5 — “Family office” executive wealth style. Static data from your excel.</footer>
+<script>
+const gopt={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:10},color:'#8a8574'}},y:{grid:{color:'#f2ede1'},ticks:{font:{size:10},color:'#8a8574'}}}};
+new Chart(nw,{type:'line',data:{labels:['Nov 23','Apr 24','Sep 24','Feb 25','Jul 25','Dec 25','Jul 26'],datasets:[{data:[5.83,6.4,7.1,7.7,8.0,8.25,8.31],borderColor:'#b98a2f',backgroundColor:'rgba(185,138,47,.07)',fill:true,borderWidth:1.6,pointRadius:0,tension:.35}]},options:gopt});
+new Chart(trade,{type:'line',data:{labels:['10 Jun','17 Jun','24 Jun','1 Jul','9 Jul'],datasets:[{data:[812,796,768,784,774],borderColor:'#1b2a41',borderWidth:1.6,pointRadius:0,tension:.3},{data:[840,840,840,840,840],borderColor:'#c2bcab',borderWidth:1,pointRadius:0,borderDash:[4,3]},{data:[798,798,798,798,798],borderColor:'#b3402e',borderWidth:1,pointRadius:0,borderDash:[4,3]}]},options:gopt});
+</script></body></html>

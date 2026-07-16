@@ -1,4 +1,4 @@
-# backend/app/workers/scheduler.py
+﻿# backend/app/workers/scheduler.py
 from __future__ import annotations
 
 """
@@ -8,7 +8,7 @@ Simple in-process scheduler for periodic scans.
 - Triggers the *same* service used by POST /scan to keep behavior consistent.
 """
 
-from datetime import datetime, timezone, timedelta, date, time as dtime
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from typing import Optional, Dict, Any, Iterable, Callable
 import uuid
 import logging
@@ -580,6 +580,35 @@ def _run_news_once() -> None:
         refresh_minutes = int(getattr(cfg.news, "refresh_minutes", 60) or 60)
         since_minutes = _parse_since_expr(fetch_cfg.get("since"), refresh_minutes)
 
+        # Catch-up window: if the newest stored news partition is older than
+        # the poll window (first run, weekend, downtime), widen the window to
+        # cover the gap - capped at news.since_days - so items back-fill
+        # instead of all being dropped as "outside window".
+        try:
+            _base = getattr(cfg, "parquet_root", None) or "./backend/parquet"
+            _news_root = Path(_base) / "news"
+            _parts = (
+                sorted(q.name.split("=", 1)[1] for q in _news_root.glob("partition_date=*"))
+                if _news_root.exists() else []
+            )
+            _seed_days = int(getattr(cfg.news, "since_days", 7) or 7)
+            _cap_min = _seed_days * 24 * 60
+            if _parts:
+                _newest = datetime.strptime(_parts[-1], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                _gap_min = int((datetime.now(timezone.utc) - _newest).total_seconds() // 60)
+                _target = min(_cap_min, max(_gap_min, 0) + refresh_minutes)
+            else:
+                _target = _cap_min
+            if _target > since_minutes:
+                log.info(
+                    "news_sched.catchup_window",
+                    extra={"from_min": since_minutes, "to_min": _target,
+                           "newest_partition": (_parts[-1] if _parts else None)},
+                )
+                since_minutes = _target
+        except Exception:
+            log.debug("news_sched: catch-up window calc failed", exc_info=True)
+
         score_include = bool(score_thr.get("include", True))
         cohorts, rid, as_of = build_intraday_symbol_set(
             watchlist_file=None,
@@ -591,6 +620,44 @@ def _run_news_once() -> None:
             max_symbols_score_bucket=(score_thr.get("max_symbols") if score_include else None),
         )
         symbols = cohorts.union() if cohorts else []
+        # Always include symbols the user actually holds or shortlisted, so
+        # "news on my holdings" has coverage even when they aren't top movers.
+        try:
+            from app.core.db import get_session as _gs
+
+            _gen = _gs()
+            _s = next(_gen)
+            try:
+                extra: list[str] = []
+                try:
+                    from app.repos.sql.candidate_pool_repo import CandidatePoolRepo
+
+                    extra += [
+                        str(r.get("symbol")).upper()
+                        for r in CandidatePoolRepo(session=_s).list_entries(active_only=True)
+                        if r.get("symbol")
+                    ]
+                except Exception:
+                    pass
+                try:
+                    from app.repos.sql.positions_repo import PositionsRepo
+
+                    extra += [
+                        str(p.get("symbol")).upper()
+                        for p in PositionsRepo(session=_s).list_positions(active=True)
+                        if isinstance(p, dict) and p.get("symbol")
+                    ]
+                except Exception:
+                    pass
+                seen = set(symbols)
+                for sym in extra:
+                    if sym not in seen:
+                        symbols.append(sym)
+                        seen.add(sym)
+            finally:
+                _gen.close()
+        except Exception:
+            log.debug("news_sched: holdings symbol union failed", exc_info=True)
         symbol_limit = fetch_cfg.get("max_symbols_per_run")
         if symbol_limit:
             try:
@@ -693,6 +760,9 @@ def start_if_enabled() -> Optional[BackgroundScheduler]:
             coalesce=True,
             max_instances=1,
             misfire_grace_time=600,
+            # First pull shortly after boot so the dashboard isn't empty for
+            # a full interval after enabling news.
+            next_run_time=datetime.now(timezone.utc) + timedelta(seconds=120),
         )
         log.info(
             "news_scheduler_job_added",

@@ -51,6 +51,9 @@ export type AnnualReviewOverrideUpdate = Partial<{
 }>;
 export type AnnualReviewResponse = {
   year: number; opening_snapshot_date: string | null; closing_snapshot_date: string | null;
+  reporting_label: string | null;
+  selection_method: 'workbook_formula_lineage' | 'legacy_snapshot';
+  source_dates: Record<string, string>;
   opening_net_worth_inr: AnnualReviewField; contributions_inr: AnnualReviewField;
   investment_gain_inr: AnnualReviewField; property_gain_inr: AnnualReviewField;
   rent_received_inr: AnnualReviewField; withdrawals_inr: AnnualReviewField;

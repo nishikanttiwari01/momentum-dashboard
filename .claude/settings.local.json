@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Get-ChildItem -Path 'd:/WORK/NEW_STOCK_DASHBOARD/momentum-dashboard/backend/parquet/scores/daily' -Filter '*.parquet' -Recurse | Select-Object -First 3 FullName\")"
+    ]
+  }
+}

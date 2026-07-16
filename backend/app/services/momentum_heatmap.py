@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import csv
 import io
@@ -474,12 +474,14 @@ class MomentumHeatmapService:
             )
         except Exception as exc:
             log.error("momentum_heatmap_live_failed", exc_info=exc)
-            # Try to serve stale cache if available, else fallback stub to avoid 502s.
+            # Serve stale cache if available, else real Yahoo EOD data. Never
+            # fabricated values; if Yahoo also fails, the error propagates and
+            # the API returns an honest 502.
             stale = self._get_cached(cache_key)
             if stale:
                 log.warning("momentum_heatmap_using_cache_fallback")
                 return stale
-            return self._build_fallback_response(reason=str(exc))
+            response = self._build_yahoo_snapshot(reason=str(exc))
         self._store_cache(cache_key, response)
         return response
 
@@ -574,7 +576,7 @@ class MomentumHeatmapService:
                     "includes_constituents": include_constituents,
                     "includes_industries": include_industries,
                 }
-                return self._build_fallback_response(reason=message)
+                return self._build_yahoo_snapshot(reason=message)
 
         latest_trade_date = max(s.timestamp.astimezone(_IST).date() for s in snapshots)
         self._history.ensure_range(latest_trade_date - timedelta(days=HISTORY_LOOKBACK_DAYS), latest_trade_date)
@@ -604,7 +606,7 @@ class MomentumHeatmapService:
         }
 
         if not sectors:
-            return self._build_fallback_response("No NSE sector snapshots available.")
+            return self._build_yahoo_snapshot("No NSE sector snapshots available.")
 
         response = MomentumHeatmapResponse(
             as_of=as_of_dt,
@@ -619,97 +621,110 @@ class MomentumHeatmapService:
         )
         return response
 
-    def _build_fallback_response(self, reason: str) -> MomentumHeatmapResponse:
-        """Return a minimal fallback payload to avoid 502s when NSE blocks or returns bad data."""
-        now_utc = datetime.now(tz=_UTC)
-        today_ist = datetime.now(tz=_IST).date()
-        sectors = [
-            MomentumHeatmapSector(
-                name="BANK",
-                symbol="NIFTYBANK",
-                change_1d=0.8,
-                change_1w=1.9,
-                change_1m=3.4,
-                turnover_ratio=1.6,
-                momentum_score=0.62,
-            ),
-            MomentumHeatmapSector(
-                name="FIN SERVICES",
-                symbol="NIFTYFIN",
-                change_1d=0.5,
-                change_1w=1.2,
-                change_1m=2.8,
-                turnover_ratio=1.3,
-                momentum_score=0.55,
-            ),
-            MomentumHeatmapSector(
-                name="IT",
-                symbol="NIFTYIT",
-                change_1d=-0.2,
-                change_1w=0.6,
-                change_1m=1.1,
-                turnover_ratio=0.9,
-                momentum_score=0.48,
-            ),
-            MomentumHeatmapSector(
-                name="PHARMA",
-                symbol="NIFTYPHARMA",
-                change_1d=0.3,
-                change_1w=1.4,
-                change_1m=2.1,
-                turnover_ratio=0.8,
-                momentum_score=0.52,
-            ),
-            MomentumHeatmapSector(
-                name="AUTO",
-                symbol="NIFTYAUTO",
-                change_1d=0.9,
-                change_1w=2.2,
-                change_1m=4.1,
-                turnover_ratio=1.1,
-                momentum_score=0.66,
-            ),
-            MomentumHeatmapSector(
-                name="FMCG",
-                symbol="NIFTYFMCG",
-                change_1d=0.1,
-                change_1w=0.5,
-                change_1m=1.0,
-                turnover_ratio=0.7,
-                momentum_score=0.44,
-            ),
-            MomentumHeatmapSector(
-                name="METAL",
-                symbol="NIFTYMETAL",
-                change_1d=-0.6,
-                change_1w=-1.4,
-                change_1m=0.3,
-                turnover_ratio=1.0,
-                momentum_score=0.38,
-            ),
-            MomentumHeatmapSector(
-                name="REALTY",
-                symbol="NIFTYREALTY",
-                change_1d=1.2,
-                change_1w=2.9,
-                change_1m=5.5,
-                turnover_ratio=0.9,
-                momentum_score=0.72,
-            ),
-        ]
+    # Yahoo Finance tickers for NSE sector indices. Used when the NSE API is
+    # unreachable (it blocks many non-India IPs). This is REAL market data,
+    # just delayed EOD — never fabricated values.
+    YAHOO_SECTOR_TICKERS = {
+        "NIFTY BANK": "^NSEBANK",
+        "NIFTY FIN SERVICE": "NIFTY_FIN_SERVICE.NS",
+        "NIFTY IT": "^CNXIT",
+        "NIFTY PHARMA": "^CNXPHARMA",
+        "NIFTY AUTO": "^CNXAUTO",
+        "NIFTY FMCG": "^CNXFMCG",
+        "NIFTY METAL": "^CNXMETAL",
+        "NIFTY REALTY": "^CNXREALTY",
+        "NIFTY ENERGY": "^CNXENERGY",
+        "NIFTY MEDIA": "^CNXMEDIA",
+        "NIFTY PSU BANK": "^CNXPSUBANK",
+        "NIFTY SERVICES SECTOR": "^CNXSERVICE",
+    }
+
+    def _build_yahoo_snapshot(self, reason: str) -> MomentumHeatmapResponse:
+        """Sector heatmap from Yahoo Finance daily closes (fallback source).
+
+        change_1d/1w/1m are computed from actual index closes. Turnover data
+        is not available from Yahoo, so turnover_ratio is reported as 0 with
+        an explanatory note rather than a made-up number.
+        """
+        import yfinance as yf
+
+        spec_by_name = {s.index_name: s for s in SECTOR_INDICES}
+        tickers = {name: tk for name, tk in self.YAHOO_SECTOR_TICKERS.items() if name in spec_by_name}
+        if not tickers:
+            raise RuntimeError(f"No Yahoo tickers configured; NSE error: {reason}")
+
+        data = yf.download(
+            list(tickers.values()),
+            period="3mo",
+            interval="1d",
+            group_by="ticker",
+            progress=False,
+            threads=True,
+            auto_adjust=False,
+        )
+
+        now_ist = datetime.now(tz=_IST)
+        sectors: List[MomentumHeatmapSector] = []
+        latest_dates: List[date] = []
+        for name, tk in tickers.items():
+            try:
+                closes = data[tk]["Close"].dropna() if hasattr(data, "columns") else None
+                if closes is None or len(closes) < 2:
+                    continue
+                last = float(closes.iloc[-1])
+                def _chg(n: int):
+                    if len(closes) <= n:
+                        return None
+                    prev = float(closes.iloc[-1 - n])
+                    return (last / prev - 1.0) * 100.0 if prev else None
+                c1d, c1w, c1m = _chg(1), _chg(5), _chg(21)
+                if c1d is None:
+                    continue
+                blend = (0.2 * (c1d or 0.0)) + (0.4 * (c1w or 0.0)) + (0.4 * (c1m or 0.0))
+                score = _clamp(blend / 10.0, -1.0, 1.0)
+                bar_date = closes.index[-1].date()
+                latest_dates.append(bar_date)
+                last_updated = datetime.combine(bar_date, datetime.min.time()).replace(
+                    hour=15, minute=30, tzinfo=_IST
+                )
+                spec = spec_by_name[name]
+                sectors.append(
+                    MomentumHeatmapSector(
+                        name=name.replace("NIFTY ", ""),
+                        symbol=spec.symbol,
+                        change_1d=round(c1d, 2),
+                        change_1w=round(c1w, 2) if c1w is not None else 0.0,
+                        change_1m=round(c1m, 2) if c1m is not None else 0.0,
+                        momentum_score=round(score, 3),
+                        turnover_ratio=0.0,
+                        turnover_label="n/a",
+                        last_updated=last_updated,
+                        note="Turnover unavailable from Yahoo",
+                    )
+                )
+            except Exception:
+                log.debug("yahoo sector fetch failed for %s", tk, exc_info=True)
+                continue
+
+        if not sectors:
+            raise RuntimeError(f"Yahoo sector fallback returned no data; NSE error: {reason}")
+
+        trade_date = max(latest_dates)
+        weekday = now_ist.weekday() < 5
+        in_session = weekday and (9, 15) <= (now_ist.hour, now_ist.minute) <= (15, 30)
         return MomentumHeatmapResponse(
-            as_of=now_utc,
-            trade_date=today_ist,
-            session=self._infer_session(now_utc),
-            run_id=now_utc.strftime("%Y%m%d%H%M%S"),
-            source="fallback",
-            latency_sec=0,
+            as_of=now_ist,
+            trade_date=trade_date,
+            session="cash" if in_session else "closed",
+            run_id=None,
+            source="yahoo",
+            latency_sec=None,
             sectors=sectors,
-            notes=[f"Fallback heatmap returned because live fetch failed: {reason}"],
-            metadata={
-                "fallback": True,
-                "reason": reason,
-            },
+            notes=[
+                "NSE live feed unreachable — showing Yahoo Finance EOD data (delayed).",
+                f"NSE error: {reason[:160]}",
+            ],
+            metadata=None,
         )
 
     def _build_sector_node(

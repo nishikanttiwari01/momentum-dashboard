@@ -15,6 +15,8 @@ from app.services.annual_review_service import (
     get_annual_review,
     save_annual_review_overrides,
 )
+from app.services.wealth_import_service import WealthImportService
+from tests.fixtures.wealth_workbook_factory import make_source_ledger_workbook_bytes
 
 
 def add_snapshot(session, as_of: date, suffix: str, financial: float, property_value: float):
@@ -75,3 +77,20 @@ def test_converts_historical_usd_assets_with_persisted_fx(session):
 
     review = get_annual_review(session, 2025)
     assert review.closing_net_worth_inr.value == 102_000
+
+
+def test_prefers_source_ledger_reporting_periods_over_legacy_snapshot(session):
+    service = WealthImportService()
+    payload = make_source_ledger_workbook_bytes()
+    service.commit(session, service.preview(payload, "investment.xlsx").preview_token)
+
+    review = get_annual_review(session, 2026)
+
+    assert review.opening_net_worth_inr.value == 28_775_000
+    assert review.closing_net_worth_inr.value == 30_840_000
+    assert review.contributions_inr.value == 610_000
+    assert review.investment_gain_inr.value == -545_000
+    assert review.property_gain_inr.value == 2_000_000
+    assert review.reporting_label == "FY-2026"
+    assert review.selection_method == "workbook_formula_lineage"
+    assert review.source_dates["financial_market_value"] == "2026-04-25"

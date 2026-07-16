@@ -135,12 +135,13 @@ PERIOD_FIELD_MAP: dict[str, str] = {
     "3m": "ret_3m",
 }
 TOP_LIMIT = 5
-FETCH_MULTIPLIER = 5
+FETCH_MULTIPLIER = 10
 TOP_COLUMNS = [
     "symbol",
     "name",
     "sector",
     "last",
+    "liquidity",
     "change_pct",
     "wk_change_pct",
     "ret_1w",
@@ -522,10 +523,32 @@ def _fetch_sorted_rows(field: str, descending: bool) -> Tuple[list[tuple[dict[st
         per_page=per_page,
         columns=TOP_COLUMNS,
     )
+    eligibility = None
+    try:
+        eligibility = app_config.load().screener.top_movers
+    except Exception:
+        eligibility = None
+
+    def _eligible(row: dict[str, Any], value: float) -> bool:
+        if eligibility is None or not getattr(eligibility, "enabled", False):
+            return True
+        price = _to_float(row.get("last"))
+        if eligibility.min_price and (price is None or price < eligibility.min_price):
+            return False
+        # liquidity = 20d avg traded value in INR crore (see compute_screener)
+        liq = _to_float(row.get("liquidity"))
+        if eligibility.min_avg_traded_value_cr and liq is not None and liq < eligibility.min_avg_traded_value_cr:
+            return False
+        if eligibility.max_abs_change_pct is not None and abs(value) >= eligibility.max_abs_change_pct:
+            return False
+        return True
+
     rows: list[tuple[dict[str, Any], float]] = []
     for row in items or []:
         value = _to_float(row.get(field))
         if value is None:
+            continue
+        if not _eligible(row, value):
             continue
         rows.append((row, value))
     rows.sort(key=lambda item: item[1], reverse=descending)
@@ -953,6 +976,71 @@ def get_top_movers(period: str = Query("1d", description="Period for percent cha
         gainers=gainers,
         losers=losers,
     )
+
+
+# --------------------------------------------------------------------------
+# Top performers — best trailing returns in the scanned universe, any size.
+# Backs the dashboard "Top Performers" card (3M / 6M / 1Y toggle).
+# --------------------------------------------------------------------------
+PERFORMER_PERIOD_FIELD: dict[str, str] = {
+    "3m": "ret_3m",
+    "6m": "ret_6m",
+    "1y": "ret_12_1m",  # 12-month return excluding the most recent month
+}
+PERFORMER_COLUMNS = [
+    "symbol", "name", "sector", "last",
+    "ret_1m", "ret_3m", "ret_6m", "ret_12_1m",
+    "score", "pct_from_52w_high", "run_id", "as_of",
+]
+
+
+@router.get("/screener/top-performers", summary="Top stocks by trailing return (any market cap)")
+def get_top_performers(
+    period: str = Query("6m", pattern="^(3m|6m|1y)$", description="Return window: 3m, 6m, or 1y (12m ex last month)"),
+    limit: int = Query(10, ge=1, le=50),
+) -> Dict[str, Any]:
+    field = PERFORMER_PERIOD_FIELD[period]
+    sort = f"{field}.desc,score.desc"
+    items, _total, resolved_run_id, resolved_as_of = repo.read(
+        run_id=None,
+        as_of_str=None,
+        filters={},
+        sort=sort,
+        page=1,
+        per_page=max(limit * 5, 50),
+        columns=PERFORMER_COLUMNS,
+    )
+
+    rows: list[Dict[str, Any]] = []
+    for row in items or []:
+        value = _to_float(row.get(field))
+        if value is None:
+            continue
+        rows.append(
+            {
+                "symbol": row.get("symbol"),
+                "name": row.get("name"),
+                "sector": row.get("sector"),
+                "price": _to_float(row.get("last")),
+                "ret_pct": value,
+                "ret_1m_pct": _to_float(row.get("ret_1m")),
+                "ret_3m_pct": _to_float(row.get("ret_3m")),
+                "ret_6m_pct": _to_float(row.get("ret_6m")),
+                "ret_1y_pct": _to_float(row.get("ret_12_1m")),
+                "score": _to_float(row.get("score")),
+                "pct_from_52w_high": _to_float(row.get("pct_from_52w_high")),
+            }
+        )
+    rows.sort(key=lambda r: r["ret_pct"], reverse=True)
+
+    return {
+        "period": period,
+        "field": field,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "run_id": resolved_run_id,
+        "as_of": _normalize_as_of_string(resolved_as_of if isinstance(resolved_as_of, str) else str(resolved_as_of or "")),
+        "items": rows[:limit],
+    }
 
 
 @router.get("/screener", response_model=ScreenerList)

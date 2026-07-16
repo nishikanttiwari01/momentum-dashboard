@@ -4,12 +4,17 @@ from io import BytesIO
 from openpyxl import Workbook
 
 
-def make_workbook_bytes(*, invalid_transaction_date: bool = False, include_household: bool = False) -> bytes:
+def make_workbook_bytes(
+    *, invalid_transaction_date: bool = False, include_household: bool = False,
+    duplicate_fund_row: bool = False, duplicate_transaction_row: bool = False,
+) -> bytes:
     workbook = Workbook()
     funds = workbook.active
     funds.title = "FUNDS"
     funds.append(["Fund", "Principal", "Market Value", "Category"])
     funds.append(["Example Mid Cap", 400000, 520000, "Mid cap"])
+    if duplicate_fund_row:
+        funds.append(["Example Mid Cap", 10000, 12000, "Mid cap"])
 
     xirr = workbook.create_sheet("Funds XIRR")
     xirr.append(["Fund", "Date", "Amount", "Units", "NAV"])
@@ -20,6 +25,8 @@ def make_workbook_bytes(*, invalid_transaction_date: bool = False, include_house
         4025.481297,
         99.367,
     ])
+    if duplicate_transaction_row:
+        xirr.append(["Example Mid Cap", date(2025, 3, 6), 400000, 4025.481297, 99.367])
 
     balance = workbook.create_sheet("BALANCE SHEET")
     if include_household:
@@ -87,6 +94,49 @@ def make_real_layout_workbook_bytes(
         xirr.append([date(2025, 4, 1), None])
     if include_amount_without_date:
         xirr.append([None, -10000])
+
+    stream = BytesIO()
+    workbook.save(stream)
+    return stream.getvalue()
+
+
+def make_source_ledger_workbook_bytes(*, duplicate_property_observation: bool = False) -> bytes:
+    workbook = Workbook()
+    current = workbook.active
+    current.title = "CURRENT ASSET"
+    current.append([None, None, None, date(2024, 12, 31), date(2025, 12, 31), date(2025, 12, 31), date(2026, 4, 25), date(2026, 4, 25)])
+    current.append(["OWNER", "DESCRIPTION", "CATEGORY", "MKT VALUE", "PRINCIPAL", "MKT VALUE", "PRINCIPAL", "MKT VALUE"])
+    current.append(["Nishi", "Mutual funds", "Equity", 1_100_000, 1_000_000, 1_250_000, 1_100_000, 1_300_000])
+    current.append(["Supriya", "Bank deposits", "Debt", 500_000, 500_000, 525_000, 510_000, 540_000])
+    current.append(["Sub total", None, None, 1_600_000, 1_500_000, 1_775_000, 1_610_000, 1_840_000])
+    current.append(["Total", None, None, 1_600_000, 1_500_000, 1_775_000, 1_610_000, 1_840_000])
+    current.append(["Notes", "not a transaction", None, None, None, None, None, None])
+
+    fixed = workbook.create_sheet("FIXED ASSET")
+    fixed.append(["S No.", "Name", "Desc", "31/12/2024\nPRINCIPAL", "31/12/2024\nMKT VALUE", "31/12/2025\nPRINCIPAL", "31/12/2025\nMKT VALUE", "25/04/2026\nPRINCIPAL", "25/04/2026\nMKT VALUE"])
+    fixed.append([1, "Brigade land", "Residential land", 8_000_000, 16_000_000, 9_000_000, 18_000_000, 9_500_000, 19_000_000])
+    fixed.append([2, "Gera Office", "Office", 5_000_000, 8_000_000, 5_000_000, 9_000_000, 5_000_000, 10_000_000])
+    fixed.append([None, None, "Total", "=SUM(D2:D3)", "=SUM(E2:E3)", "=SUM(F2:F3)", "=SUM(G2:G3)", "=SUM(H2:H3)", "=SUM(I2:I3)"])
+    if duplicate_property_observation:
+        fixed["J1"] = "25/04/2026\nPRINCIPAL"
+        fixed["K1"] = "25/04/2026\nMKT VALUE"
+        fixed["J2"], fixed["K2"] = 9_500_000, 19_000_000
+        fixed["J3"], fixed["K3"] = 5_000_000, 10_000_000
+    fixed.append([])
+    fixed.append(["Brigade payments"])
+    fixed.append([None, "Date", "Amount", "Date", "Amount", None, "Date", "Amount"])
+    fixed.append([None, date(2024, 6, 1), 500_000, date(2025, 6, 1), 1_000_000, None, date(2026, 2, 1), 500_000])
+    fixed.append([None, "Total 2024", 500_000, "Total 2025", 1_000_000, None, "Total 2026", 500_000])
+    fixed.append([None, date(2026, 5, 1), 99_000_000])
+
+    balance = workbook.create_sheet("BALANCE SHEET")
+    balance.append(["ASSET TYPE", "FY-2024", "FY-2025", "FY-2026"])
+    balance.append(["Current assests principal (year end)", "='CURRENT ASSET'!E6", "='CURRENT ASSET'!E6", "='CURRENT ASSET'!G6"])
+    balance.append(["Current assets market value (year end)", "='CURRENT ASSET'!D6", "='CURRENT ASSET'!F6", "='CURRENT ASSET'!H6"])
+    balance.append(["Fixed assests principal (year end)", "='FIXED ASSET'!D4", "='FIXED ASSET'!F4", "='FIXED ASSET'!H4"])
+    balance.append(["Fixed assests market value (year end)", "='FIXED ASSET'!E4", "='FIXED ASSET'!G4", "='FIXED ASSET'!I4"])
+    balance.append(["TOTAL ASSETS PRINCIPAL", "=B2+B4", "=C2+C4", "=D2+D4"])
+    balance.append(["TOTAL ASSETS MARKET VALUE", "=B3+B5", "=C3+C5", "=D3+D5"])
 
     stream = BytesIO()
     workbook.save(stream)

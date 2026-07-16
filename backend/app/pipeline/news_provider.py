@@ -448,6 +448,12 @@ def _headline_matches_symbol(headline: str, sym: str, smap: SymbolMap) -> bool:
 # Fetchers (RSS + Google News RSS + NSE JSON optional)
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Consecutive news.google.com fetch failures (503 = rate-limited). When the
+# streak passes the threshold, the media pass short-circuits for this run
+# instead of burning ~30s per site x symbol on a blocked endpoint.
+_GOOGLE_FAIL_STREAK = 0
+_GOOGLE_FAIL_LIMIT = 6
+
 def _fetch_rss(url: str, timeout: int = 15) -> List[dict]:
     """
     Robust RSS fetcher:
@@ -455,24 +461,28 @@ def _fetch_rss(url: str, timeout: int = 15) -> List[dict]:
       - Falls back cleanly on failures
       - Parses bytes via feedparser to avoid internal network calls
     """
+    global _GOOGLE_FAIL_STREAK
     t0 = _t0()
     out: List[dict] = []
 
     CONNECT_TO = min(8, timeout)
     READ_TO    = max(4, min(12, timeout))
-    RETRIES    = 2
-    UA = os.getenv("NEWS_RSS_UA", "Mozilla/5.0 (compatible; MomentumSuite/1.0; +https://localhost)")
+    is_google = "news.google.com" in url
+    # Google rate-limits aggressively: one attempt only (a 503 won't clear in
+    # seconds, retrying just deepens the block). Other feeds keep 2 retries.
+    RETRIES    = 0 if is_google else 2
+    # Browser-like UA: Google 503s obvious bot UAs.
+    UA = os.getenv(
+        "NEWS_RSS_UA",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+    )
 
     _info("rss.fetch_start", url=url, connect_to=CONNECT_TO, read_to=READ_TO, retries=RETRIES)
     last_err = None
 
     for attempt in range(1, RETRIES + 2):
         try:
-            try:
-                requests.head(url, timeout=(CONNECT_TO, 3), headers={"User-Agent": UA})
-            except Exception:
-                pass
-
             resp = requests.get(url, timeout=(CONNECT_TO, READ_TO), headers={"User-Agent": UA})
             resp.raise_for_status()
             parsed = feedparser.parse(resp.content)
@@ -488,6 +498,8 @@ def _fetch_rss(url: str, timeout: int = 15) -> List[dict]:
                 out.append({"title": title, "url": link, "published": published})
 
             _info("rss.fetch_ok", url=url, items=len(out), ms=_ms(t0), attempt=attempt)
+            if is_google:
+                _GOOGLE_FAIL_STREAK = 0
             return out
         except Exception as e:
             last_err = e
@@ -498,6 +510,8 @@ def _fetch_rss(url: str, timeout: int = 15) -> List[dict]:
                 pass
 
     _error("rss.fetch_failed", url=url, err=str(last_err)[:300], ms=_ms(t0))
+    if is_google:
+        _GOOGLE_FAIL_STREAK += 1
     return out
 
 def _nse_session() -> requests.Session:
@@ -661,6 +675,50 @@ def _publisher_from_url(url: str) -> str:
     except Exception:
         return "unknown"
 
+def _parse_yahoo_news_item(item: dict) -> Tuple[str, str, str, Optional[datetime]]:
+    """Normalize a yfinance news item to (title, url, publisher, published).
+
+    Handles both shapes yfinance has shipped:
+    - new (>=0.2.5x): {"content": {"title", "pubDate", "provider": {"displayName"},
+      "canonicalUrl"/"clickThroughUrl": {"url"}}}
+    - old: {"title", "link", "publisher", "providerPublishTime" (epoch)}
+    """
+    title, link, pubr, pub = "", "", "yahoo-finance", None
+    try:
+        c = item.get("content") if isinstance(item.get("content"), dict) else None
+        if c:  # new shape
+            title = (c.get("title") or "").strip()
+            for k in ("canonicalUrl", "clickThroughUrl"):
+                u = c.get(k) or {}
+                if isinstance(u, dict) and u.get("url"):
+                    link = u["url"]
+                    break
+            prov = c.get("provider") or {}
+            if isinstance(prov, dict) and prov.get("displayName"):
+                pubr = str(prov["displayName"])
+            pd = c.get("pubDate") or c.get("displayTime")
+            if pd:
+                try:
+                    pub = datetime.fromisoformat(str(pd).replace("Z", "+00:00"))
+                except Exception:
+                    pub = None
+        else:  # old shape
+            title = (item.get("title") or "").strip()
+            link = item.get("link") or ""
+            pubr = str(item.get("publisher") or "yahoo-finance")
+            ts = item.get("providerPublishTime")
+            if ts:
+                try:
+                    pub = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+                except Exception:
+                    pub = None
+    except Exception:
+        pass
+    if pub is not None and pub.tzinfo is None:
+        pub = pub.replace(tzinfo=timezone.utc)
+    return title, link, pubr, pub
+
+
 def _within_window(pub: Optional[datetime], since_minutes: int, anchor: datetime) -> bool:
     """
     Intraday: anchor ≈ now → [anchor - since, anchor + 5m]
@@ -771,6 +829,13 @@ def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap
         _debug("collect.media.alias_map_ready", entries=sum(len(v) for v in alias_map.values()))
 
         for sym in symbols:
+            if _GOOGLE_FAIL_STREAK >= _GOOGLE_FAIL_LIMIT:
+                log.warning(
+                    "collect.media.circuit_open",
+                    extra={"fail_streak": _GOOGLE_FAIL_STREAK, "skipped_symbol": sym, "run_id": _runid()},
+                )
+                _info("collect.media.circuit_open+", fail_streak=_GOOGLE_FAIL_STREAK, from_symbol=sym)
+                break
             sym_seen = 0
             sym_skipped = 0
             sym_matched = 0
@@ -818,6 +883,44 @@ def _collect_hits(symbols: List[str], since_minutes: int, anchor: datetime, smap
     else:
         log.info("collect.media_disabled", extra={"run_id": _runid()})
         _info("collect.media_disabled+")
+
+    # Yahoo Finance per-ticker news (yfinance). Free, no key; symbols are
+    # already Yahoo-style (.NS). No alias matching needed — items come tagged
+    # to the ticker we asked for.
+    ycfg = s.news.sources.get("yahoo_news") or {}
+    if isinstance(ycfg, dict) and ycfg.get("enabled", False):
+        max_per = int(ycfg.get("max_per_symbol", 8) or 8)
+        t2 = _t0()
+        y_hits = 0
+        log.info("collect.yahoo_begin", extra={"symbols": len(symbols), "run_id": _runid()})
+        _info("collect.yahoo_begin+", symbols=len(symbols), max_per_symbol=max_per)
+        try:
+            import yfinance as yf  # already a project dependency
+        except Exception:
+            yf = None
+            _exc("collect.yahoo_import_failed")
+        if yf is not None:
+            for sym in symbols:
+                try:
+                    raw_items = yf.Ticker(sym).news or []
+                except Exception as _ye:
+                    _info("collect.yahoo.symbol_failed", symbol=sym, err=str(_ye)[:200])
+                    continue
+                sym_matched = 0
+                for item in raw_items[:max_per]:
+                    title, link, pubr, pub = _parse_yahoo_news_item(item)
+                    if not title or not link:
+                        continue
+                    if not _within_window(pub, since_minutes, anchor):
+                        continue
+                    hits.append(RawHit(sym, title, link, pubr, pub))
+                    sym_matched += 1
+                    y_hits += 1
+                _debug("collect.yahoo.symbol_complete", symbol=sym, matched=sym_matched, seen=len(raw_items))
+        log.info("collect.yahoo_done", extra={"hits": y_hits, "ms": _ms(t2), "run_id": _runid()})
+        _info("collect.yahoo_done+", hits=y_hits, ms=_ms(t2))
+    else:
+        _info("collect.yahoo_disabled+")
 
     log.info("collect.complete", extra={"hits": len(hits), "since_min": since_minutes, "run_id": _runid()})
     _info("collect.complete+", hits=len(hits), since_min=since_minutes)

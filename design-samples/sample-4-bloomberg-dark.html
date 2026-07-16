@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Sample 4 — Terminal dark (Bloomberg-inspired)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font-family:'IBM Plex Sans',sans-serif;background:#0a0e14;color:#c9d1d9;font-size:13px}
+.num{font-family:'IBM Plex Mono',monospace;font-size:12px}
+header{display:flex;gap:20px;align-items:center;background:#05070b;border-bottom:1px solid #1c2430;padding:0 16px;height:42px}
+header .logo{color:#ffb000;font-weight:600;letter-spacing:.08em}
+header a{color:#5c6773;text-decoration:none;font-size:12px}header a.on{color:#e6edf3}
+.tick{margin-left:auto;font-size:11px;color:#5c6773}
+.deck{display:grid;grid-template-columns:repeat(12,1fr);gap:8px;padding:8px}
+.panel{background:#0f141c;border:1px solid #1c2430;border-radius:4px}
+.ph{padding:7px 12px;border-bottom:1px solid #1c2430;color:#ffb000;font-size:11px;letter-spacing:.1em;font-weight:500;display:flex;justify-content:space-between}
+.ph span{color:#5c6773;letter-spacing:0}
+.pc{padding:8px 12px}
+.g{color:#00e676}.r{color:#ff5252}.mut{color:#5c6773}.cy{color:#4dd0e1}
+table{width:100%;border-collapse:collapse}
+th{font-size:10px;color:#5c6773;text-align:right;font-weight:400;padding:3px 0;letter-spacing:.08em}
+th:first-child,td:first-child{text-align:left}
+td{text-align:right;padding:4px 0;border-top:1px solid #141b26;font-size:12.5px}
+.sym{font-weight:500;color:#e6edf3}
+.news{font-size:11px;color:#4dd0e1}
+.hm{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+.cell{padding:8px;font-size:11px;border-radius:2px;color:#0a0e14}
+.cell b{display:block}
+.kpi{padding-right:26px;font-size:10px;color:#5c6773;letter-spacing:.1em}
+.kpi b{display:block;font-size:17px;color:#e6edf3;font-weight:500}
+.bar{height:4px;background:#1c2430;border-radius:2px;margin:4px 0 10px}
+.bar i{display:block;height:4px;border-radius:2px;background:#ffb000}
+footer{color:#3a4450;font-size:11px;text-align:center;padding:10px}
+</style></head><body>
+<header><span class="logo">MOMENTUM ▮</span><a class="on" href="#">TODAY</a><a href="#">PORTFOLIO</a><a href="#">SCREENER</a><a href="#">NEWS</a>
+<span class="tick num">NIFTY 24,812 <span class="g">+0.4%</span> · SGDINR 66.82 · 11 JUL 11:31 IST · FEED OK</span></header>
+
+<div class="deck">
+<div class="panel" style="grid-column:span 12"><div class="pc num" style="display:flex;align-items:center">
+<div class="kpi">NET WORTH<b>₹8.31 Cr</b></div><div class="kpi">PRINCIPAL<b>₹5.87 Cr</b></div><div class="kpi">FY GAIN<b class="g">+9.0%</b></div><div class="kpi">TRADES P/L<b class="r">−4,980</b></div><div class="kpi">GOAL 2029<b>55%</b></div>
+<div style="margin-left:auto;font-size:11px" class="mut">ALL · NISHI · SUPRIYA | IN · SG</div></div></div>
+
+<div class="panel" style="grid-column:span 5"><div class="ph">SECTOR HEAT<span>1D | 1W | 1M</span></div>
+<div class="pc hm num">
+<div class="cell" style="background:#00e676"><b>REALTY</b>+7.8</div>
+<div class="cell" style="background:#39d98a"><b>IT</b>+2.1</div>
+<div class="cell" style="background:#77dfa9"><b>FMCG</b>+1.4</div>
+<div class="cell" style="background:#77dfa9"><b>METAL</b>+1.2</div>
+<div class="cell" style="background:#b7e4c7;"><b>BANK</b>+0.2</div>
+<div class="cell" style="background:#ef9a9a"><b>PHARMA</b>−0.3</div>
+<div class="cell" style="background:#ff7a70"><b>MEDIA</b>−1.3</div>
+<div class="cell" style="background:#ff5252"><b>PSU BK</b>−2.7</div>
+</div></div>
+
+<div class="panel" style="grid-column:span 4"><div class="ph">BUY CANDIDATES<span>10 ACTIVE</span></div>
+<div class="pc"><table class="num"><tr><th>SYM</th><th>SCR</th><th>ADX</th><th>R</th><th>AGE</th></tr>
+<tr><td class="sym">INDUSINDBK</td><td>88</td><td>26</td><td>2.05</td><td class="mut">4d</td></tr>
+<tr><td class="sym">PNBHOUSING</td><td>87</td><td>24</td><td>1.98</td><td class="mut">4d</td></tr>
+<tr><td class="sym">AKUMS</td><td>87</td><td>43</td><td>1.62</td><td class="mut">4d</td></tr>
+<tr><td class="sym">CHOLAFIN</td><td>81</td><td>37</td><td>2.14</td><td class="mut">5d</td></tr></table></div></div>
+
+<div class="panel" style="grid-column:span 3"><div class="ph">FUND SIGNALS</div>
+<div class="pc"><table class="num">
+<tr><td class="sym">MOTILAL MID</td><td style="color:#ffb000">−7.2 WATCH</td></tr>
+<tr><td class="sym">UTI N50</td><td style="color:#ffb000">−7.5 WATCH</td></tr>
+<tr><td class="sym">PPFAS FLEXI</td><td class="mut">−5.7</td></tr></table>
+<div class="mut" style="font-size:10px;margin-top:8px">TRANCHE TRIGGER ≥10% OFF 1Y HIGH</div></div></div>
+
+<div class="panel" style="grid-column:span 5"><div class="ph">TOP MOVERS<span>WHY</span></div>
+<div class="pc"><table class="num">
+<tr><td><span class="sym">KALYANKJIL</span> <span class="g">+18.4%</span><div class="news">Q1 REV +31% YOY; BONUS ISSUE — ET</div></td><td>443.00</td></tr>
+<tr><td><span class="sym">MASTERTR</span> <span class="g">+17.8%</span><div class="news">PROMOTER BLOCK DEAL 2.1% — MC</div></td><td>94.80</td></tr>
+<tr><td><span class="sym">TRENT</span> <span class="r">−12.4%</span><div class="news">GUIDANCE CUT — REUTERS</div></td><td>2,927.80</td></tr></table></div></div>
+
+<div class="panel" style="grid-column:span 7"><div class="ph">TRADES — CENTURYPLY<span>ENTRY — · STOP ┄</span></div>
+<div class="pc" style="display:grid;grid-template-columns:190px 1fr;gap:12px">
+<table class="num"><tr><th>SYM</th><th>P/L%</th></tr>
+<tr style="background:#141b26"><td class="sym">▸ CENTURYPLY</td><td class="r">−7.9</td></tr>
+<tr><td class="sym">RADICO</td><td class="g">+4.9</td></tr>
+<tr><td class="sym">GLAND</td><td class="r">−0.6</td></tr></table>
+<div style="height:140px"><canvas id="trade"></canvas></div></div></div>
+
+<div class="panel" style="grid-column:span 8"><div class="ph">NET WORTH TREND<span>₹ CR · NOV 23 → JUL 26</span></div>
+<div class="pc" style="height:140px"><canvas id="nw"></canvas></div></div>
+<div class="panel" style="grid-column:span 4"><div class="ph">GOALS</div>
+<div class="pc num" style="font-size:11.5px">
+<div style="display:flex;justify-content:space-between"><span>15 CR BY 2029</span><span>55%</span></div><div class="bar"><i style="width:55%"></i></div>
+<div style="display:flex;justify-content:space-between"><span>EDUCATION 2034</span><span>31%</span></div><div class="bar"><i style="width:31%;background:#00e676"></i></div>
+<div style="display:flex;justify-content:space-between"><span>RETIREMENT 2044</span><span>17%</span></div><div class="bar"><i style="width:17%;background:#4dd0e1"></i></div></div></div>
+</div>
+<footer>Design sample 4 of 5 — “Terminal dark” (Bloomberg-inspired). Static data from your excel.</footer>
+<script>
+const gopt={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:10,family:'IBM Plex Mono'},color:'#5c6773'}},y:{grid:{color:'#141b26'},ticks:{font:{size:10,family:'IBM Plex Mono'},color:'#5c6773'}}}};
+new Chart(trade,{type:'line',data:{labels:['10 JUN','17 JUN','24 JUN','1 JUL','9 JUL'],datasets:[{data:[812,796,768,784,774],borderColor:'#4dd0e1',borderWidth:1.5,pointRadius:0,tension:.25},{data:[840,840,840,840,840],borderColor:'#5c6773',borderWidth:1,pointRadius:0,borderDash:[4,3]},{data:[798,798,798,798,798],borderColor:'#ff5252',borderWidth:1,pointRadius:0,borderDash:[4,3]}]},options:gopt});
+new Chart(nw,{type:'line',data:{labels:['NOV 23','APR 24','SEP 24','FEB 25','JUL 25','DEC 25','JUL 26'],datasets:[{data:[5.83,6.4,7.1,7.7,8.0,8.25,8.31],borderColor:'#ffb000',backgroundColor:'rgba(255,176,0,.06)',fill:true,borderWidth:1.5,pointRadius:0,tension:.3}]},options:gopt});
+</script></body></html>

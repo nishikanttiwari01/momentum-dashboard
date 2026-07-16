@@ -1,13 +1,7 @@
-import * as React from 'react';
-import {
-  alpha,
-  useTheme,
-} from '@mui/material/styles';
+﻿import * as React from 'react';
 import {
   Box,
-  Chip,
   CircularProgress,
-  Grid,
   Paper,
   Stack,
   Tooltip,
@@ -37,27 +31,19 @@ const turnoverLabel = (value?: number | null) =>
 const percentLabel = (value?: number | null) =>
   value == null ? '—' : `${percentFormatter.format(value)}%`;
 
-const FALLBACK_SECTORS: MomentumHeatmapSector[] = [
-  { name: 'BANK', symbol: 'NIFTYBANK', change_1d: 0.8, change_1w: 1.9, change_1m: 3.4, turnover_ratio: 1.6, momentum_score: 0.62 },
-  { name: 'FIN SERVICES', symbol: 'NIFTYFIN', change_1d: 0.5, change_1w: 1.2, change_1m: 2.8, turnover_ratio: 1.3, momentum_score: 0.55 },
-  { name: 'IT', symbol: 'NIFTYIT', change_1d: -0.2, change_1w: 0.6, change_1m: 1.1, turnover_ratio: 0.9, momentum_score: 0.48 },
-  { name: 'PHARMA', symbol: 'NIFTYPHARMA', change_1d: 0.3, change_1w: 1.4, change_1m: 2.1, turnover_ratio: 0.8, momentum_score: 0.52 },
-  { name: 'AUTO', symbol: 'NIFTYAUTO', change_1d: 0.9, change_1w: 2.2, change_1m: 4.1, turnover_ratio: 1.1, momentum_score: 0.66 },
-  { name: 'FMCG', symbol: 'NIFTYFMCG', change_1d: 0.1, change_1w: 0.5, change_1m: 1.0, turnover_ratio: 0.7, momentum_score: 0.44 },
-  { name: 'METAL', symbol: 'NIFTYMETAL', change_1d: -0.6, change_1w: -1.4, change_1m: 0.3, turnover_ratio: 1.0, momentum_score: 0.38 },
-  { name: 'REALTY', symbol: 'NIFTYREALTY', change_1d: 1.2, change_1w: 2.9, change_1m: 5.5, turnover_ratio: 0.9, momentum_score: 0.72 },
-];
-
-const useTileColors = (delta: number) => {
-  const theme = useTheme();
+// Flat bright cells (approved design): strong fill for big moves, tint for small.
+const tileStyle = (delta: number) => {
   const abs = Math.abs(delta);
-  const intensity = Math.min(abs / 6, 1);
-  const base = delta >= 0 ? theme.palette.success.main : theme.palette.error.main;
-  return {
-    chipColor: delta >= 0 ? 'success' : 'error',
-    borderColor: alpha(base, 0.6),
-    background: alpha(base, 0.12 + intensity * 0.25),
-  };
+  if (delta >= 0) {
+    if (abs >= 3) return { bg: '#00B386', fg: '#fff', sub: 'rgba(255,255,255,0.85)' };
+    if (abs >= 1.5) return { bg: '#3ECFA4', fg: '#fff', sub: 'rgba(255,255,255,0.85)' };
+    if (abs >= 0.5) return { bg: '#A7ECD8', fg: '#065F46', sub: '#0B7A5C' };
+    return { bg: '#E9F9F3', fg: '#065F46', sub: '#5B9E8C' };
+  }
+  if (abs >= 3) return { bg: '#F04438', fg: '#fff', sub: 'rgba(255,255,255,0.85)' };
+  if (abs >= 1.5) return { bg: '#FF7A70', fg: '#fff', sub: 'rgba(255,255,255,0.85)' };
+  if (abs >= 0.5) return { bg: '#FCA5A5', fg: '#7F1D1D', sub: '#9C3333' };
+  return { bg: '#FDEEEC', fg: '#7F1D1D', sub: '#B36B6B' };
 };
 
 type HeatmapCardProps = {
@@ -65,106 +51,55 @@ type HeatmapCardProps = {
 };
 
 const HeatmapCard: React.FC<HeatmapCardProps> = ({ sector }) => {
-  const colors = useTileColors(sector.change_1d ?? 0);
-
-  return (
-    <Box
-      sx={{
-        p: 1.5,
-        height: '100%',
-        borderRadius: 2,
-        bgcolor: colors.background,
-        border: '1px solid',
-        borderColor: colors.borderColor,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1.5,
-      }}
-    >
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-        <Box>
-          <Typography variant="subtitle2" sx={{ lineHeight: 1.1 }}>
-            {sector.name}
-          </Typography>
-          <Typography variant="caption" color="text.secondary">
-            {sector.symbol}
-          </Typography>
-        </Box>
-        <Chip
-          size="small"
-          color={colors.chipColor as any}
-          label={percentLabel(sector.change_1d)}
-          sx={{ fontWeight: 600 }}
-        />
-      </Stack>
-
-      <Grid container spacing={1}>
-        <Grid item xs={6}>
-          <Metric label="1 Week" value={percentLabel(sector.change_1w)} tone={sector.change_1w ?? 0} />
-        </Grid>
-        <Grid item xs={6}>
-          <Metric label="1 Month" value={percentLabel(sector.change_1m)} tone={sector.change_1m ?? 0} />
-        </Grid>
-        <Grid item xs={6}>
-          <Metric label="Turnover" value={turnoverLabel(sector.turnover_ratio)} />
-        </Grid>
-        <Grid item xs={6}>
-          <Metric
-            label="Momentum"
-            value={
-              sector.momentum_score != null ? momentFormatter.format(sector.momentum_score * 100) + '%' : '—'
-            }
-            tone={sector.momentum_score ?? 0}
-          />
-        </Grid>
-      </Grid>
-
+  const s = tileStyle(sector.change_1d ?? 0);
+  const tip = (
+    <Box sx={{ fontSize: 12, lineHeight: 1.7 }}>
+      <b>{sector.name}</b> ({sector.symbol})<br />
+      1W {percentLabel(sector.change_1w)} · 1M {percentLabel(sector.change_1m)}<br />
+      Turnover {turnoverLabel(sector.turnover_ratio)} · Momentum{' '}
+      {sector.momentum_score != null ? momentFormatter.format(sector.momentum_score * 100) + '%' : '—'}
       {sector.advance_decline ? (
-        <Typography variant="caption" color="text.secondary">
-          Adv {sector.advance_decline.advancers} • Dec {sector.advance_decline.decliners}
-          {sector.advance_decline.unchanged != null
-            ? ` • Unch ${sector.advance_decline.unchanged}`
-            : null}
-        </Typography>
+        <>
+          <br />
+          Adv {sector.advance_decline.advancers} · Dec {sector.advance_decline.decliners}
+        </>
       ) : null}
-
       {sector.note ? (
-        <Tooltip title={sector.note}>
-          <Typography variant="caption" color="warning.main" noWrap>
-            {sector.note}
-          </Typography>
-        </Tooltip>
+        <>
+          <br />
+          {sector.note}
+        </>
       ) : null}
     </Box>
   );
-};
 
-type MetricProps = {
-  label: string;
-  value: string;
-  tone?: number;
-};
-
-const Metric: React.FC<MetricProps> = ({ label, value, tone }) => {
-  const theme = useTheme();
-  let color: string | undefined;
-  if (tone != null) {
-    color =
-      tone > 0
-        ? theme.palette.success.dark
-        : tone < 0
-        ? theme.palette.error.dark
-        : theme.palette.text.secondary;
-  }
   return (
-    <Box>
-      <Typography variant="caption" color="text.secondary">
-        {label}
-      </Typography>
-      <Typography variant="body2" fontWeight={600} color={color}>
-        {value}
-      </Typography>
-    </Box>
+    <Tooltip title={tip} arrow>
+      <Box
+        sx={{
+          p: 1.1,
+          borderRadius: '6px',
+          bgcolor: s.bg,
+          cursor: 'default',
+          minHeight: 64,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+        }}
+      >
+        <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+          <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: s.fg, letterSpacing: '.02em' }} noWrap>
+            {sector.name.replace('NIFTY ', '')}
+          </Typography>
+          <Typography sx={{ fontSize: 13, fontWeight: 700, color: s.fg, fontVariantNumeric: 'tabular-nums' }}>
+            {percentLabel(sector.change_1d)}
+          </Typography>
+        </Stack>
+        <Typography sx={{ fontSize: 10.5, color: s.sub, fontVariantNumeric: 'tabular-nums' }} noWrap>
+          1W {percentLabel(sector.change_1w)} · 1M {percentLabel(sector.change_1m)}
+        </Typography>
+      </Box>
+    </Tooltip>
   );
 };
 
@@ -189,11 +124,23 @@ const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
     }
   );
 
-  const payload = heatmapQuery.data?.data;
-  const usingFallback = !payload?.sectors || payload.sectors.length === 0;
-  const sectors = usingFallback ? FALLBACK_SECTORS : payload!.sectors;
-  const statusNote = usingFallback
-    ? 'Live feed unavailable; showing fallback sectors.'
+  const freshPayload = heatmapQuery.data?.data;
+  const hasFresh = !!freshPayload?.sectors?.length;
+
+  // Keep the last successful (non-empty) payload so a transient feed outage
+  // degrades to "stale but real" data instead of a blank panel. We never
+  // fabricate sector values.
+  const lastGoodRef = React.useRef<{ payload: NonNullable<typeof freshPayload>; receivedAt: Date } | null>(null);
+  if (hasFresh && freshPayload) {
+    lastGoodRef.current = { payload: freshPayload, receivedAt: new Date() };
+  }
+
+  const payload = hasFresh ? freshPayload : lastGoodRef.current?.payload ?? null;
+  const showingStale = !hasFresh && !!lastGoodRef.current;
+  const sectors = payload?.sectors ?? [];
+
+  const statusNote = showingStale
+    ? `Live feed unavailable — showing last data received ${dayjs(lastGoodRef.current!.receivedAt).format('DD MMM, HH:mm')}`
     : heatmapQuery.isError && heatmapQuery.error instanceof Error
     ? heatmapQuery.error.message
     : heatmapQuery.isError
@@ -236,21 +183,27 @@ const SectorHeatmap: React.FC<SectorHeatmapProps> = ({ refetchIntervalMs }) => {
           <CircularProgress size={24} />
         </Stack>
       ) : sectors && sectors.length ? (
-        <Grid
-          container
-          spacing={1.5}
-          columns={{ xs: 12, sm: 12, md: 18, lg: 24 }}
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 0.75,
+            gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(3, 1fr)', md: 'repeat(4, 1fr)', lg: 'repeat(6, 1fr)' },
+          }}
         >
           {sectors.map((sector) => (
-            <Grid item key={sector.symbol} xs={12} sm={6} md={4} lg={3}>
-              <HeatmapCard sector={sector} />
-            </Grid>
+            <HeatmapCard key={sector.symbol} sector={sector} />
           ))}
-        </Grid>
+        </Box>
       ) : (
-        <Typography variant="body2" color="text.secondary">
-          No sectors available.
-        </Typography>
+        <Box sx={{ py: 3, textAlign: 'center' }}>
+          <Typography variant="body2" color="text.secondary" gutterBottom>
+            Sector data unavailable.
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            The heatmap feed returned no sectors and no earlier snapshot exists for this session.
+            Check the data pipeline (EOD/intraday scans) or the API health endpoint.
+          </Typography>
+        </Box>
       )}
 
       {payload?.notes?.length ? (

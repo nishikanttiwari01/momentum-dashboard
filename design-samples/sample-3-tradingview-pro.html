@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Sample 3 — Pro workspace (TradingView-inspired)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font-family:'IBM Plex Sans',sans-serif;background:#eef2f9;color:#131722;font-size:13px}
+.num{font-family:'JetBrains Mono',monospace;font-size:12px}
+header{background:#131722;color:#d1d4dc;display:flex;align-items:center;gap:22px;padding:0 18px;height:44px}
+header .logo{color:#2962ff;font-weight:600}
+header a{color:#868b98;text-decoration:none;font-size:12.5px}header a.on{color:#fff}
+header .stat{font-size:11px;color:#868b98}
+.deck{display:grid;grid-template-columns:repeat(12,1fr);gap:10px;padding:10px}
+.panel{background:#fff;border:1px solid #e0e3eb;border-radius:6px;overflow:hidden}
+.ph{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #e0e3eb;background:#f8f9fd}
+.ph b{font-size:12px;font-weight:600}.ph span{font-size:10.5px;color:#868b98}
+.pc{padding:10px 12px}
+.g{color:#089981}.r{color:#f23645}.mut{color:#868b98}
+table{width:100%;border-collapse:collapse}
+th{font-size:10px;color:#868b98;text-align:right;font-weight:500;padding:3px 0;text-transform:uppercase;letter-spacing:.05em}
+th:first-child,td:first-child{text-align:left}
+td{text-align:right;padding:5px 0;border-top:1px solid #f0f2f7;font-size:12.5px}
+.sym{font-weight:600}
+.news{font-size:11px;color:#2962ff}
+.hm{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+.cell{padding:9px 8px;color:#fff;font-size:11px;border-radius:2px}
+.cell b{display:block;font-size:11.5px}
+.tabs{display:flex;gap:2px}
+.tabs span{padding:2px 9px;font-size:10.5px;border-radius:3px;background:#eef2f9;color:#868b98;cursor:pointer}
+.tabs span.on{background:#2962ff;color:#fff}
+footer{color:#a7adbb;font-size:11px;text-align:center;padding:10px}
+.kpi b{display:block;font-size:16px;font-weight:600}
+.kpi{font-size:10.5px;color:#868b98;padding-right:22px}
+</style></head><body>
+<header><span class="logo">▲ MOMENTUM</span><a class="on" href="#">Today</a><a href="#">Portfolio</a><a href="#">Screener</a><a href="#">News</a><a href="#">Trades</a>
+<span style="margin-left:auto" class="stat">NIFTY 24,812 <span class="g">+0.4%</span> · USDINR 86.2 · SGDINR 66.8 · scores 1h · news 12m</span></header>
+
+<div class="deck">
+<div class="panel" style="grid-column:span 12"><div class="pc num" style="display:flex;align-items:center">
+<div class="kpi">NET WORTH<b>₹8.31 Cr</b></div><div class="kpi">FY GAIN<b class="g">+9.0%</b></div><div class="kpi">TRADES P/L<b class="r">−4,980</b></div><div class="kpi">GOAL 2029<b>55%</b></div>
+<div style="margin-left:auto" class="tabs"><span class="on">All</span><span>Nishi</span><span>Supriya</span><span class="on">IN+SG</span></div></div></div>
+
+<div class="panel" style="grid-column:span 5"><div class="ph"><b>Sector heatmap</b><span class="tabs"><span class="on">1D</span><span>1W</span><span>1M</span></span></div>
+<div class="pc hm num">
+<div class="cell" style="background:#089981"><b>REALTY</b>+7.8%</div>
+<div class="cell" style="background:#26a69a"><b>IT</b>+2.1%</div>
+<div class="cell" style="background:#4db6ac"><b>FMCG</b>+1.4%</div>
+<div class="cell" style="background:#4db6ac"><b>METAL</b>+1.2%</div>
+<div class="cell" style="background:#80cbc4"><b>BANK</b>+0.2%</div>
+<div class="cell" style="background:#ef9a9a"><b>PHARMA</b>−0.3%</div>
+<div class="cell" style="background:#ef5350"><b>MEDIA</b>−1.3%</div>
+<div class="cell" style="background:#f23645"><b>PSU BK</b>−2.7%</div>
+</div></div>
+
+<div class="panel" style="grid-column:span 4"><div class="ph"><b>Buy candidates</b><span>10 active</span></div>
+<div class="pc"><table class="num"><tr><th>Sym</th><th>Scr</th><th>ADX</th><th>R</th><th>Age</th></tr>
+<tr><td class="sym">INDUSINDBK</td><td>88</td><td>26</td><td>2.05</td><td class="mut">4d</td></tr>
+<tr><td class="sym">PNBHOUSING</td><td>87</td><td>24</td><td>1.98</td><td class="mut">4d</td></tr>
+<tr><td class="sym">AKUMS</td><td>87</td><td>43</td><td>1.62</td><td class="mut">4d</td></tr>
+<tr><td class="sym">CHOLAFIN</td><td>81</td><td>37</td><td>2.14</td><td class="mut">5d</td></tr></table></div></div>
+
+<div class="panel" style="grid-column:span 3"><div class="ph"><b>Fund signals</b><span>dip watch</span></div>
+<div class="pc"><table class="num">
+<tr><td style="font-weight:600">Motilal Midcap</td><td style="color:#ff9800">−7.2%</td></tr>
+<tr><td style="font-weight:600">UTI Nifty 50</td><td style="color:#ff9800">−7.5%</td></tr>
+<tr><td style="font-weight:600">Parag Flexi</td><td class="mut">−5.7%</td></tr></table>
+<div style="font-size:10.5px;color:#868b98;margin-top:8px">watch ≥5% off 1y high · tranche ≥10%</div></div></div>
+
+<div class="panel" style="grid-column:span 5"><div class="ph"><b>Top movers</b><span>news = why it moved</span></div>
+<div class="pc"><table class="num">
+<tr><td><div class="sym">KALYANKJIL <span class="g">+18.4%</span></div><div class="news">Q1 revenue +31% YoY; bonus issue — ET</div></td><td>₹443.00</td></tr>
+<tr><td><div class="sym">MASTERTR <span class="g">+17.8%</span></div><div class="news">Promoter block deal 2.1% — MC</div></td><td>₹94.80</td></tr>
+<tr><td><div class="sym">TRENT <span class="r">−12.4%</span></div><div class="news">Guidance cut, weak store metrics — Reuters</div></td><td>₹2,927.80</td></tr>
+<tr><td><div class="sym">DRREDDY <span class="r">−5.9%</span></div><div class="news">USFDA observations, Srikakulam — BSE</div></td><td>₹1,269.50</td></tr></table></div></div>
+
+<div class="panel" style="grid-column:span 7"><div class="ph"><b>Active trades — CENTURYPLY selected</b><span>entry — · stop ┄ · 30d</span></div>
+<div class="pc" style="display:grid;grid-template-columns:200px 1fr;gap:14px">
+<table class="num"><tr><th>Sym</th><th>P/L%</th></tr>
+<tr style="background:#f0f4ff"><td class="sym">▸ CENTURYPLY</td><td class="r">−7.9</td></tr>
+<tr><td class="sym">RADICO</td><td class="g">+4.9</td></tr>
+<tr><td class="sym">GLAND</td><td class="r">−0.6</td></tr></table>
+<div style="height:150px"><canvas id="trade"></canvas></div></div></div>
+
+<div class="panel" style="grid-column:span 8"><div class="ph"><b>Net worth trend</b><span>snapshots Nov 23 → Jul 26 (₹ Cr)</span></div>
+<div class="pc" style="height:150px"><canvas id="nw"></canvas></div></div>
+<div class="panel" style="grid-column:span 4"><div class="ph"><b>Remittances</b><span>SGD → INR</span></div>
+<div class="pc"><table class="num">
+<tr><td>23 Jun</td><td>S$1,507</td><td>₹1,00,761</td></tr>
+<tr><td>19 May</td><td>S$1,005</td><td>₹65,807</td></tr>
+<tr><td>23 Apr</td><td>S$1,005 @64.8</td><td>₹64,827</td></tr></table></div></div>
+</div>
+<footer>Design sample 3 of 5 — “Pro workspace” (TradingView-inspired). Static data from your excel.</footer>
+<script>
+const gopt={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:10,family:'JetBrains Mono'},color:'#868b98'}},y:{grid:{color:'#f0f2f7'},ticks:{font:{size:10,family:'JetBrains Mono'},color:'#868b98'}}}};
+new Chart(trade,{type:'line',data:{labels:['10 Jun','17 Jun','24 Jun','1 Jul','9 Jul'],datasets:[{data:[812,796,768,784,774],borderColor:'#2962ff',borderWidth:1.6,pointRadius:0,tension:.25},{data:[840,840,840,840,840],borderColor:'#b2b5be',borderWidth:1,pointRadius:0,borderDash:[4,3]},{data:[798,798,798,798,798],borderColor:'#f23645',borderWidth:1,pointRadius:0,borderDash:[4,3]}]},options:gopt});
+new Chart(nw,{type:'line',data:{labels:['Nov 23','Apr 24','Sep 24','Feb 25','Jul 25','Dec 25','Jul 26'],datasets:[{data:[5.83,6.4,7.1,7.7,8.0,8.25,8.31],borderColor:'#089981',backgroundColor:'rgba(8,153,129,.07)',fill:true,borderWidth:1.6,pointRadius:0,tension:.3}]},options:gopt});
+</script></body></html>

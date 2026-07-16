@@ -1,4 +1,4 @@
-# backend/app/core/config.py
+﻿# backend/app/core/config.py
 from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
@@ -39,7 +39,7 @@ class AppCfg(BaseModel):
     name: str = "Momentum API"
     env: str = Field(default="development")   # effective env after layering
     api_prefix: str = "/api/v1"
-    timezone: str = "Asia/Singapore"
+    timezone: str = "Asia/Kolkata"
     backfill_on_start: bool = True
 
 class StorageCfg(BaseModel):
@@ -67,9 +67,20 @@ class BackfillCfg(BaseModel):
 
 # ----------------- NEW sections (Phase 10) -----------------
 # Minimal, focused config blocks to avoid "magic strings" in code and keep YAML-first design.
+class TopMoversEligibilityCfg(BaseModel):
+    # OPTIONAL gate for Top Movers. Disabled by default: the section is an
+    # FYI market overview, so all movers show. Enable to hide illiquid/penny/
+    # circuit-style names. Tune in configs/default.yaml under screener.top_movers.
+    enabled: bool = False
+    min_price: float = 20.0                # exclude penny stocks below this last price (INR)
+    min_avg_traded_value_cr: float = 1.0   # min 20d avg traded value, in INR crore
+    max_abs_change_pct: float | None = 19.0  # moves at/above this look like circuits; None disables
+
+
 class ScreenerCfg(BaseModel):
     # Universe preset used when none is supplied at runtime (e.g., GET /screener, POST /scan).
     default_universe: str = "ALL"  # e.g., NIFTY50|NIFTY100|NIFTY500|MIDCAP|SMALLCAP|ALL
+    top_movers: TopMoversEligibilityCfg = TopMoversEligibilityCfg()
 
 class TradingWindowCfg(BaseModel):
     tz: str = "Asia/Kolkata"

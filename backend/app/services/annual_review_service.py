@@ -6,9 +6,10 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.repos.models import PortfolioAnnualReviewOverride, PortfolioAsset, PortfolioFxRate, PortfolioSnapshot, PortfolioTransaction
+from app.repos.models import PortfolioAnnualReviewOverride, PortfolioAsset, PortfolioFxRate, PortfolioSnapshot, PortfolioTransaction, WealthReportingPeriod
 from app.schemas.wealth_portfolio import AnnualReviewField, AnnualReviewOverrideUpdate, AnnualReviewReconciliation, AnnualReviewResponse
 from app.services.portfolio_service import xirr
+from app.services.wealth_ledger_service import get_reporting_period_totals, property_capital_for_year
 
 PROPERTY_TYPES = {"property", "real_estate"}
 OVERRIDE_FIELDS = (
@@ -76,17 +77,39 @@ def _field(calculated: float | None, source: str, explanation: str, override: fl
 
 
 def get_annual_review(session: Session, year: int) -> AnnualReviewResponse:
+    ledger_opening = get_reporting_period_totals(session, year - 1)
+    ledger_closing = get_reporting_period_totals(session, year)
     opening = _snapshot_on_or_before(session, date(year - 1, 12, 31))
     closing = _snapshot_on_or_before(session, date(year, 12, 31), within_year=year)
-    open_financial, open_property = _totals(session, opening)
-    close_financial, close_property = _totals(session, closing)
-    contributions, withdrawals, transactions = _flows(session, closing, year)
+    use_ledger = ledger_closing is not None
+    if use_ledger:
+        open_financial = ledger_opening.financial_market_value if ledger_opening else None
+        open_property = ledger_opening.property_market_value if ledger_opening else None
+        close_financial = ledger_closing.financial_market_value
+        close_property = ledger_closing.property_market_value
+        if ledger_opening and all(value is not None for value in (
+            ledger_opening.financial_principal, ledger_opening.property_principal,
+            ledger_closing.financial_principal, ledger_closing.property_principal,
+        )):
+            financial_net = ledger_closing.financial_principal - ledger_opening.financial_principal
+            property_capital = property_capital_for_year(session, year)
+            contributions = max(financial_net, 0) + property_capital
+            withdrawals = max(-financial_net, 0)
+            investment_gain = None if open_financial is None or close_financial is None else close_financial - open_financial - contributions + withdrawals
+            property_gain = None if open_property is None or close_property is None else close_property - open_property
+        else:
+            contributions = withdrawals = investment_gain = property_gain = None
+        transactions = []
+    else:
+        open_financial, open_property = _totals(session, opening)
+        close_financial, close_property = _totals(session, closing)
+        contributions, withdrawals, transactions = _flows(session, closing, year)
+        property_gain = None if open_property is None or close_property is None else close_property - open_property
+        investment_gain = None if open_financial is None or close_financial is None or contributions is None or withdrawals is None else close_financial - open_financial - contributions + withdrawals
     opening_total = None if open_financial is None or open_property is None else open_financial + open_property
     closing_total = None if close_financial is None or close_property is None else close_financial + close_property
-    property_gain = None if open_property is None or close_property is None else close_property - open_property
-    investment_gain = None if open_financial is None or close_financial is None or contributions is None or withdrawals is None else close_financial - open_financial - contributions + withdrawals
     investment_xirr = None
-    if open_financial is not None and close_financial is not None:
+    if not use_ledger and open_financial is not None and close_financial is not None:
         cashflows = [(date(year, 1, 1), -open_financial)]
         for occurred_on, kind, amount_inr in transactions:
             if kind in {"buy", "contribution", "invest"}:
@@ -96,11 +119,12 @@ def get_annual_review(session: Session, year: int) -> AnnualReviewResponse:
         cashflows.append((date(year, 12, 31), close_financial))
         investment_xirr = xirr(cashflows)
     override = session.scalar(select(PortfolioAnnualReviewOverride).where(PortfolioAnnualReviewOverride.year == year))
+    source_label = "workbook source ledger" if use_ledger else "portfolio snapshot"
     values = {
-        "opening_net_worth_inr": (opening_total, "imported", "Opening portfolio snapshot"),
-        "contributions_inr": (contributions, "calculated", "Dated investment transactions"),
-        "investment_gain_inr": (investment_gain, "calculated", "Financial value movement after net flows"),
-        "property_gain_inr": (property_gain, "calculated", "Property snapshot value movement"),
+        "opening_net_worth_inr": (opening_total, "imported", f"Opening {source_label}"),
+        "contributions_inr": (contributions, "calculated", "Change in source principal" if use_ledger else "Dated investment transactions"),
+        "investment_gain_inr": (investment_gain, "calculated", "Financial market movement after principal change"),
+        "property_gain_inr": (property_gain, "calculated", "Property market movement after principal change"),
         "rent_received_inr": (None, "missing", "No actual rental receipts are stored"),
         "withdrawals_inr": (withdrawals, "calculated", "Dated sell and withdrawal transactions"),
         "closing_net_worth_inr": (closing_total, "imported", "Closing portfolio snapshot"),
@@ -115,11 +139,20 @@ def get_annual_review(session: Session, year: int) -> AnnualReviewResponse:
         expected = opening_value + contribution_value + investment_value + property_value + rent_value - withdrawal_value
         difference = closing_value - expected
         reconciliation = AnnualReviewReconciliation(status="reconciled" if abs(difference) <= 1000 else "needs_review", expected_closing_inr=expected, difference_inr=difference)
-    return AnnualReviewResponse(year=year, opening_snapshot_date=opening.as_of if opening else None, closing_snapshot_date=closing.as_of if closing else None, reconciliation=reconciliation, notes=override.notes if override else None, **fields)
+    opening_date = max(ledger_opening.source_dates.values()) if ledger_opening and ledger_opening.source_dates else (opening.as_of if opening else None)
+    closing_date = max(ledger_closing.source_dates.values()) if ledger_closing and ledger_closing.source_dates else (closing.as_of if closing else None)
+    return AnnualReviewResponse(
+        year=year, opening_snapshot_date=opening_date, closing_snapshot_date=closing_date,
+        reporting_label=ledger_closing.label if ledger_closing else None,
+        selection_method="workbook_formula_lineage" if use_ledger else "legacy_snapshot",
+        source_dates=ledger_closing.source_dates if ledger_closing else {},
+        reconciliation=reconciliation, notes=override.notes if override else None, **fields,
+    )
 
 
 def list_annual_reviews(session: Session) -> list[AnnualReviewResponse]:
     years = {item.as_of.year for item in session.scalars(select(PortfolioSnapshot))}
+    years.update(session.scalars(select(WealthReportingPeriod.year)))
     years.update(session.scalars(select(PortfolioAnnualReviewOverride.year)))
     return [get_annual_review(session, year) for year in sorted(years, reverse=True)]
 

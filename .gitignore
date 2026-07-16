@@ -58,3 +58,8 @@ frontend/.vercel/
 # ----------------------
 *.log
 logs/
+
+# ---- momentum routine ----
+.env
+routine/routine_data/
+routine/reports/

@@ -7,7 +7,13 @@ from openpyxl import load_workbook
 from sqlalchemy import func, select
 
 from app.core.db import dispose_engine, get_sessionmaker, init_sqlite
-from app.repos.models import FamilyWealthPlan, PortfolioAsset, PortfolioImport, PortfolioSnapshot
+from app.repos.models import (
+    FamilyWealthPlan,
+    PortfolioAsset,
+    PortfolioImport,
+    PortfolioSnapshot,
+    PortfolioTransaction,
+)
 from app.services import wealth_import_service as module
 from app.services.wealth_import_service import ImportBlocked, WealthImportService
 from tests.fixtures.wealth_workbook_factory import make_workbook_bytes
@@ -88,3 +94,35 @@ def test_reimport_preserves_later_app_plan_rent_override(session):
     result = service.commit(session, service.preview(refreshed.getvalue(), "investment-refreshed.xlsx").preview_token)
     assert result.created is True
     assert session.get(FamilyWealthPlan, "plan").monthly_rent_inr == 55_000
+
+
+def test_duplicate_fund_rows_are_consolidated_before_insert(session):
+    service = WealthImportService()
+    preview = service.preview(
+        make_workbook_bytes(duplicate_fund_row=True), "investment.xlsx"
+    )
+
+    result = service.commit(session, preview.preview_token)
+
+    assets = session.scalars(
+        select(PortfolioAsset).where(PortfolioAsset.snapshot_id == result.snapshot_id)
+    ).all()
+    assert len(assets) == 1
+    assert assets[0].invested_amount == 410000
+    assert assets[0].market_value == 532000
+
+
+def test_identical_transactions_on_different_rows_remain_distinct(session):
+    service = WealthImportService()
+    preview = service.preview(
+        make_workbook_bytes(duplicate_transaction_row=True), "investment.xlsx"
+    )
+
+    result = service.commit(session, preview.preview_token)
+
+    transaction_count = session.scalar(
+        select(func.count())
+        .select_from(PortfolioTransaction)
+        .where(PortfolioTransaction.snapshot_id == result.snapshot_id)
+    )
+    assert transaction_count == 2

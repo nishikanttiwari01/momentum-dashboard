@@ -1,0 +1,36 @@
+<h2>How should scenario assumptions be edited?</h2>
+<p class="subtitle">Both options separate financial-asset returns from property growth and recalculate the projected net worth.</p>
+
+<div class="cards">
+  <div class="card" data-choice="matrix" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;background:#f7fafc">
+      <div style="font-weight:800;margin-bottom:10px">Scenario comparison</div>
+      <div style="display:grid;grid-template-columns:1.3fr repeat(3,1fr);gap:6px;font-size:12px">
+        <div></div><b>Conservative</b><b style="color:#2563eb">Expected</b><b>Optimistic</b>
+        <div>Financial return</div><div class="mock-input">7.0%</div><div class="mock-input">10.0%</div><div class="mock-input">13.0%</div>
+        <div>Property growth</div><div class="mock-input">4.0%</div><div class="mock-input">6.0%</div><div class="mock-input">8.0%</div>
+        <div>Monthly investment</div><div class="mock-input">₹6.0L</div><div class="mock-input">₹6.0L</div><div class="mock-input">₹6.0L</div>
+        <div style="font-weight:700">Ending net worth</div><b>₹18.4 Cr</b><b>₹29.8 Cr</b><b>₹46.2 Cr</b>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="mock-button">Save &amp; recalculate</button></div>
+    </div>
+    <div class="card-body"><h3>A. Compact comparison matrix — Recommended</h3><p>All assumptions align row-by-row, so differences are immediately visible. Best use of width and easiest to audit.</p></div>
+  </div>
+
+  <div class="card" data-choice="cards" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;background:#f7fafc">
+      <div style="font-weight:800;margin-bottom:10px">Scenario comparison</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:11px">
+        <div style="background:white;border:1px solid #ddd;border-top:4px solid #d98a00;padding:10px;border-radius:8px"><b>Conservative</b><div class="mock-input">Financial 7%</div><div class="mock-input">Property 4%</div><div class="mock-input">₹6L/month</div><strong>₹18.4 Cr</strong></div>
+        <div style="background:white;border:1px solid #ddd;border-top:4px solid #2563eb;padding:10px;border-radius:8px"><b>Expected</b><div class="mock-input">Financial 10%</div><div class="mock-input">Property 6%</div><div class="mock-input">₹6L/month</div><strong>₹29.8 Cr</strong></div>
+        <div style="background:white;border:1px solid #ddd;border-top:4px solid #7357b6;padding:10px;border-radius:8px"><b>Optimistic</b><div class="mock-input">Financial 13%</div><div class="mock-input">Property 8%</div><div class="mock-input">₹6L/month</div><strong>₹46.2 Cr</strong></div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B. Editable scenario cards</h3><p>More visual and approachable, but repeated labels consume space and make cross-scenario comparison slower.</p></div>
+  </div>
+</div>
+
+<div class="pros-cons" style="margin-top:18px">
+  <div class="pros"><h4>Corrected data behavior in both</h4><ul><li>Starting net worth includes ₹3.84 Cr fixed assets</li><li>Property line starts immediately, not in 2036</li><li>Rent received continues after reinvestment stops</li><li>All currency text uses proper ₹ and · characters</li></ul></div>
+  <div class="cons"><h4>Scope kept simple</h4><ul><li>One property-growth rate per scenario</li><li>Three scenarios remain</li><li>Values update only after Save &amp; recalculate</li></ul></div>
+</div>

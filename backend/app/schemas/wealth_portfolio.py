@@ -116,6 +116,9 @@ class AnnualReviewResponse(BaseModel):
     year: int = Field(ge=2000)
     opening_snapshot_date: date | None = None
     closing_snapshot_date: date | None = None
+    reporting_label: str | None = None
+    selection_method: Literal["workbook_formula_lineage", "legacy_snapshot"] = "legacy_snapshot"
+    source_dates: dict[str, str] = Field(default_factory=dict)
     opening_net_worth_inr: AnnualReviewField
     contributions_inr: AnnualReviewField
     investment_gain_inr: AnnualReviewField

@@ -215,8 +215,25 @@ class CandidatePoolService:
                 existing_map[symbol] = entry
                 added_symbols.append(symbol)
 
-        # If no fresh symbols/rows were available, keep existing ACTIVE entries unchanged
+        # If no fresh symbols/rows were available, keep existing ACTIVE entries
+        # but still expire anything past the age limit. Age is deterministic
+        # (added_date vs trading_day) and must never depend on the data feed
+        # being healthy, otherwise a broken feed keeps stale candidates alive
+        # forever.
         if not rows_by_symbol:
+            for entry in existing_map.values():
+                if entry.db_status == "REMOVED":
+                    continue
+                if self._is_past_age_limit(entry, trading_day):
+                    entry.db_status = "REMOVED"
+                    entry.exit_reason = "age"
+                    self.repo.mark_removed(
+                        entry.symbol,
+                        reason="age",
+                        removed_at=now_utc,
+                        run_id=run_id,
+                    )
+                    removed_symbols.append((entry.symbol, "age"))
             active_entries = [e for e in existing_map.values() if e.db_status != "REMOVED"]
             ranked = self._rank_entries(active_entries)
             ranked.sort(
@@ -527,6 +544,41 @@ class CandidatePoolService:
 
         status_notes = reasons if reasons else warnings
         return checks, status_notes
+
+    def _is_past_age_limit(self, entry: PoolEntry, trading_day: date) -> bool:
+        cfg = self.cfg.exit_rules
+        if not cfg.max_age_days or cfg.max_age_days <= 0:
+            return False
+        if not entry.added_date:
+            return False
+        try:
+            return (trading_day - entry.added_date).days > cfg.max_age_days
+        except Exception:
+            return False
+
+    def expire_stale_entries(
+        self,
+        *,
+        now_utc: datetime,
+        trading_day: date,
+    ) -> List[str]:
+        """Evict ACTIVE entries past the age limit, regardless of feed health.
+
+        Called from the read API so the dashboard never shows candidates the
+        exit rules already condemned. Returns evicted symbols.
+        """
+        removed: List[str] = []
+        for row in self.repo.list_entries(active_only=True):
+            entry = self._entry_from_repo(row, now_utc)
+            if self._is_past_age_limit(entry, trading_day):
+                self.repo.mark_removed(
+                    entry.symbol,
+                    reason="age",
+                    removed_at=now_utc,
+                    run_id=None,
+                )
+                removed.append(entry.symbol)
+        return removed
 
     def _exit_reason_from_checks(self, checks: List[PoolExitCheck]) -> str | None:
         for c in checks:

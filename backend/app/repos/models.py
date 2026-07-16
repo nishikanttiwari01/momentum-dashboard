@@ -305,6 +305,73 @@ class PortfolioAnnualReviewOverride(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), nullable=False)
 
 
+class WealthAsset(Base):
+    __tablename__ = "wealth_assets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    source_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    owner: Mapped[Optional[str]] = mapped_column(String(120))
+    name: Mapped[str] = mapped_column(String(255))
+    category: Mapped[Optional[str]] = mapped_column(String(120))
+    asset_class: Mapped[str] = mapped_column(String(32), index=True)
+    market: Mapped[str] = mapped_column(String(16))
+    currency: Mapped[str] = mapped_column(String(3))
+    source_ref: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class WealthAssetObservation(Base):
+    __tablename__ = "wealth_asset_observations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    import_id: Mapped[str] = mapped_column(ForeignKey("portfolio_imports.id"), index=True)
+    asset_id: Mapped[str] = mapped_column(ForeignKey("wealth_assets.id"), index=True)
+    source_key: Mapped[str] = mapped_column(String(64), unique=True)
+    observed_on: Mapped[date] = mapped_column(Date, index=True)
+    principal: Mapped[Optional[float]] = mapped_column(Float)
+    market_value: Mapped[Optional[float]] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3))
+    source_ref: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class WealthCashFlow(Base):
+    __tablename__ = "wealth_cash_flows"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    import_id: Mapped[str] = mapped_column(ForeignKey("portfolio_imports.id"), index=True)
+    asset_id: Mapped[Optional[str]] = mapped_column(ForeignKey("wealth_assets.id"), index=True)
+    source_key: Mapped[str] = mapped_column(String(64), unique=True)
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    flow_type: Mapped[str] = mapped_column(String(32), index=True)
+    amount: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3))
+    source_ref: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class WealthReportingPeriod(Base):
+    __tablename__ = "wealth_reporting_periods"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    import_id: Mapped[str] = mapped_column(ForeignKey("portfolio_imports.id"), index=True)
+    year: Mapped[int] = mapped_column(Integer, index=True)
+    label: Mapped[str] = mapped_column(String(32))
+    controls: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (UniqueConstraint("import_id", "year"),)
+
+
+class WealthReportingPeriodSource(Base):
+    __tablename__ = "wealth_reporting_period_sources"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    period_id: Mapped[str] = mapped_column(ForeignKey("wealth_reporting_periods.id"), index=True)
+    metric: Mapped[str] = mapped_column(String(40), index=True)
+    source_sheet: Mapped[str] = mapped_column(String(64))
+    source_cell: Mapped[str] = mapped_column(String(16))
+    observed_on: Mapped[Optional[date]] = mapped_column(Date, index=True)
+
+    __table_args__ = (UniqueConstraint("period_id", "metric"),)
+
+
 class WealthGoal(Base):
     __tablename__ = "wealth_goals"
 

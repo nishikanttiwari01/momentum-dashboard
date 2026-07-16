@@ -1,20 +1,25 @@
-// frontend/src/theme.ts  (full replacement)
+﻿// frontend/src/theme.ts — approved design: white minimal base (Kite-inspired),
+// Poppins headings + Inter body, bright data accents. No purple, no gradients.
 import { createTheme, lighten, darken, alpha } from '@mui/material/styles';
 import '@mui/x-data-grid/themeAugmentation';
 
-// === Palette (from master template default) ===
-const primary  = '#536DFE';
-const secondary= '#FF5C93';
-const warning  = '#FFC260';
-const success  = '#3CD4A0';
-const info     = '#9013FE';
+// === Approved palette ===
+const primary  = '#2E90FA'; // blue — links, active tab, selection
+const secondary= '#FF5722'; // orange — brand mark, top-pick accents
+const warning  = '#F79009'; // amber — watch signals
+const success  = '#00B386'; // green — gains, tranche-ready
+const error    = '#F04438'; // red — losses, stops
+const info     = '#06AED4'; // cyan
 
-const bgDefault = '#F6F7FF';
-const bgLight   = '#F3F5FF';
+const bgDefault = '#FFFFFF';
+const bgLight   = '#FAFAFC';
 const paper     = '#FFFFFF';
-const divider   = '#E8EAFC';
-const textPri   = '#1F2937';
-const textSec   = '#6B7280';
+const divider   = '#ECECEC';
+const textPri   = '#212121';
+const textSec   = '#6B6B6B';
+const textMut   = '#9B9B9B';
+
+const headingFamily = ['Poppins', 'Inter', 'sans-serif'].join(',');
 
 const theme = createTheme({
   palette: {
@@ -23,27 +28,29 @@ const theme = createTheme({
     secondary:{ main: secondary,light: lighten(secondary,0.075), dark: darken(secondary,0.15), contrastText:'#fff' },
     warning:  { main: warning,  light: lighten(warning, 0.075),  dark: darken(warning, 0.15) },
     success:  { main: success,  light: lighten(success, 0.075),  dark: darken(success, 0.15) },
+    error:    { main: error,    light: lighten(error,   0.075),  dark: darken(error,   0.15) },
     info:     { main: info,     light: lighten(info,    0.075),  dark: darken(info,    0.15) },
     background: { default: bgDefault, paper },
     divider,
     text: { primary: textPri, secondary: textSec },
   },
-  shape: { borderRadius: 14 },
+  shape: { borderRadius: 6 },
   typography: {
-    fontFamily: ['Inter','Segoe UI','Roboto','Helvetica Neue','Arial','Noto Sans','sans-serif'].join(','),
-    h1:{ fontSize:'3rem',   fontWeight:800 },
-    h2:{ fontSize:'2rem',   fontWeight:800 },
-    h3:{ fontSize:'1.64rem',fontWeight:800 },
-    h4:{ fontSize:'1.5rem', fontWeight:800 },
-    h5:{ fontSize:'1.285rem',fontWeight:800 },
-    h6:{ fontSize:'1.142rem',fontWeight:800 },
-    button:{ textTransform:'none', fontWeight:700 },
+    fontFamily: ['Inter','Segoe UI','Roboto','Helvetica Neue','Arial','sans-serif'].join(','),
+    h1:{ fontSize:'2.4rem',  fontWeight:600, fontFamily: headingFamily },
+    h2:{ fontSize:'1.8rem',  fontWeight:600, fontFamily: headingFamily },
+    h3:{ fontSize:'1.5rem',  fontWeight:600, fontFamily: headingFamily },
+    h4:{ fontSize:'1.3rem',  fontWeight:600, fontFamily: headingFamily },
+    h5:{ fontSize:'1.15rem', fontWeight:600, fontFamily: headingFamily },
+    h6:{ fontSize:'1rem',    fontWeight:600, fontFamily: headingFamily },
+    subtitle1:{ fontWeight:600, fontFamily: headingFamily },
+    subtitle2:{ fontWeight:600 },
+    button:{ textTransform:'none', fontWeight:600 },
   },
-  // softer admin-like shadows
   shadows: [
     'none',
-    '0px 3px 11px 0px #E8EAFC, 0 3px 3px -2px #B2B2B21A, 0 1px 8px 0 #9A9A9A1A',
-    ...Array(22).fill('0px 3px 11px 0px #E8EAFC, 0 3px 3px -2px #B2B2B21A, 0 1px 8px 0 #9A9A9A1A'),
+    'none',
+    ...Array(23).fill('0 1px 4px rgba(0,0,0,0.05)'),
   ] as any,
   components: {
     MuiCssBaseline: {
@@ -52,47 +59,40 @@ const theme = createTheme({
         a: { color: primary, textDecoration: 'none' },
         '*::-webkit-scrollbar': { width: '8px', height: '8px' },
         '*::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,.15)', borderRadius: 8 },
-        '::selection': { background: 'rgba(83,109,254,.18)' },
+        '::selection': { background: 'rgba(46,144,250,.15)' },
       },
     },
     MuiAppBar: {
-  // use the theme's primary color instead of default/white
-  defaultProps: { color: 'primary', elevation: 0 },
-  styleOverrides: {
-    root: {
-      // Solid color OR keep the gradient — pick one:
-      // backgroundColor: '#536DFE',
-      background: 'linear-gradient(90deg, #d953feff 0%, #d13dfeff 60%, #7C4DFF 100%)',
-      color: '#fff',
-      borderBottom: `1px solid ${alpha('#000', 0.06)}`,
-      // make everything inside the appbar white for contrast
-      '& .MuiIconButton-root, & .MuiSvgIcon-root, & .MuiButton-root, & .MuiTypography-root': {
-        color: '#fff',
+      defaultProps: { color: 'inherit', elevation: 0 },
+      styleOverrides: {
+        root: {
+          background: '#fff',
+          color: textPri,
+          borderBottom: `1px solid ${divider}`,
+          '& .MuiIconButton-root, & .MuiSvgIcon-root': { color: textSec },
+          '& .MuiTypography-root': { color: textPri },
+          '& .MuiBadge-badge': { backgroundColor: secondary, color: '#fff' },
+        },
       },
-      '& .MuiBadge-badge': { backgroundColor: '#fff', color: '#ea60a0ff' },
-      '& .MuiInputBase-input': { color: '#fff' },
-      '& .MuiOutlinedInput-notchedOutline': { borderColor: alpha('#fff', 0.2) },
     },
-  },
-},
     MuiDrawer: {
       styleOverrides: { paper: { backgroundColor: paper, borderRight: `1px solid ${divider}` } },
     },
     MuiPaper: {
-      defaultProps: { elevation: 1 },
-      styleOverrides: { root: { border: `1px solid ${divider}`, borderRadius: 16 } },
+      defaultProps: { elevation: 0 },
+      styleOverrides: { root: { border: `1px solid ${divider}`, borderRadius: 8 } },
     },
     MuiCard: {
-      defaultProps: { elevation: 1 },
-      styleOverrides: { root: { border: `1px solid ${divider}`, borderRadius: 16 } },
+      defaultProps: { elevation: 0 },
+      styleOverrides: { root: { border: `1px solid ${divider}`, borderRadius: 8 } },
     },
     MuiButton: {
       defaultProps: { disableElevation: true },
-      styleOverrides: { root: { borderRadius: 12, fontWeight: 700 } },
+      styleOverrides: { root: { borderRadius: 4, fontWeight: 600 } },
     },
-    MuiChip: { styleOverrides: { root: { borderRadius: 10, fontWeight: 700 } } },
-    MuiMenu: { styleOverrides: { paper: { boxShadow: '0px 3px 11px 0px #E8EAFC, 0 3px 3px -2px #B2B2B21A, 0 1px 8px 0 #9A9A9A1A', borderRadius: 12 } } },
-    MuiSelect: { styleOverrides: { icon: { color: '#B9B9B9' } } },
+    MuiChip: { styleOverrides: { root: { borderRadius: 4, fontWeight: 600 } } },
+    MuiMenu: { styleOverrides: { paper: { boxShadow: '0 4px 16px rgba(0,0,0,0.08)', borderRadius: 6 } } },
+    MuiSelect: { styleOverrides: { icon: { color: textMut } } },
     MuiListItem: {
       styleOverrides: {
         root: {
@@ -101,28 +101,45 @@ const theme = createTheme({
         },
       },
     },
-    MuiTouchRipple: { styleOverrides: { child: { backgroundColor: '#fff' } } },
-    MuiInputBase: { styleOverrides: { root: { borderRadius: 10 } } },
-    MuiOutlinedInput: { styleOverrides: { root: { borderRadius: 10 } } },
+    MuiInputBase: { styleOverrides: { root: { borderRadius: 4 } } },
+    MuiOutlinedInput: { styleOverrides: { root: { borderRadius: 4 } } },
     MuiTableCell: {
       styleOverrides: {
-        head: { backgroundColor: bgLight, color: textPri, fontWeight: 700 },
-        root: { borderBottom: `1px solid ${divider}` },
+        head: {
+          backgroundColor: '#fff',
+          color: textMut,
+          fontWeight: 500,
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+          borderBottom: `1px solid ${divider}`,
+        },
+        root: { borderBottom: `1px solid #F5F5F5`, fontVariantNumeric: 'tabular-nums' },
       },
     },
     MuiDivider: { styleOverrides: { root: { borderColor: divider } } },
-    MuiTooltip: { styleOverrides: { tooltip: { fontSize: 12, border: `1px solid ${divider}` } } },
-    // DataGrid – match polished admin look
+    MuiTooltip: {
+      styleOverrides: {
+        tooltip: { fontSize: 12, backgroundColor: '#fff', color: textPri, border: `1px solid ${divider}`, boxShadow: '0 4px 16px rgba(0,0,0,0.08)' },
+      },
+    },
+    MuiToggleButton: {
+      styleOverrides: {
+        root: {
+          borderRadius: 4,
+          padding: '2px 10px',
+          fontSize: 12,
+          '&.Mui-selected': { backgroundColor: alpha(primary, 0.08), color: primary, fontWeight: 600 },
+        },
+      },
+    },
     MuiDataGrid: {
       defaultProps: { density: 'compact' },
       styleOverrides: {
-        root: { border: `1px solid ${divider}`, borderRadius: 16, backgroundColor: paper },
-        columnHeaders: { backgroundColor: bgLight, borderBottom: `1px solid ${divider}` },
-        cell: { borderBottom: `1px solid ${divider}` },
-        row: {
-          '&:hover': { backgroundColor: '#F6F8FF' },
-          '&:nth-of-type(odd)': { backgroundColor: '#FBFCFF' },
-        },
+        root: { border: `1px solid ${divider}`, borderRadius: 8, backgroundColor: paper },
+        columnHeaders: { backgroundColor: '#fff', borderBottom: `1px solid ${divider}` },
+        cell: { borderBottom: `1px solid #F5F5F5` },
+        row: { '&:hover': { backgroundColor: '#F7FBFF' } },
         footerContainer: { borderTop: `1px solid ${divider}` },
       },
     },
