@@ -12,7 +12,9 @@ describe('PortfolioSummaryHeaderView', () => {
       data_health: 'fresh',
     }} />);
     expect(html).toContain('Net worth market value');
-    expect(html).toContain('â‚¹8.31 Cr');
+    expect(html).toContain('₹8.31 Cr');
+    expect(html).toContain('Combined household value · property included');
+    expect(html).not.toMatch(/â‚¹|Â·|â€”|Ã/);
     expect(html).toContain('USD/INR 86.25');
   });
 });

@@ -33,9 +33,9 @@ describe('familyRunwayRows', () => {
     ];
     const before = structuredClone(projections);
     expect(familyRunwayRows(projections)).toEqual([
-      { on: '2026-12-31', year: 2026, conservative_total_inr: 80, optimistic_total_inr: 100, events: [] },
+      { on: '2026-12-31', year: 2026, conservative_total_inr: 80, conservative_financial_assets_inr: 64, conservative_property_value_inr: 16, optimistic_total_inr: 100, optimistic_financial_assets_inr: 80, optimistic_property_value_inr: 20, events: [] },
       { on: '2027-12-31', year: 2027, expected_total_inr: 180, expected_financial_assets_inr: 144, expected_property_value_inr: 36, events: [] },
-      { on: '2028-12-31', year: 2028, conservative_total_inr: 200, optimistic_total_inr: 300, events: [] },
+      { on: '2028-12-31', year: 2028, conservative_total_inr: 200, conservative_financial_assets_inr: 160, conservative_property_value_inr: 40, optimistic_total_inr: 300, optimistic_financial_assets_inr: 240, optimistic_property_value_inr: 60, events: [] },
     ]);
     expect(projections).toEqual(before);
   });
