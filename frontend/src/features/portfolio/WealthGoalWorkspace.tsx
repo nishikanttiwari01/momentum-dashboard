@@ -11,6 +11,7 @@ import { formatCompactCrore, formatIndianCurrency, goalErrorFieldKey, progressFi
 import { familyPlanProblemField, formatCrore } from './familyWealthMath';
 import WealthGoalChart from './WealthGoalChart';
 import { FamilyPlanAssumptions, familyPlanDraftFromResponse, familyPlanUpdateFromDraft, type FamilyPlanDraft } from './FamilyPlanAssumptions';
+import { FamilyScenarioMatrix } from './FamilyScenarioMatrix';
 import { FamilyWealthRunwayChart } from './FamilyWealthRunwayChart';
 import { FamilyGoalCards } from './FamilyGoalCards';
 import { PassiveIncomePanel } from './PassiveIncomePanel';
@@ -185,7 +186,6 @@ export function confirmFamilyPlanRestore(confirm: (message: string) => boolean, 
 export function retryFamilyPlanSave(error: { payload: FamilyPlanUpdate } | null, submit: (payload: FamilyPlanUpdate) => void): void {
   if (error) submit(error.payload);
 }
-const scenarioTone = { conservative: '#D98A00', expected: '#2563EB', optimistic: '#7357B6' } as const;
 
 export const FamilyPlanWorkspaceView: React.FC<{
   data: FamilyPlanResponse; draft: FamilyPlanDraft; onDraftChange: (draft: FamilyPlanDraft) => void;
@@ -204,7 +204,7 @@ export const FamilyPlanWorkspaceView: React.FC<{
     {data.data_health === 'empty' && <EmptyWealthGoalAlert onOpenDataImport={onOpenDataImport} disabled={isSaving} />}
     <Paper variant="outlined" sx={{ ...cardSx, p: { xs: 2, md: 2.75 }, overflow: 'hidden', background: 'linear-gradient(120deg,#F7FAFF 0%,#FFFFFF 70%)' }}>
       <Stack direction={{ xs: 'column', sm: 'row' }} justifyContent="space-between" gap={2}>
-        <Box><Stack direction="row" alignItems="center" spacing={1}><FlagRoundedIcon color="primary" /><Typography variant="overline" fontWeight={900}>Primary family finish line</Typography></Stack><Typography variant="h4" fontWeight={900}>{primary.goal.name}</Typography><Typography color="text.secondary">Market-value net worth {formatCompactCrore(primary.current_value_inr)} · target {formatCompactCrore(primary.goal.target_amount_inr)} by {primary.goal.deadline.slice(0, 4)}</Typography></Box>
+        <Box><Stack direction="row" alignItems="center" spacing={1}><FlagRoundedIcon color="primary" /><Typography variant="overline" fontWeight={900}>Primary family finish line</Typography></Stack><Typography variant="h4" fontWeight={900}>{primary.goal.name}</Typography><Typography color="text.secondary">Market-value net worth {formatCompactCrore(primary.current_value_inr)} · property included · target {formatCompactCrore(primary.goal.target_amount_inr)} by {primary.goal.deadline.slice(0, 4)}</Typography></Box>
         <Button variant="outlined" onClick={() => setDrawerOpen(true)}>Edit assumptions</Button>
       </Stack>
       <Box sx={{ mt: 2, p: .6, bgcolor: '#E8EEF5', borderRadius: 8 }} aria-label={`Goal progress ${achieved == null ? 'unavailable' : `${formatGoalPercentage(achieved)}%`}`}><LinearProgress variant="determinate" value={progressFill(achieved ?? 0)} sx={{ height: 16, borderRadius: 8, '& .MuiLinearProgress-bar': { borderRadius: 8, bgcolor: '#2563EB' } }} /></Box>
@@ -214,7 +214,7 @@ export const FamilyPlanWorkspaceView: React.FC<{
     <Paper component="section" variant="outlined" sx={{ ...cardSx, p: { xs: 1.5, md: 2.5 }, minWidth: 0 }}><FamilyWealthRunwayChart projections={data.scenario_projections} /></Paper>
     <Box component="section"><Typography variant="h5" fontWeight={900} mb={1.25}>Linked goals</Typography><FamilyGoalCards goals={expected?.goal_health ?? []} linkedGoals={data.goals} /></Box>
     {passive && <PassiveIncomePanel analysis={passive} />}
-    <Box component="section"><Typography variant="h5" fontWeight={900} mb={1.25}>Scenario comparison</Typography><Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(3,minmax(0,1fr))' }, gap: 1.5 }}>{data.scenario_projections.map((scenario) => <Paper key={scenario.settings.scenario_key} variant="outlined" sx={{ ...cardSx, p: 2, minWidth: 0, borderTop: `4px solid ${scenarioTone[scenario.settings.scenario_key]}` }}><Typography fontWeight={900} textTransform="capitalize">{scenario.settings.scenario_key}</Typography><Typography variant="h5" fontWeight={900}>{formatCrore(scenario.ending_total_net_worth_inr)}</Typography><Typography color="text.secondary">Projected ending net worth</Typography><Typography mt={1}>Annual return <b>{scenario.settings.annual_return_pct}%</b></Typography>{scenario.first_underfunded_goal_key && <Typography color="error.main">First funding gap: {scenario.first_underfunded_goal_key.replaceAll('_', ' ')}</Typography>}</Paper>)}</Box></Box>
+    <FamilyScenarioMatrix data={data} draft={draft} onChange={onDraftChange} onSave={onSave} toUpdate={familyPlanUpdateFromDraft} dirty={dirty} disabled={isSaving} fieldErrors={fieldErrors}/>
     {saved && <Alert severity="success">Family plan saved and recalculated.</Alert>}
     {saveError && <Alert severity="error" action={onRetry && <Button color="inherit" disabled={isSaving} onClick={onRetry}>Retry</Button>}>{saveError}</Alert>}
     <Drawer anchor="right" open={drawerOpen} onClose={() => !isSaving && setDrawerOpen(false)} PaperProps={{ sx: { maxWidth: '100%' } }}><FamilyPlanAssumptions value={draft} onChange={onDraftChange} fieldErrors={fieldErrors} disabled={isSaving} dirty={dirty} /><Stack direction="row" spacing={1} sx={{ position: 'sticky', bottom: 0, bgcolor: '#fff', borderTop: '1px solid #DCE7F2', p: 2, zIndex: 1 }}><Button variant="contained" disabled={!dirty || isSaving} onClick={() => onSave(familyPlanUpdateFromDraft(draft))}>{isSaving ? 'Saving…' : 'Save and recalculate'}</Button><Button disabled={isSaving} onClick={onRestore}>Restore defaults</Button></Stack></Drawer>

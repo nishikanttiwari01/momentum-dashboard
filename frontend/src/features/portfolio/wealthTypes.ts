@@ -133,7 +133,12 @@ export type LinkedGoalSettings = {
 
 export type FamilyScenarioSettings = {
   scenario_key: FamilyScenarioKey;
-  annual_return_pct: number;
+  financial_return_pct: number;
+  property_growth_pct: number;
+  monthly_contribution_inr: number;
+  step_up_enabled: boolean;
+  step_up_pct: number;
+  contribution_stop_age: number;
 };
 
 export type AnnualRunwayEvent = {
@@ -148,11 +153,14 @@ export type AnnualRunwayEvent = {
 
 export type AnnualRunwayPoint = {
   on: string;
+  age: number | null;
   financial_assets_inr: number;
   property_value_inr: number;
   total_net_worth_inr: number;
   annual_contributions_inr: number;
   annual_rent_inr: number;
+  rent_received_inr: number;
+  rent_reinvested_inr: number;
   financial_growth_inr: number;
   property_growth_inr: number;
   goal_outflows_inr: number;
@@ -193,9 +201,16 @@ export type FamilyScenarioProjection = {
   ending_property_value_inr: number;
   ending_total_net_worth_inr: number;
   first_underfunded_goal_key: string | null;
+  december_2029_milestone: {
+    target_date: string; target_amount_inr: number; projected_value_inr: number;
+    surplus_or_shortfall_inr: number; on_track: boolean;
+  } | null;
 };
 
 export type FamilyPlanResponse = {
+  birth_year: number;
+  birth_month: number;
+  projection_end_age: number;
   primary_goal: PrimaryGoalResponse;
   calculated_on: string;
   snapshot_id: string | null;
@@ -206,6 +221,9 @@ export type FamilyPlanResponse = {
 };
 
 export type FamilyPlanUpdate = {
+  birth_year: number;
+  birth_month: number;
+  projection_end_age: number;
   primary_goal?: GoalSettings;
   assumptions: FamilyPlanAssumptions;
   scenarios: FamilyScenarioSettings[];

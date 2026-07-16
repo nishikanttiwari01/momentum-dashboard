@@ -15,6 +15,10 @@ export type FamilyRunwayRow = {
   optimistic_total_inr?: number;
   expected_financial_assets_inr?: number;
   expected_property_value_inr?: number;
+  conservative_financial_assets_inr?: number;
+  conservative_property_value_inr?: number;
+  optimistic_financial_assets_inr?: number;
+  optimistic_property_value_inr?: number;
   events: FamilyRunwayEvent[];
 };
 
@@ -29,6 +33,8 @@ export function familyRunwayRows(projections: readonly FamilyScenarioProjection[
         events: [],
       };
       row[`${scenario}_total_inr`] = point.total_net_worth_inr;
+      row[`${scenario}_financial_assets_inr`] = point.financial_assets_inr;
+      row[`${scenario}_property_value_inr`] = point.property_value_inr;
       if (scenario === 'expected') {
         row.expected_financial_assets_inr = point.financial_assets_inr;
         row.expected_property_value_inr = point.property_value_inr;
@@ -68,6 +74,6 @@ export function formatMonthlyIncome(value: number | null | undefined): string {
 
 export function familyPlanProblemField(loc: readonly ProblemLocationPart[]): string | null {
   const path = loc[0] === 'body' ? loc.slice(1) : loc;
-  if (!['primary_goal', 'assumptions', 'goals', 'scenarios'].includes(String(path[0]))) return null;
+  if (!['birth_year', 'birth_month', 'projection_end_age', 'primary_goal', 'assumptions', 'goals', 'scenarios'].includes(String(path[0]))) return null;
   return path.map(String).join('.');
 }

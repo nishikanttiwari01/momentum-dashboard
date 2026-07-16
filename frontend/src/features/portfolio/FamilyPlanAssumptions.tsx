@@ -4,9 +4,12 @@ import type { FamilyPlanResponse, FamilyPlanUpdate, FamilyScenarioKey, LinkedGoa
 
 type NumericDraft<T> = { [K in keyof T]: T[K] extends number ? string : T[K] };
 export type FamilyPlanDraft = {
+  birth_year: string;
+  birth_month: string;
+  projection_end_age: string;
   primary_goal: { name: string; target_amount_inr: string; deadline: string };
   assumptions: NumericDraft<FamilyPlanResponse['assumptions']>;
-  scenarios: { scenario_key: FamilyScenarioKey; annual_return_pct: string }[];
+  scenarios: { scenario_key: FamilyScenarioKey; financial_return_pct: string; property_growth_pct: string; monthly_contribution_inr: string; step_up_enabled: boolean; step_up_pct: string; contribution_stop_age: string }[];
   goals: NumericDraft<LinkedGoalSettings>[];
 };
 
@@ -16,15 +19,17 @@ export function familyPlanDraftFromResponse(plan: FamilyPlanResponse): FamilyPla
     Object.entries(item).map(([key, value]) => [key, typeof value === 'number' ? String(value) : value]),
   ) as NumericDraft<T>;
   return {
+    birth_year: String(plan.birth_year), birth_month: String(plan.birth_month), projection_end_age: String(plan.projection_end_age),
     primary_goal: { name: plan.primary_goal.goal.name, target_amount_inr: String(plan.primary_goal.goal.target_amount_inr), deadline: plan.primary_goal.goal.deadline },
     assumptions: stringifyNumbers(plan.assumptions),
-    scenarios: plan.scenario_projections.map(({ settings }) => ({ scenario_key: settings.scenario_key, annual_return_pct: String(settings.annual_return_pct) })),
+    scenarios: plan.scenario_projections.map(({ settings }) => ({ ...settings, financial_return_pct: String(settings.financial_return_pct), property_growth_pct: String(settings.property_growth_pct), monthly_contribution_inr: String(settings.monthly_contribution_inr), step_up_pct: String(settings.step_up_pct), contribution_stop_age: String(settings.contribution_stop_age) })),
     goals: plan.goals.map(stringifyNumbers),
   };
 }
 
 export function familyPlanUpdateFromDraft(draft: FamilyPlanDraft): FamilyPlanUpdate {
   return {
+    birth_year: numeric(draft.birth_year), birth_month: numeric(draft.birth_month), projection_end_age: numeric(draft.projection_end_age),
     primary_goal: { ...draft.primary_goal, target_amount_inr: numeric(draft.primary_goal.target_amount_inr) },
     assumptions: {
       ...draft.assumptions,
@@ -36,7 +41,7 @@ export function familyPlanUpdateFromDraft(draft: FamilyPlanDraft): FamilyPlanUpd
       withdrawal_rate_pct: numeric(draft.assumptions.withdrawal_rate_pct),
       amber_margin_pct: numeric(draft.assumptions.amber_margin_pct),
     },
-    scenarios: draft.scenarios.map((item) => ({ ...item, annual_return_pct: numeric(item.annual_return_pct) })),
+    scenarios: draft.scenarios.map((item) => ({ ...item, financial_return_pct: numeric(item.financial_return_pct), property_growth_pct: numeric(item.property_growth_pct), monthly_contribution_inr: numeric(item.monthly_contribution_inr), step_up_pct: numeric(item.step_up_pct), contribution_stop_age: numeric(item.contribution_stop_age) })),
     goals: draft.goals.map((goal) => ({
       ...goal,
       current_value_amount_inr: numeric(goal.current_value_amount_inr), inflation_pct: numeric(goal.inflation_pct),
@@ -50,7 +55,6 @@ const input = { min: 0, step: 0.1 };
 export const FamilyPlanAssumptions: React.FC<Props> = ({ value, onChange, fieldErrors, disabled, dirty = false }) => {
   const setPrimary = (key: keyof FamilyPlanDraft['primary_goal'], next: string) => onChange({ ...value, primary_goal: { ...value.primary_goal, [key]: next } });
   const setAssumption = (key: keyof FamilyPlanDraft['assumptions'], next: string | boolean) => onChange({ ...value, assumptions: { ...value.assumptions, [key]: next } });
-  const setScenario = (index: number, next: string) => onChange({ ...value, scenarios: value.scenarios.map((item, at) => at === index ? { ...item, annual_return_pct: next } : item) });
   const setGoal = (index: number, key: keyof FamilyPlanDraft['goals'][number], next: string | boolean) => onChange({ ...value, goals: value.goals.map((item, at) => at === index ? { ...item, [key]: next } : item) });
   const assumptionField = (key: keyof FamilyPlanDraft['assumptions'], label: string, options: Record<string, unknown> = {}) => <TextField fullWidth disabled={disabled} label={label} type="number" value={String(value.assumptions[key])} onChange={(event) => setAssumption(key, event.target.value)} inputProps={input} error={Boolean(fieldErrors[`assumptions.${key}`])} helperText={fieldErrors[`assumptions.${key}`]} {...options} />;
   return <Stack spacing={2.5} sx={{ width: { xs: 'min(92vw, 560px)', sm: 560 }, maxWidth: '100%', p: { xs: 2, sm: 3 }, overflowX: 'hidden' }}>
@@ -58,9 +62,9 @@ export const FamilyPlanAssumptions: React.FC<Props> = ({ value, onChange, fieldE
     {dirty && <Alert severity="warning"><b>Draft assumptions.</b> Charts still show the last saved calculation until you save changes.</Alert>}
     <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Primary goal</Typography><Stack spacing={1.5}><TextField fullWidth disabled={disabled} label="Goal name" value={value.primary_goal.name} onChange={(event) => setPrimary('name', event.target.value)} error={Boolean(fieldErrors['primary_goal.name'])} helperText={fieldErrors['primary_goal.name']} /><TextField fullWidth disabled={disabled} label="Target amount" type="number" value={value.primary_goal.target_amount_inr} onChange={(event) => setPrimary('target_amount_inr', event.target.value)} inputProps={input} error={Boolean(fieldErrors['primary_goal.target_amount_inr'])} helperText={fieldErrors['primary_goal.target_amount_inr']} /><TextField fullWidth disabled={disabled} label="Target deadline" type="date" value={value.primary_goal.deadline} onChange={(event) => setPrimary('deadline', event.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors['primary_goal.deadline'])} helperText={fieldErrors['primary_goal.deadline']} /></Stack></Box>
     <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Contributions</Typography><Stack spacing={1.5}>{assumptionField('monthly_contribution_inr', 'Monthly investment')}<FormControlLabel control={<Checkbox disabled={disabled} checked={value.assumptions.contribution_step_up_enabled} onChange={(event) => setAssumption('contribution_step_up_enabled', event.target.checked)} />} label="Annual contribution step-up" />{assumptionField('contribution_step_up_pct', 'Annual step-up (%)', { disabled: disabled || !value.assumptions.contribution_step_up_enabled })}</Stack></Box>
-    <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Rent and property</Typography><Stack spacing={1.5}>{assumptionField('monthly_rent_inr', 'Monthly rent')}{assumptionField('rent_growth_pct', 'Annual rent growth (%)')}<TextField fullWidth disabled={disabled} label="Reinvest rent until" type="date" value={value.assumptions.reinvest_rent_until} onChange={(event) => setAssumption('reinvest_rent_until', event.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors['assumptions.reinvest_rent_until'])} helperText={fieldErrors['assumptions.reinvest_rent_until']} />{assumptionField('property_growth_pct', 'Annual property growth (%)')}</Stack></Box>
+    <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Lifetime horizon</Typography><Stack spacing={1.5}><TextField label="Birth year" type="number" value={value.birth_year} onChange={(e) => onChange({...value,birth_year:e.target.value})}/><TextField label="Birth month" type="number" value={value.birth_month} onChange={(e) => onChange({...value,birth_month:e.target.value})}/><TextField label="Projection end age" type="number" value={value.projection_end_age} onChange={(e) => onChange({...value,projection_end_age:e.target.value})}/></Stack></Box>
+    <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Rent</Typography><Stack spacing={1.5}>{assumptionField('monthly_rent_inr', 'Monthly rent')}{assumptionField('rent_growth_pct', 'Annual rent growth (%)')}<TextField fullWidth disabled={disabled} label="Reinvest rent until" type="date" value={value.assumptions.reinvest_rent_until} onChange={(event) => setAssumption('reinvest_rent_until', event.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors['assumptions.reinvest_rent_until'])} helperText={fieldErrors['assumptions.reinvest_rent_until']} /></Stack></Box>
     <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Income safety</Typography><Stack spacing={1.5}>{assumptionField('withdrawal_rate_pct', 'Withdrawal rate (%)')}{assumptionField('amber_margin_pct', 'Amber safety margin (%)')}</Stack></Box>
-    <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Scenario returns</Typography><Stack spacing={1.5}>{value.scenarios.map((scenario, index) => <TextField key={scenario.scenario_key} fullWidth disabled={disabled} label={`${scenario.scenario_key[0].toUpperCase()}${scenario.scenario_key.slice(1)} annual return (%)`} type="number" value={scenario.annual_return_pct} onChange={(event) => setScenario(index, event.target.value)} inputProps={{ min: -25, max: 50, step: .1 }} error={Boolean(fieldErrors[`scenarios.${index}.annual_return_pct`])} helperText={fieldErrors[`scenarios.${index}.annual_return_pct`]} />)}</Stack></Box>
     <Box component="section"><Typography variant="h6" fontWeight={850} mb={1}>Linked family goals</Typography><Stack spacing={2}>{value.goals.map((goal, index) => <Box key={goal.goal_key} sx={{ border: '1px solid #DCE7F2', borderRadius: 2, p: 1.5 }}><Stack spacing={1.25}><FormControlLabel control={<Switch disabled={disabled} checked={goal.enabled} onChange={(event) => setGoal(index, 'enabled', event.target.checked)} />} label={goal.name} /><TextField fullWidth disabled={disabled} label="Goal name" value={goal.name} onChange={(event) => setGoal(index, 'name', event.target.value)} error={Boolean(fieldErrors[`goals.${index}.name`])} helperText={fieldErrors[`goals.${index}.name`]} /><TextField fullWidth disabled={disabled} label="Current cost / income target" type="number" value={goal.current_value_amount_inr} onChange={(event) => setGoal(index, 'current_value_amount_inr', event.target.value)} inputProps={input} error={Boolean(fieldErrors[`goals.${index}.current_value_amount_inr`])} helperText={fieldErrors[`goals.${index}.current_value_amount_inr`]} /><TextField fullWidth disabled={disabled} label="Target date" type="date" value={goal.target_date} onChange={(event) => setGoal(index, 'target_date', event.target.value)} InputLabelProps={{ shrink: true }} error={Boolean(fieldErrors[`goals.${index}.target_date`])} helperText={fieldErrors[`goals.${index}.target_date`]} /><TextField fullWidth disabled={disabled} label="Inflation (%)" type="number" value={goal.inflation_pct} onChange={(event) => setGoal(index, 'inflation_pct', event.target.value)} inputProps={input} error={Boolean(fieldErrors[`goals.${index}.inflation_pct`])} helperText={fieldErrors[`goals.${index}.inflation_pct`]} /><TextField fullWidth disabled={disabled} label="Funding priority" type="number" value={goal.priority} onChange={(event) => setGoal(index, 'priority', event.target.value)} inputProps={{ min: 1, max: 100 }} error={Boolean(fieldErrors[`goals.${index}.priority`])} helperText={fieldErrors[`goals.${index}.priority`]} /></Stack></Box>)}</Stack></Box>
   </Stack>;
 };
