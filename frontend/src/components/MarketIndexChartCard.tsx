@@ -40,7 +40,8 @@ function yDomain(points: HistoryPoint[]): [number, number] {
   const values = points.map((point) => point.close);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const padding = Math.max((max - min) * 0.12, max * 0.01);
+  const minimumPadding = Math.max(Math.max(Math.abs(min), Math.abs(max)) * 0.01, 1);
+  const padding = Math.max((max - min) * 0.12, minimumPadding);
   return [Math.max(0, min - padding), max + padding];
 }
 
@@ -79,7 +80,7 @@ const MarketIndexChartCard: React.FC<Props> = ({ marketKey }) => {
                   </Typography>
                   <Typography
                     variant="body2"
-                    color={positive ? 'success.main' : 'error.main'}
+                    color={positive ? '#00B386' : '#F04438'}
                     fontWeight={700}
                     sx={{ fontVariantNumeric: 'tabular-nums' }}
                   >
@@ -135,7 +136,7 @@ const MarketIndexChartCard: React.FC<Props> = ({ marketKey }) => {
                 labelFormatter={(label) => new Intl.DateTimeFormat('en-US', { dateStyle: 'medium' }).format(new Date(`${label}T00:00:00`))}
                 formatter={(value) => [number.format(Number(value)), data.symbol]}
               />
-              <Line type="monotone" dataKey="close" stroke="#2874D0" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+              <Line type="linear" dataKey="close" stroke="#2E90FA" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         ) : (

@@ -6,13 +6,15 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import MarketIndexChartCard from './MarketIndexChartCard';
 
+const { lineSpy, yAxisSpy } = vi.hoisted(() => ({ lineSpy: vi.fn(), yAxisSpy: vi.fn() }));
+
 vi.mock('axios');
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   LineChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Line: () => null,
+  Line: (props: unknown) => { lineSpy(props); return null; },
   XAxis: () => null,
-  YAxis: () => null,
+  YAxis: (props: unknown) => { yAxisSpy(props); return null; },
   Tooltip: () => null,
   CartesianGrid: () => null,
 }));
@@ -59,6 +61,24 @@ describe('MarketIndexChartCard', () => {
     expect(mockedAxios.get).toHaveBeenCalledWith('/api/v1/market-indices/sensex/history', {
       params: { range: '1y' },
     });
+    expect(lineSpy).toHaveBeenCalledWith(expect.objectContaining({ type: 'linear', stroke: '#2E90FA' }));
+  });
+
+  it('styles a negative change and gives a constant zero series a non-degenerate domain', async () => {
+    mockedAxios.get.mockResolvedValue({
+      data: {
+        ...payload,
+        change: -25,
+        change_pct: -0.5,
+        points: [{ on: '2026-07-16', close: 0 }],
+      },
+    });
+    renderCard();
+
+    const change = await screen.findByText('-25.00 (-0.50%)');
+    expect(getComputedStyle(change).color).toBe('rgb(240, 68, 56)');
+    const domain = yAxisSpy.mock.calls.at(-1)?.[0].domain as [number, number];
+    expect(domain[0]).toBeLessThan(domain[1]);
   });
 
   it('requests six-month history when 6M is selected', async () => {
