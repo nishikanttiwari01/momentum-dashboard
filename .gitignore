@@ -63,3 +63,4 @@ logs/
 .env
 routine/routine_data/
 routine/reports/
+.worktrees/
