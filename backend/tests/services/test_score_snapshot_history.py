@@ -155,6 +155,30 @@ def test_load_score_snapshot_returns_rejects_present_invalid_last(
     ) == []
 
 
+def test_load_score_snapshot_returns_omits_invalid_last_across_physical_type_drift(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        "app.services.score_snapshot_history.datasets.get_parquet_root", lambda: tmp_path
+    )
+    _write_snapshot(
+        tmp_path,
+        "2024-01-02",
+        "one",
+        [{"symbol": "BAD", "last": 100.0, "close": 100.0}],
+    )
+    _write_snapshot(
+        tmp_path,
+        "2024-01-03",
+        "two",
+        [{"symbol": "BAD", "last": "not-a-price", "close": 110.0}],
+    )
+
+    assert load_score_snapshot_returns(
+        ["BAD"], date(2024, 1, 2), date(2024, 1, 3)
+    ) == []
+
+
 def test_load_score_snapshot_returns_requires_symbol_at_both_boundaries(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "app.services.score_snapshot_history.datasets.get_parquet_root", lambda: tmp_path

@@ -130,6 +130,7 @@ def rank_returns(
 def load_and_rank_returns(
     symbols: Iterable[str], start: date, end: date, *, latest_two: bool = False
 ) -> list[ReturnRow]:
+    symbol_list = tuple(symbols)
     scan_args = {
         "run_id": None,
         "dt_range": (start.isoformat(), end.isoformat()),
@@ -142,4 +143,14 @@ def load_and_rank_returns(
     except Exception:
         columns = ["symbol", "dt", "close", "adj_close"]
     table = datasets.scan("prices", columns=columns, **scan_args)
-    return rank_returns(table, symbols, start, end, latest_two=latest_two)
+    rows = rank_returns(table, symbol_list, start, end, latest_two=latest_two)
+    if rows:
+        return rows
+
+    # Local score snapshots are the installed archive of record when the
+    # dedicated prices dataset has not been populated.
+    from app.services.score_snapshot_history import load_score_snapshot_returns
+
+    return load_score_snapshot_returns(
+        symbol_list, start, end, latest_two=latest_two
+    )

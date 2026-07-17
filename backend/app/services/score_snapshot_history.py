@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import math
 from pathlib import Path
 import re
 from typing import Iterable
 
 import pyarrow as pa
-import pyarrow.dataset as pds
 import pyarrow.parquet as pq
 
 from app.repos.parquet import datasets
@@ -77,6 +77,14 @@ def _as_date(value: object) -> date | None:
     return None
 
 
+def _valid_price(value: object) -> float | None:
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if math.isfinite(price) and price > 0 else None
+
+
 def load_score_snapshot_returns(
     symbols: Iterable[str],
     requested_start: date,
@@ -103,37 +111,30 @@ def load_score_snapshot_returns(
         file_dates.update((path.resolve(), boundary) for path in files)
 
     files = sorted(file_dates)
-    schemas = [pq.read_schema(path) for path in files]
-    try:
-        schema = pa.unify_schemas(schemas)
-    except pa.ArrowInvalid:
-        return []
-    columns = set(schema.names)
-    if "symbol" not in columns or not ({"last", "close"} & columns):
-        return []
-
-    dataset = pds.dataset(files, format="parquet", schema=schema)
-    projection = [name for name in ("symbol", "last", "close", "as_of") if name in columns]
-    projection.append("__filename")
-    table = dataset.to_table(columns=projection)
-
     price_rows: list[dict[str, object]] = []
-    has_last = "last" in columns
-    for record in table.to_pylist():
-        symbol = record.get("symbol")
-        if symbol is None or str(symbol) not in wanted:
+    for path in files:
+        columns = set(pq.read_schema(path).names)
+        if "symbol" not in columns or not ({"last", "close"} & columns):
             continue
-        source = Path(str(record["__filename"])).resolve()
-        source_date = file_dates.get(source)
-        if source_date is None:
-            continue
-        row_as_of = record.get("as_of")
-        row_date = _as_date(row_as_of) if row_as_of is not None else source_date
-        if row_date != source_date:
-            continue
-        last = record.get("last") if has_last else None
-        price = record.get("close") if last is None else last
-        price_rows.append({"symbol": str(symbol), "dt": row_date, "close": price})
+        projection = [
+            name for name in ("symbol", "last", "close", "as_of") if name in columns
+        ]
+        table = pq.ParquetFile(path).read(columns=projection)
+        source_date = file_dates[path]
+        has_last = "last" in columns
+        for record in table.to_pylist():
+            symbol = record.get("symbol")
+            if symbol is None or str(symbol) not in wanted:
+                continue
+            row_as_of = record.get("as_of")
+            row_date = _as_date(row_as_of) if row_as_of is not None else source_date
+            if row_date != source_date:
+                continue
+            last = record.get("last") if has_last else None
+            price = _valid_price(record.get("close") if last is None else last)
+            if price is None:
+                continue
+            price_rows.append({"symbol": str(symbol), "dt": row_date, "close": price})
 
     return rank_returns(
         pa.Table.from_pylist(price_rows),
