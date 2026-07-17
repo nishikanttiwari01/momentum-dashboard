@@ -611,13 +611,26 @@ export default function Dashboard() {
               </Typography>
             )}
           </Stack>
-          <ToggleButtonGroup exclusive value={selectedPeriod} onChange={handlePeriodChange} size="small">
-            {PERIOD_OPTIONS.map((option) => (
-              <ToggleButton key={option.value} value={option.value} sx={{ textTransform: 'none' }}>
-                {option.label}
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
+          <Box
+            data-testid="top-movers-period-scroll"
+            style={{ overflowX: 'auto' }}
+            sx={{ maxWidth: '100%', width: { xs: '100%', md: 'auto' }, pb: 0.5 }}
+          >
+            <ToggleButtonGroup
+              aria-label="Top Movers period"
+              exclusive
+              value={selectedPeriod}
+              onChange={handlePeriodChange}
+              size="small"
+              sx={{ width: 'max-content', '& .MuiToggleButton-root': { whiteSpace: 'nowrap' } }}
+            >
+              {PERIOD_OPTIONS.map((option) => (
+                <ToggleButton key={option.value} value={option.value} sx={{ textTransform: 'none' }}>
+                  {option.label}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          </Box>
         </Stack>
         {selectedPeriod === TopMoversPeriod.custom ? (
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }} sx={{ mb: 2 }}>
@@ -627,6 +640,8 @@ export default function Dashboard() {
               size="small"
               value={customStartDate}
               onChange={(event) => { setCustomStartDate(event.target.value); setCustomDateError(null); }}
+              error={Boolean(customDateError)}
+              inputProps={{ 'aria-describedby': customDateError ? 'top-movers-custom-date-error' : undefined }}
               InputLabelProps={{ shrink: true }}
             />
             <TextField
@@ -635,6 +650,8 @@ export default function Dashboard() {
               size="small"
               value={customEndDate}
               onChange={(event) => { setCustomEndDate(event.target.value); setCustomDateError(null); }}
+              error={Boolean(customDateError)}
+              inputProps={{ 'aria-describedby': customDateError ? 'top-movers-custom-date-error' : undefined }}
               InputLabelProps={{ shrink: true }}
             />
             <Button
@@ -645,7 +662,11 @@ export default function Dashboard() {
             >
               Apply
             </Button>
-            {customDateError ? <Typography color="error" variant="caption">{customDateError}</Typography> : null}
+            {customDateError ? (
+              <Typography id="top-movers-custom-date-error" role="alert" color="error" variant="caption">
+                {customDateError}
+              </Typography>
+            ) : null}
           </Stack>
         ) : null}
         <Divider sx={{ mb: 2 }} />
