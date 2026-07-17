@@ -119,4 +119,19 @@ describe('DashboardPage top movers controls', () => {
       symbol: 'RELIANCE.NS', open: true, asOf: '2026-07-16',
     });
   });
+
+  it('shows clear empty states for both mover lists after a successful empty response', () => {
+    hookResult.current = {
+      data: { data: { ...moversData, gainers: [], losers: [] } },
+      isLoading: false,
+      isError: false,
+    };
+    render(<DashboardPage />);
+
+    expect(screen.getByRole('heading', { name: 'Top Gainers' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Top Losers' })).toBeTruthy();
+    expect(screen.getAllByText('No data available')).toHaveLength(2);
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.queryByText('Unable to load top movers right now.')).toBeNull();
+  });
 });
