@@ -96,8 +96,12 @@ def rank_returns(
         day = _as_date(record.get("dt"))
         if day is None or day < requested_start or day > requested_end:
             continue
-        price = _valid_price(record.get("adj_close")) if has_adjusted else None
-        if price is None:
+        adjusted = record.get("adj_close") if has_adjusted else None
+        if adjusted is not None:
+            price = _valid_price(adjusted)
+            if price is None or price <= 0:
+                continue
+        else:
             price = _valid_price(record.get("close"))
         if price is not None:
             points[symbol].append((day, price))

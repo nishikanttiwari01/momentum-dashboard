@@ -80,7 +80,7 @@ def test_rank_returns_prefers_adjusted_close_and_falls_back_per_row():
             {"symbol": "ADJ", "dt": date(2026, 1, 2), "close": 100.0, "adj_close": 50.0},
             {"symbol": "ADJ", "dt": date(2026, 1, 3), "close": 120.0, "adj_close": 60.0},
             {"symbol": "FALL", "dt": date(2026, 1, 2), "close": 80.0, "adj_close": None},
-            {"symbol": "FALL", "dt": date(2026, 1, 3), "close": 100.0, "adj_close": float("nan")},
+            {"symbol": "FALL", "dt": date(2026, 1, 3), "close": 100.0, "adj_close": None},
         ]
     )
 
@@ -90,6 +90,44 @@ def test_rank_returns_prefers_adjusted_close_and_falls_back_per_row():
         ReturnRow("FALL", pytest.approx(25.0), date(2026, 1, 2), date(2026, 1, 3)),
         ReturnRow("ADJ", pytest.approx(20.0), date(2026, 1, 2), date(2026, 1, 3)),
     ]
+
+
+@pytest.mark.parametrize("invalid_adjusted", [0.0, -1.0, float("nan"), float("inf"), "bad"])
+def test_rank_returns_rejects_present_invalid_adjusted_prices(invalid_adjusted):
+    valid_adjusted = "10.0" if isinstance(invalid_adjusted, str) else 10.0
+    table = _prices(
+        [
+            {
+                "symbol": "BAD",
+                "dt": date(2026, 1, 2),
+                "close": 10.0,
+                "adj_close": valid_adjusted,
+            },
+            {
+                "symbol": "BAD",
+                "dt": date(2026, 1, 3),
+                "close": 11.0,
+                "adj_close": invalid_adjusted,
+            },
+        ]
+    )
+
+    assert rank_returns(
+        table, ["BAD"], date(2026, 1, 2), date(2026, 1, 3)
+    ) == []
+
+
+def test_rank_returns_falls_back_to_close_for_null_adjusted_prices():
+    table = _prices(
+        [
+            {"symbol": "FALL", "dt": date(2026, 1, 2), "close": 10.0, "adj_close": None},
+            {"symbol": "FALL", "dt": date(2026, 1, 3), "close": 11.0, "adj_close": None},
+        ]
+    )
+
+    assert rank_returns(
+        table, ["FALL"], date(2026, 1, 2), date(2026, 1, 3)
+    ) == [ReturnRow("FALL", pytest.approx(10.0), date(2026, 1, 2), date(2026, 1, 3))]
 
 
 def test_rank_returns_omits_missing_history_and_zero_start():
