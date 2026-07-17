@@ -107,6 +107,7 @@ def test_unified_top_movers_custom_range(unified_top_movers_client):
     [
         ("period=custom", "custom_dates_required"),
         ("period=custom&start_date=2026-02-01", "custom_dates_required"),
+        ("period=custom&end_date=2026-01-31", "custom_dates_required"),
         ("period=custom&start_date=2026-02-02&end_date=2026-02-01", "invalid_date_range"),
         ("period=1m&start_date=2026-02-01", "custom_dates_not_allowed"),
         ("period=1m&end_date=2026-02-01", "custom_dates_not_allowed"),
