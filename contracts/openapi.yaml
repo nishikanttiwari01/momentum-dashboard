@@ -215,8 +215,22 @@ paths:
         description: Period over which to compute percentage change
         schema:
           type: string
-          enum: ["1d", "1w", "1m", "3m"]
+          enum: ["1d", "1w", "1m", "3m", "6m", "1y", "5y", "custom"]
           default: "1d"
+      - name: start_date
+        in: query
+        description: Custom period start date; only valid when period is custom
+        schema:
+          type: string
+          format: date
+          nullable: true
+      - name: end_date
+        in: query
+        description: Custom period end date; only valid when period is custom
+        schema:
+          type: string
+          format: date
+          nullable: true
       responses:
         '200':
           description: Top movers
@@ -2169,7 +2183,7 @@ components:
       properties:
         period:
           type: string
-          enum: ["1d", "1w", "1m", "3m"]
+          enum: ["1d", "1w", "1m", "3m", "6m", "1y", "5y", "custom"]
         generated_at:
           type: string
           format: date-time
@@ -2177,6 +2191,22 @@ components:
           type: string
           nullable: true
         as_of:
+          type: string
+          format: date
+          nullable: true
+        requested_start_date:
+          type: string
+          format: date
+          nullable: true
+        requested_end_date:
+          type: string
+          format: date
+          nullable: true
+        resolved_start_date:
+          type: string
+          format: date
+          nullable: true
+        resolved_end_date:
           type: string
           format: date
           nullable: true

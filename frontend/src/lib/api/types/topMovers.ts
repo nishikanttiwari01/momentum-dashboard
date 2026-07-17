@@ -16,5 +16,13 @@ export interface TopMovers {
   losers: TopMoverEntry[];
   period: TopMoversPeriod;
   /** @nullable */
+  requested_end_date?: string | null;
+  /** @nullable */
+  requested_start_date?: string | null;
+  /** @nullable */
+  resolved_end_date?: string | null;
+  /** @nullable */
+  resolved_start_date?: string | null;
+  /** @nullable */
   run_id?: string | null;
 }

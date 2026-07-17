@@ -12,4 +12,12 @@ export type GetTopMoversParams = {
  * Period over which to compute percentage change
  */
 period?: GetTopMoversPeriod;
+/**
+ * Custom period start date; only valid when period is custom
+ */
+start_date?: string | null;
+/**
+ * Custom period end date; only valid when period is custom
+ */
+end_date?: string | null;
 };

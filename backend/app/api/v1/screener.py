@@ -8,6 +8,7 @@ from app.schemas.screener import (
     ScreenerList,
     ScreenerRow,
     TopMoverEntry,
+    TopMovers,
     ScreenerRunDate,
     ScreenerRunDateList,
     ScreenerRunSummary,
@@ -899,7 +900,7 @@ def _is_num(v: Any) -> bool:
     return isinstance(v, numbers.Real) and math.isfinite(float(v))
 
 
-@router.get("/screener/top-movers")
+@router.get("/screener/top-movers", response_model=TopMovers)
 def get_top_movers(
     period: str = Query(
         "1d",
@@ -908,7 +909,7 @@ def get_top_movers(
     ),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-) -> Dict[str, Any]:
+) -> TopMovers:
     if period == "custom":
         if start_date is None or end_date is None:
             raise HTTPException(
@@ -1059,18 +1060,18 @@ def get_top_movers(
                 break
         return output
 
-    return {
-        "period": period,
-        "generated_at": datetime.now(timezone.utc),
-        "run_id": run_id,
-        "as_of": as_of_value,
-        "requested_start_date": requested_start,
-        "requested_end_date": requested_end,
-        "resolved_start_date": resolved_start,
-        "resolved_end_date": resolved_end,
-        "gainers": entries(ranked),
-        "losers": entries(sorted(ranked, key=lambda result: (result.return_pct, result.symbol))),
-    }
+    return TopMovers(
+        period=period,
+        generated_at=datetime.now(timezone.utc),
+        run_id=run_id,
+        as_of=as_of_value,
+        requested_start_date=requested_start,
+        requested_end_date=requested_end,
+        resolved_start_date=resolved_start,
+        resolved_end_date=resolved_end,
+        gainers=entries(ranked),
+        losers=entries(sorted(ranked, key=lambda result: (result.return_pct, result.symbol))),
+    )
 
 
 @router.get("/screener", response_model=ScreenerList)

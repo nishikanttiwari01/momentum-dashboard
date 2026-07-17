@@ -15,4 +15,8 @@ export const TopMoversPeriod = {
   '1w': '1w',
   '1m': '1m',
   '3m': '3m',
+  '6m': '6m',
+  '1y': '1y',
+  '5y': '5y',
+  custom: 'custom',
 } as const;
