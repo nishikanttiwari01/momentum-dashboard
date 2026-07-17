@@ -39,7 +39,7 @@ import logging
 import csv
 import io
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -963,7 +963,7 @@ def get_top_movers(
             rows_by_symbol[str(symbol)] = row
 
     calculation_start = (
-        requested_end - timedelta(days=10) if period == "1d" else requested_start
+        resolve_window("5y", requested_end)[0] if period == "1d" else requested_start
     )
     ranked = load_and_rank_returns(
         rows_by_symbol.keys(),
@@ -979,9 +979,6 @@ def get_top_movers(
                 "message": "No stocks have usable trading data for the requested window.",
             },
         )
-    resolved_start = min(result.start_date for result in ranked)
-    resolved_end = max(result.end_date for result in ranked)
-
     def eligible(row: dict[str, Any], value: float) -> bool:
         if eligibility is None or not getattr(eligibility, "enabled", False):
             return True
@@ -1050,15 +1047,29 @@ def get_top_movers(
             next_action=action,
         )
 
-    def entries(results: list[Any]) -> list[TopMoverEntry]:
+    def entries(results: list[Any]) -> tuple[list[TopMoverEntry], list[Any]]:
         output: list[TopMoverEntry] = []
+        displayed: list[Any] = []
         for result in results:
             entry = make_entry(rows_by_symbol[result.symbol], result.return_pct)
             if entry is not None:
                 output.append(entry)
+                displayed.append(result)
             if len(output) == TOP_LIMIT:
                 break
-        return output
+        return output, displayed
+
+    gainers, displayed_gainers = entries(ranked)
+    losers, displayed_losers = entries(
+        sorted(ranked, key=lambda result: (result.return_pct, result.symbol))
+    )
+    displayed_by_symbol = {
+        result.symbol: result for result in displayed_gainers + displayed_losers
+    }
+    start_dates = {result.start_date for result in displayed_by_symbol.values()}
+    end_dates = {result.end_date for result in displayed_by_symbol.values()}
+    resolved_start = next(iter(start_dates)) if len(start_dates) == 1 else None
+    resolved_end = next(iter(end_dates)) if len(end_dates) == 1 else None
 
     return TopMovers(
         period=period,
@@ -1069,8 +1080,8 @@ def get_top_movers(
         requested_end_date=requested_end,
         resolved_start_date=resolved_start,
         resolved_end_date=resolved_end,
-        gainers=entries(ranked),
-        losers=entries(sorted(ranked, key=lambda result: (result.return_pct, result.symbol))),
+        gainers=gainers,
+        losers=losers,
     )
 
 

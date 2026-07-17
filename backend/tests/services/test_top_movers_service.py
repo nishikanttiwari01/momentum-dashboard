@@ -108,6 +108,27 @@ def test_rank_returns_omits_missing_history_and_zero_start():
     )] == ["OK"]
 
 
+@pytest.mark.parametrize(
+    "bad_rows",
+    [
+        [("2026-01-02", 10.0), ("2026-01-03", 0.0)],
+        [("2026-01-02", -10.0), ("2026-01-03", 11.0)],
+        [("2026-01-02", 10.0), ("2026-01-03", -11.0)],
+    ],
+)
+def test_rank_returns_rejects_non_positive_endpoint_prices(bad_rows):
+    table = _prices(
+        [
+            {"symbol": "BAD", "dt": day, "close": price}
+            for day, price in bad_rows
+        ]
+    )
+
+    assert rank_returns(
+        table, ["BAD"], date(2026, 1, 2), date(2026, 1, 3)
+    ) == []
+
+
 def test_rank_returns_breaks_equal_return_ties_by_symbol():
     table = _prices(
         [
@@ -122,7 +143,16 @@ def test_rank_returns_breaks_equal_return_ties_by_symbol():
     assert [row.symbol for row in rows] == ["AAA", "ZZZ"]
 
 
-def test_load_and_rank_returns_scans_once_and_tolerates_missing_adj_close(monkeypatch):
+@pytest.mark.parametrize(
+    ("available_columns", "expected_columns"),
+    [
+        ({"symbol", "dt", "close", "adj_close"}, ["symbol", "dt", "close", "adj_close"]),
+        ({"symbol", "dt", "close"}, ["symbol", "dt", "close"]),
+    ],
+)
+def test_load_and_rank_returns_discovers_schema_and_scans_once(
+    monkeypatch, available_columns, expected_columns
+):
     table = _prices(
         [
             {"symbol": "AAA", "dt": "2026-01-02", "close": 10.0},
@@ -136,6 +166,11 @@ def test_load_and_rank_returns_scans_once_and_tolerates_missing_adj_close(monkey
         return table
 
     monkeypatch.setattr("app.services.top_movers_service.datasets.scan", fake_scan)
+    monkeypatch.setattr(
+        "app.services.top_movers_service._available_price_columns",
+        lambda: available_columns,
+        raising=False,
+    )
 
     rows = load_and_rank_returns(["AAA"], date(2026, 1, 2), date(2026, 1, 3))
 
@@ -144,35 +179,29 @@ def test_load_and_rank_returns_scans_once_and_tolerates_missing_adj_close(monkey
         (("prices",), {
             "run_id": None,
             "dt_range": ("2026-01-02", "2026-01-03"),
-            "columns": ["symbol", "dt", "close", "adj_close"],
+            "columns": expected_columns,
         })
     ]
 
 
-def test_load_and_rank_returns_retries_without_adj_close_for_legacy_schema(monkeypatch):
-    table = _prices(
-        [
-            {"symbol": "AAA", "dt": "2026-01-02", "close": 10.0},
-            {"symbol": "AAA", "dt": "2026-01-03", "close": 11.0},
-        ]
-    )
+def test_load_and_rank_returns_schema_discovery_failure_keeps_adjusted_close(monkeypatch):
     calls = []
 
     def fake_scan(*args, **kwargs):
         calls.append((args, kwargs))
-        if "adj_close" in kwargs["columns"]:
-            raise pa.ArrowInvalid("No match for FieldRef.Name(adj_close)")
-        return table
+        return _prices([])
 
     monkeypatch.setattr("app.services.top_movers_service.datasets.scan", fake_scan)
+    monkeypatch.setattr(
+        "app.services.top_movers_service._available_price_columns",
+        lambda: (_ for _ in ()).throw(OSError("schema unavailable")),
+        raising=False,
+    )
 
-    rows = load_and_rank_returns(["AAA"], date(2026, 1, 2), date(2026, 1, 3))
+    load_and_rank_returns(["AAA"], date(2026, 1, 2), date(2026, 1, 3))
 
-    assert [row.symbol for row in rows] == ["AAA"]
-    assert [call[1]["columns"] for call in calls] == [
-        ["symbol", "dt", "close", "adj_close"],
-        ["symbol", "dt", "close"],
-    ]
+    assert len(calls) == 1
+    assert calls[0][1]["columns"] == ["symbol", "dt", "close", "adj_close"]
 
 
 def test_load_and_rank_returns_does_not_swallow_unrelated_arrow_errors(monkeypatch):

@@ -6,6 +6,7 @@ import math
 from typing import Iterable
 
 import pyarrow as pa
+import pyarrow.dataset as pds
 from dateutil.relativedelta import relativedelta
 
 from app.repos.parquet import datasets
@@ -65,7 +66,12 @@ def _valid_price(value: object) -> float | None:
         price = float(value)
     except (TypeError, ValueError):
         return None
-    return price if math.isfinite(price) else None
+    return price if math.isfinite(price) and price > 0 else None
+
+
+def _available_price_columns() -> set[str]:
+    root = datasets.get_parquet_root() / "prices"
+    return set(pds.dataset(root, format="parquet", partitioning="hive").schema.names)
 
 
 def rank_returns(
@@ -125,22 +131,11 @@ def load_and_rank_returns(
         "dt_range": (start.isoformat(), end.isoformat()),
     }
     try:
-        table = datasets.scan(
-            "prices",
-            columns=["symbol", "dt", "close", "adj_close"],
-            **scan_args,
-        )
-    except pa.ArrowInvalid as exc:
-        message = str(exc).lower()
-        missing_adj_close = "adj_close" in message and any(
-            marker in message
-            for marker in ("no match for", "not found", "does not exist", "unknown field")
-        )
-        if not missing_adj_close:
-            raise
-        table = datasets.scan(
-            "prices",
-            columns=["symbol", "dt", "close"],
-            **scan_args,
-        )
+        available = _available_price_columns()
+        columns = ["symbol", "dt", "close"]
+        if "adj_close" in available:
+            columns.append("adj_close")
+    except Exception:
+        columns = ["symbol", "dt", "close", "adj_close"]
+    table = datasets.scan("prices", columns=columns, **scan_args)
     return rank_returns(table, symbols, start, end, latest_two=latest_two)
