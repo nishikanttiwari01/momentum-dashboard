@@ -127,3 +127,39 @@ def test_load_and_rank_returns_scans_once_and_tolerates_missing_adj_close(monkey
             "columns": ["symbol", "dt", "close", "adj_close"],
         })
     ]
+
+
+def test_load_and_rank_returns_retries_without_adj_close_for_legacy_schema(monkeypatch):
+    table = _prices(
+        [
+            {"symbol": "AAA", "dt": "2026-01-02", "close": 10.0},
+            {"symbol": "AAA", "dt": "2026-01-03", "close": 11.0},
+        ]
+    )
+    calls = []
+
+    def fake_scan(*args, **kwargs):
+        calls.append((args, kwargs))
+        if "adj_close" in kwargs["columns"]:
+            raise pa.ArrowInvalid("No match for FieldRef.Name(adj_close)")
+        return table
+
+    monkeypatch.setattr("app.services.top_movers_service.datasets.scan", fake_scan)
+
+    rows = load_and_rank_returns(["AAA"], date(2026, 1, 2), date(2026, 1, 3))
+
+    assert [row.symbol for row in rows] == ["AAA"]
+    assert [call[1]["columns"] for call in calls] == [
+        ["symbol", "dt", "close", "adj_close"],
+        ["symbol", "dt", "close"],
+    ]
+
+
+def test_load_and_rank_returns_does_not_swallow_unrelated_arrow_errors(monkeypatch):
+    def fake_scan(*_args, **_kwargs):
+        raise pa.ArrowInvalid("Failed parsing partition expression")
+
+    monkeypatch.setattr("app.services.top_movers_service.datasets.scan", fake_scan)
+
+    with pytest.raises(pa.ArrowInvalid, match="partition expression"):
+        load_and_rank_returns(["AAA"], date(2026, 1, 2), date(2026, 1, 3))

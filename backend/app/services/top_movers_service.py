@@ -116,10 +116,27 @@ def rank_returns(
 def load_and_rank_returns(
     symbols: Iterable[str], start: date, end: date
 ) -> list[ReturnRow]:
-    table = datasets.scan(
-        "prices",
-        run_id=None,
-        dt_range=(start.isoformat(), end.isoformat()),
-        columns=["symbol", "dt", "close", "adj_close"],
-    )
+    scan_args = {
+        "run_id": None,
+        "dt_range": (start.isoformat(), end.isoformat()),
+    }
+    try:
+        table = datasets.scan(
+            "prices",
+            columns=["symbol", "dt", "close", "adj_close"],
+            **scan_args,
+        )
+    except pa.ArrowInvalid as exc:
+        message = str(exc).lower()
+        missing_adj_close = "adj_close" in message and any(
+            marker in message
+            for marker in ("no match for", "not found", "does not exist", "unknown field")
+        )
+        if not missing_adj_close:
+            raise
+        table = datasets.scan(
+            "prices",
+            columns=["symbol", "dt", "close"],
+            **scan_args,
+        )
     return rank_returns(table, symbols, start, end)
