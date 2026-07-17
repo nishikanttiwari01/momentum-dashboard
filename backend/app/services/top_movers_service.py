@@ -73,6 +73,8 @@ def rank_returns(
     symbols: Iterable[str],
     requested_start: date,
     requested_end: date,
+    *,
+    latest_two: bool = False,
 ) -> list[ReturnRow]:
     wanted = set(symbols)
     points: dict[str, list[tuple[date, float]]] = {symbol: [] for symbol in wanted}
@@ -99,6 +101,8 @@ def rank_returns(
         if not history:
             continue
         history.sort(key=lambda point: point[0])
+        if latest_two:
+            history = history[-2:]
         first, last = history[0], history[-1]
         if first[0] == last[0] or first[1] == 0:
             continue
@@ -114,7 +118,7 @@ def rank_returns(
 
 
 def load_and_rank_returns(
-    symbols: Iterable[str], start: date, end: date
+    symbols: Iterable[str], start: date, end: date, *, latest_two: bool = False
 ) -> list[ReturnRow]:
     scan_args = {
         "run_id": None,
@@ -139,4 +143,4 @@ def load_and_rank_returns(
             columns=["symbol", "dt", "close"],
             **scan_args,
         )
-    return rank_returns(table, symbols, start, end)
+    return rank_returns(table, symbols, start, end, latest_two=latest_two)

@@ -54,6 +54,26 @@ def test_rank_returns_uses_first_and_last_trading_days_inside_boundaries():
     ]
 
 
+def test_rank_returns_can_use_latest_two_sessions_for_daily_movers():
+    table = _prices(
+        [
+            {"symbol": "AAA", "dt": "2026-03-20", "close": 80.0},
+            {"symbol": "AAA", "dt": "2026-03-27", "close": 100.0},
+            {"symbol": "AAA", "dt": "2026-03-30", "close": 105.0},
+        ]
+    )
+
+    assert rank_returns(
+        table,
+        ["AAA"],
+        date(2026, 3, 20),
+        date(2026, 3, 30),
+        latest_two=True,
+    ) == [
+        ReturnRow("AAA", pytest.approx(5.0), date(2026, 3, 27), date(2026, 3, 30))
+    ]
+
+
 def test_rank_returns_prefers_adjusted_close_and_falls_back_per_row():
     table = _prices(
         [

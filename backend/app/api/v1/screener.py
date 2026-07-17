@@ -38,7 +38,7 @@ import logging
 import csv
 import io
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -961,8 +961,14 @@ def get_top_movers(
         if symbol:
             rows_by_symbol[str(symbol)] = row
 
+    calculation_start = (
+        requested_end - timedelta(days=10) if period == "1d" else requested_start
+    )
     ranked = load_and_rank_returns(
-        rows_by_symbol.keys(), requested_start, requested_end
+        rows_by_symbol.keys(),
+        calculation_start,
+        requested_end,
+        latest_two=period == "1d",
     )
     if not ranked:
         raise HTTPException(

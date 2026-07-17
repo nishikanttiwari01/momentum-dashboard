@@ -45,12 +45,13 @@ def unified_top_movers_client(monkeypatch):
     monkeypatch.setattr(screener_api, "_get_detail_deps", lambda: object())
     calls = []
 
-    def fake_load(symbols, start, end):
+    def fake_load(symbols, start, end, *, latest_two=False):
         calls.append((list(symbols), start, end))
+        resolved_start = end - (date.resolution * 1) if (end - start).days == 10 else start
         return [
-            ReturnRow("AAA", 12.0, start, end),
-            ReturnRow("CCC", 1.0, start, end),
-            ReturnRow("BBB", -7.0, start, end),
+            ReturnRow("AAA", 12.0, resolved_start, end),
+            ReturnRow("CCC", 1.0, resolved_start, end),
+            ReturnRow("BBB", -7.0, resolved_start, end),
         ]
 
     monkeypatch.setattr(screener_api, "load_and_rank_returns", fake_load, raising=False)
@@ -58,19 +59,19 @@ def unified_top_movers_client(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("period", "expected_start"),
+    ("period", "expected_start", "expected_calculation_start"),
     [
-        ("1d", date(2026, 3, 30)),
-        ("1w", date(2026, 3, 24)),
-        ("1m", date(2026, 2, 28)),
-        ("3m", date(2025, 12, 31)),
-        ("6m", date(2025, 9, 30)),
-        ("1y", date(2025, 3, 31)),
-        ("5y", date(2021, 3, 31)),
+        ("1d", date(2026, 3, 30), date(2026, 3, 21)),
+        ("1w", date(2026, 3, 24), date(2026, 3, 24)),
+        ("1m", date(2026, 2, 28), date(2026, 2, 28)),
+        ("3m", date(2025, 12, 31), date(2025, 12, 31)),
+        ("6m", date(2025, 9, 30), date(2025, 9, 30)),
+        ("1y", date(2025, 3, 31), date(2025, 3, 31)),
+        ("5y", date(2021, 3, 31), date(2021, 3, 31)),
     ],
 )
 def test_unified_top_movers_supports_presets_relative_to_snapshot(
-    unified_top_movers_client, period, expected_start
+    unified_top_movers_client, period, expected_start, expected_calculation_start
 ):
     client, fake_repo, calls = unified_top_movers_client
 
@@ -79,7 +80,7 @@ def test_unified_top_movers_supports_presets_relative_to_snapshot(
     assert response.status_code == 200
     body = response.json()
     assert fake_repo.calls == 1
-    assert calls[-1] == (["AAA", "BBB", "CCC"], expected_start, date(2026, 3, 31))
+    assert calls[-1] == (["AAA", "BBB", "CCC"], expected_calculation_start, date(2026, 3, 31))
     assert [row["symbol"] for row in body["gainers"]] == ["AAA", "CCC", "BBB"]
     assert [row["symbol"] for row in body["losers"]] == ["BBB", "CCC", "AAA"]
     assert body["requested_start_date"] == expected_start.isoformat()
@@ -100,6 +101,42 @@ def test_unified_top_movers_custom_range(unified_top_movers_client):
     body = response.json()
     assert body["requested_start_date"] == "2024-02-29"
     assert body["requested_end_date"] == "2025-02-28"
+
+
+def test_unified_top_movers_daily_uses_previous_session_across_market_closure(
+    monkeypatch, unified_top_movers_client
+):
+    from app.api.v1 import screener as screener_api
+
+    calls = []
+
+    def friday_to_monday(symbols, start, end, *, latest_two=False):
+        calls.append((list(symbols), start, end, latest_two))
+        return [
+            ReturnRow("AAA", 5.0, date(2026, 3, 27), date(2026, 3, 30))
+        ]
+
+    monkeypatch.setattr(screener_api, "load_and_rank_returns", friday_to_monday)
+    client, fake_repo, _ = unified_top_movers_client
+    original_read = fake_repo.read
+
+    def monday_snapshot(**kwargs):
+        rows, total, run_id, _as_of = original_read(**kwargs)
+        return rows, total, run_id, "2026-03-30T16:00:00Z"
+
+    monkeypatch.setattr(fake_repo, "read", monday_snapshot)
+
+    response = client.get("/api/v1/screener/top-movers?period=1d")
+
+    assert response.status_code == 200
+    assert calls == [
+        (["AAA", "BBB", "CCC"], date(2026, 3, 20), date(2026, 3, 30), True)
+    ]
+    body = response.json()
+    assert body["requested_start_date"] == "2026-03-29"
+    assert body["requested_end_date"] == "2026-03-30"
+    assert body["resolved_start_date"] == "2026-03-27"
+    assert body["resolved_end_date"] == "2026-03-30"
 
 
 @pytest.mark.parametrize(
@@ -133,7 +170,9 @@ def test_unified_top_movers_returns_no_trading_data(monkeypatch, unified_top_mov
     from app.api.v1 import screener as screener_api
 
     client, _, _ = unified_top_movers_client
-    monkeypatch.setattr(screener_api, "load_and_rank_returns", lambda *args: [], raising=False)
+    monkeypatch.setattr(
+        screener_api, "load_and_rank_returns", lambda *args, **kwargs: [], raising=False
+    )
     response = client.get("/api/v1/screener/top-movers?period=1m")
     assert response.status_code == 400
     assert response.json()["code"] == "no_trading_data"
