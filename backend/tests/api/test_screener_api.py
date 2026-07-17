@@ -1,16 +1,172 @@
 # tests/api/test_screener_api.py
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 import math
+from types import SimpleNamespace
 
 import pyarrow as pa
+import pytest
 from fastapi.testclient import TestClient
 
 from app.repos.parquet import datasets as ds
 from app.repos.parquet import scores_repo
 from app.repos.parquet.universe_repo import UniverseRepo
 from app.main import create_app
+from app.services.top_movers_service import ReturnRow
+
+
+@pytest.fixture
+def unified_top_movers_client(monkeypatch):
+    from app.api.v1 import screener as screener_api
+
+    rows = [
+        {"symbol": "AAA", "name": "Alpha", "sector": "IT", "last": 101.0, "score": 80.0, "run_id": "run-1"},
+        {"symbol": "BBB", "name": "Beta", "sector": "Energy", "last": 202.0, "score": 70.0, "run_id": "run-1"},
+        {"symbol": "CCC", "name": "Gamma", "sector": "Finance", "last": 303.0, "score": 60.0, "run_id": "run-1"},
+    ]
+
+    class FakeRepo:
+        calls = 0
+
+        def read(self, **kwargs):
+            self.calls += 1
+            return rows, len(rows), "run-1", "2026-03-31T16:00:00Z"
+
+    fake_repo = FakeRepo()
+    monkeypatch.setattr(screener_api, "repo", fake_repo)
+    monkeypatch.setattr(
+        screener_api,
+        "build_drawer_detail",
+        lambda symbol, run_id, deps: {
+            "next_action": {"code": "WATCH", "text": "Watch", "reasons": [], "refs": {}}
+        },
+    )
+    monkeypatch.setattr(screener_api, "_get_detail_deps", lambda: object())
+    calls = []
+
+    def fake_load(symbols, start, end):
+        calls.append((list(symbols), start, end))
+        return [
+            ReturnRow("AAA", 12.0, start, end),
+            ReturnRow("CCC", 1.0, start, end),
+            ReturnRow("BBB", -7.0, start, end),
+        ]
+
+    monkeypatch.setattr(screener_api, "load_and_rank_returns", fake_load, raising=False)
+    return TestClient(create_app()), fake_repo, calls
+
+
+@pytest.mark.parametrize(
+    ("period", "expected_start"),
+    [
+        ("1d", date(2026, 3, 30)),
+        ("1w", date(2026, 3, 24)),
+        ("1m", date(2026, 2, 28)),
+        ("3m", date(2025, 12, 31)),
+        ("6m", date(2025, 9, 30)),
+        ("1y", date(2025, 3, 31)),
+        ("5y", date(2021, 3, 31)),
+    ],
+)
+def test_unified_top_movers_supports_presets_relative_to_snapshot(
+    unified_top_movers_client, period, expected_start
+):
+    client, fake_repo, calls = unified_top_movers_client
+
+    response = client.get(f"/api/v1/screener/top-movers?period={period}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert fake_repo.calls == 1
+    assert calls[-1] == (["AAA", "BBB", "CCC"], expected_start, date(2026, 3, 31))
+    assert [row["symbol"] for row in body["gainers"]] == ["AAA", "CCC", "BBB"]
+    assert [row["symbol"] for row in body["losers"]] == ["BBB", "CCC", "AAA"]
+    assert body["requested_start_date"] == expected_start.isoformat()
+    assert body["requested_end_date"] == "2026-03-31"
+    assert body["resolved_start_date"] == expected_start.isoformat()
+    assert body["resolved_end_date"] == "2026-03-31"
+
+
+def test_unified_top_movers_custom_range(unified_top_movers_client):
+    client, _, calls = unified_top_movers_client
+
+    response = client.get(
+        "/api/v1/screener/top-movers?period=custom&start_date=2024-02-29&end_date=2025-02-28"
+    )
+
+    assert response.status_code == 200
+    assert calls[-1][1:] == (date(2024, 2, 29), date(2025, 2, 28))
+    body = response.json()
+    assert body["requested_start_date"] == "2024-02-29"
+    assert body["requested_end_date"] == "2025-02-28"
+
+
+@pytest.mark.parametrize(
+    ("query", "code"),
+    [
+        ("period=custom", "custom_dates_required"),
+        ("period=custom&start_date=2026-02-01", "custom_dates_required"),
+        ("period=custom&start_date=2026-02-02&end_date=2026-02-01", "invalid_date_range"),
+        ("period=1m&start_date=2026-02-01", "custom_dates_not_allowed"),
+        ("period=1m&end_date=2026-02-01", "custom_dates_not_allowed"),
+    ],
+)
+def test_unified_top_movers_rejects_invalid_date_combinations(
+    unified_top_movers_client, query, code
+):
+    client, _, _ = unified_top_movers_client
+    response = client.get(f"/api/v1/screener/top-movers?{query}")
+    assert response.status_code == 400
+    assert response.json()["code"] == code
+    assert response.json()["detail"]
+
+
+def test_unified_top_movers_invalid_period_uses_fastapi_validation(unified_top_movers_client):
+    client, _, _ = unified_top_movers_client
+    response = client.get("/api/v1/screener/top-movers?period=2y")
+    assert response.status_code == 422
+
+
+def test_unified_top_movers_returns_no_trading_data(monkeypatch, unified_top_movers_client):
+    from app.api.v1 import screener as screener_api
+
+    client, _, _ = unified_top_movers_client
+    monkeypatch.setattr(screener_api, "load_and_rank_returns", lambda *args: [], raising=False)
+    response = client.get("/api/v1/screener/top-movers?period=1m")
+    assert response.status_code == 400
+    assert response.json()["code"] == "no_trading_data"
+    assert response.json()["detail"] == "No stocks have usable trading data for the requested window."
+
+
+def test_unified_top_movers_keeps_empty_eligible_result_distinct_from_no_data(
+    monkeypatch, unified_top_movers_client
+):
+    from app.api.v1 import screener as screener_api
+
+    eligibility = SimpleNamespace(
+        enabled=True,
+        min_price=0,
+        min_avg_traded_value_cr=0,
+        max_abs_change_pct=0,
+    )
+    monkeypatch.setattr(
+        screener_api.app_config,
+        "load",
+        lambda: SimpleNamespace(
+            screener=SimpleNamespace(top_movers=eligibility)
+        ),
+    )
+    client, _, _ = unified_top_movers_client
+    response = client.get("/api/v1/screener/top-movers?period=1m")
+    assert response.status_code == 200
+    assert response.json()["gainers"] == []
+    assert response.json()["losers"] == []
+
+
+def test_unified_top_movers_removes_old_top_performers_route(unified_top_movers_client):
+    client, _, _ = unified_top_movers_client
+    assert client.get("/api/v1/screener/top-performers").status_code == 404
 
 
 def _seed_scores(tmp_root: Path, run_id: str = "20250912T101500Z", rows: int = 4):

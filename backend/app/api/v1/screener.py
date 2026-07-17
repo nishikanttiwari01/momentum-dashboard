@@ -8,7 +8,6 @@ from app.schemas.screener import (
     ScreenerList,
     ScreenerRow,
     TopMoverEntry,
-    TopMovers,
     ScreenerRunDate,
     ScreenerRunDateList,
     ScreenerRunSummary,
@@ -17,6 +16,7 @@ from app.schemas.screener import (
 from app.schemas.generated.models import DrawerNextAction
 from app.repos.parquet.scores_repo import ScoresRepo
 from app.services.detail_service import DetailDeps, build_drawer_detail
+from app.services.top_movers_service import load_and_rank_returns, resolve_window
 from app.repos.market_data_repo import MarketDataRepo
 from app.repos.parquet import datasets
 
@@ -899,14 +899,108 @@ def _is_num(v: Any) -> bool:
     return isinstance(v, numbers.Real) and math.isfinite(float(v))
 
 
-@router.get("/screener/top-movers", response_model=TopMovers)
-def get_top_movers(period: str = Query("1d", description="Period for percent change", pattern="^(1d|1w|1m|3m)$")) -> TopMovers:
-    field = PERIOD_FIELD_MAP.get(period)
-    if field is None:
-        raise HTTPException(status_code=400, detail={"code": "invalid_period", "detail": "Supported periods are 1d, 1w, 1m, 3m."})
+@router.get("/screener/top-movers")
+def get_top_movers(
+    period: str = Query(
+        "1d",
+        description="Period for percent change",
+        pattern="^(1d|1w|1m|3m|6m|1y|5y|custom)$",
+    ),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+) -> Dict[str, Any]:
+    if period == "custom":
+        if start_date is None or end_date is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "custom_dates_required",
+                    "message": "Custom period requires both start_date and end_date.",
+                },
+            )
+        if start_date > end_date:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_date_range",
+                    "message": "start_date must be on or before end_date.",
+                },
+            )
+    elif start_date is not None or end_date is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "custom_dates_not_allowed",
+                "message": "start_date and end_date are only allowed for the custom period.",
+            },
+        )
 
-    gain_rows, run_id_gainers, as_of_gainers = _fetch_sorted_rows(field, True)
-    lose_rows, run_id_losers, as_of_losers = _fetch_sorted_rows(field, False)
+    items, _total, run_id, resolved_as_of = repo.read(
+        run_id=None,
+        as_of_str=None,
+        filters={},
+        sort="score.desc",
+        page=1,
+        per_page=10_000,
+        columns=TOP_COLUMNS,
+    )
+    as_of_value = _parse_as_of(resolved_as_of) or date.today()
+    requested_start, requested_end = resolve_window(
+        period, as_of_value, start_date=start_date, end_date=end_date
+    )
+
+    eligibility = None
+    try:
+        eligibility = app_config.load().screener.top_movers
+    except Exception:
+        eligibility = None
+
+    rows_by_symbol: dict[str, dict[str, Any]] = {}
+    for row in items or []:
+        symbol = row.get("symbol")
+        if symbol:
+            rows_by_symbol[str(symbol)] = row
+
+    ranked = load_and_rank_returns(
+        rows_by_symbol.keys(), requested_start, requested_end
+    )
+    if not ranked:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "no_trading_data",
+                "message": "No stocks have usable trading data for the requested window.",
+            },
+        )
+    resolved_start = min(result.start_date for result in ranked)
+    resolved_end = max(result.end_date for result in ranked)
+
+    def eligible(row: dict[str, Any], value: float) -> bool:
+        if eligibility is None or not getattr(eligibility, "enabled", False):
+            return True
+        price = _to_float(row.get("last"))
+        if eligibility.min_price and (price is None or price < eligibility.min_price):
+            return False
+        liquidity = _to_float(row.get("liquidity"))
+        if (
+            eligibility.min_avg_traded_value_cr
+            and liquidity is not None
+            and liquidity < eligibility.min_avg_traded_value_cr
+        ):
+            return False
+        if (
+            eligibility.max_abs_change_pct is not None
+            and abs(value) >= eligibility.max_abs_change_pct
+        ):
+            return False
+        return True
+
+    ranked = [
+        result
+        for result in ranked
+        if result.symbol in rows_by_symbol
+        and eligible(rows_by_symbol[result.symbol], result.return_pct)
+    ]
 
     detail_deps = _get_detail_deps()
     detail_cache: dict[tuple[str, Optional[str]], DrawerNextAction] = {}
@@ -949,97 +1043,27 @@ def get_top_movers(period: str = Query("1d", description="Period for percent cha
             next_action=action,
         )
 
-    gainers: list[TopMoverEntry] = []
-    for row, value in gain_rows:
-        entry = make_entry(row, value)
-        if entry:
-            gainers.append(entry)
-        if len(gainers) >= TOP_LIMIT:
-            break
-
-    losers: list[TopMoverEntry] = []
-    for row, value in lose_rows:
-        entry = make_entry(row, value)
-        if entry:
-            losers.append(entry)
-        if len(losers) >= TOP_LIMIT:
-            break
-
-    run_id = run_id_gainers or run_id_losers
-    as_of_value = _parse_as_of(as_of_gainers) or _parse_as_of(as_of_losers)
-
-    return TopMovers(
-        period=period,
-        generated_at=datetime.now(timezone.utc),
-        run_id=run_id,
-        as_of=as_of_value,
-        gainers=gainers,
-        losers=losers,
-    )
-
-
-# --------------------------------------------------------------------------
-# Top performers — best trailing returns in the scanned universe, any size.
-# Backs the dashboard "Top Performers" card (3M / 6M / 1Y toggle).
-# --------------------------------------------------------------------------
-PERFORMER_PERIOD_FIELD: dict[str, str] = {
-    "3m": "ret_3m",
-    "6m": "ret_6m",
-    "1y": "ret_12_1m",  # 12-month return excluding the most recent month
-}
-PERFORMER_COLUMNS = [
-    "symbol", "name", "sector", "last",
-    "ret_1m", "ret_3m", "ret_6m", "ret_12_1m",
-    "score", "pct_from_52w_high", "run_id", "as_of",
-]
-
-
-@router.get("/screener/top-performers", summary="Top stocks by trailing return (any market cap)")
-def get_top_performers(
-    period: str = Query("6m", pattern="^(3m|6m|1y)$", description="Return window: 3m, 6m, or 1y (12m ex last month)"),
-    limit: int = Query(10, ge=1, le=50),
-) -> Dict[str, Any]:
-    field = PERFORMER_PERIOD_FIELD[period]
-    sort = f"{field}.desc,score.desc"
-    items, _total, resolved_run_id, resolved_as_of = repo.read(
-        run_id=None,
-        as_of_str=None,
-        filters={},
-        sort=sort,
-        page=1,
-        per_page=max(limit * 5, 50),
-        columns=PERFORMER_COLUMNS,
-    )
-
-    rows: list[Dict[str, Any]] = []
-    for row in items or []:
-        value = _to_float(row.get(field))
-        if value is None:
-            continue
-        rows.append(
-            {
-                "symbol": row.get("symbol"),
-                "name": row.get("name"),
-                "sector": row.get("sector"),
-                "price": _to_float(row.get("last")),
-                "ret_pct": value,
-                "ret_1m_pct": _to_float(row.get("ret_1m")),
-                "ret_3m_pct": _to_float(row.get("ret_3m")),
-                "ret_6m_pct": _to_float(row.get("ret_6m")),
-                "ret_1y_pct": _to_float(row.get("ret_12_1m")),
-                "score": _to_float(row.get("score")),
-                "pct_from_52w_high": _to_float(row.get("pct_from_52w_high")),
-            }
-        )
-    rows.sort(key=lambda r: r["ret_pct"], reverse=True)
+    def entries(results: list[Any]) -> list[TopMoverEntry]:
+        output: list[TopMoverEntry] = []
+        for result in results:
+            entry = make_entry(rows_by_symbol[result.symbol], result.return_pct)
+            if entry is not None:
+                output.append(entry)
+            if len(output) == TOP_LIMIT:
+                break
+        return output
 
     return {
         "period": period,
-        "field": field,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "run_id": resolved_run_id,
-        "as_of": _normalize_as_of_string(resolved_as_of if isinstance(resolved_as_of, str) else str(resolved_as_of or "")),
-        "items": rows[:limit],
+        "generated_at": datetime.now(timezone.utc),
+        "run_id": run_id,
+        "as_of": as_of_value,
+        "requested_start_date": requested_start,
+        "requested_end_date": requested_end,
+        "resolved_start_date": resolved_start,
+        "resolved_end_date": resolved_end,
+        "gainers": entries(ranked),
+        "losers": entries(sorted(ranked, key=lambda result: (result.return_pct, result.symbol))),
     }
 
 
