@@ -45,7 +45,6 @@ import SectorHeatmap from '../components/SectorHeatmap';
 import DataHealthPanel from '../components/DataHealthPanel';
 import AccumulationWatchCard from '../components/AccumulationWatchCard';
 import EtfWatchCard from '../components/EtfWatchCard';
-import TopPerformersCard from '../components/TopPerformersCard';
 import RelevantNewsCard from '../components/RelevantNewsCard';
 import MarketIndexChartCard from '../components/MarketIndexChartCard';
 import TradePositionsPanel, { PositionRow } from '../components/TradePositionsPanel';
@@ -57,7 +56,18 @@ const PERIOD_OPTIONS: { label: string; value: TopMoversPeriodValue }[] = [
   { label: '1 Week', value: TopMoversPeriod['1w'] },
   { label: '1 Month', value: TopMoversPeriod['1m'] },
   { label: '3 Months', value: TopMoversPeriod['3m'] },
+  { label: '6 Months', value: TopMoversPeriod['6m'] },
+  { label: '1 Year', value: TopMoversPeriod['1y'] },
+  { label: '5 Years', value: TopMoversPeriod['5y'] },
+  { label: 'Custom', value: TopMoversPeriod.custom },
 ];
+
+const isValidIsoDate = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return date.toISOString().slice(0, 10) === value;
+};
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -185,13 +195,21 @@ const SectionBand: React.FC<{ color: string; label: string; headingId: string }>
 
 export default function Dashboard() {
   const { refetchIntervalMs } = useOutletContext<OutletCtx>();
-  const [period, setPeriod] = React.useState<TopMoversPeriodValue>(TopMoversPeriod['1d']);
+  const [selectedPeriod, setSelectedPeriod] = React.useState<TopMoversPeriodValue>(TopMoversPeriod['1d']);
+  const [moversParams, setMoversParams] = React.useState({ period: TopMoversPeriod['1d'] } as {
+    period: TopMoversPeriodValue;
+    start_date?: string;
+    end_date?: string;
+  });
+  const [customStartDate, setCustomStartDate] = React.useState('');
+  const [customEndDate, setCustomEndDate] = React.useState('');
+  const [customDateError, setCustomDateError] = React.useState<string | null>(null);
   const [drawerSymbol, setDrawerSymbol] = React.useState<string | null>(null);
   const [drawerAsOf, setDrawerAsOf] = React.useState<string | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
 
   const moversQuery = useGetTopMovers(
-    { period },
+    moversParams,
     {
       axios: { baseURL: '' },
       query: {
@@ -272,8 +290,24 @@ export default function Dashboard() {
 
   const handlePeriodChange = (_event: React.SyntheticEvent<Element, Event>, value: TopMoversPeriodValue | null) => {
     if (value) {
-      setPeriod(value);
+      setSelectedPeriod(value);
+      setCustomDateError(null);
+      if (value !== TopMoversPeriod.custom) {
+        setMoversParams({ period: value });
+        setCustomStartDate('');
+        setCustomEndDate('');
+      }
     }
+  };
+
+  const handleApplyCustomPeriod = () => {
+    if (!isValidIsoDate(customStartDate) || !isValidIsoDate(customEndDate)) return;
+    if (customStartDate > customEndDate) {
+      setCustomDateError('Start date must be on or before end date');
+      return;
+    }
+    setCustomDateError(null);
+    setMoversParams({ period: TopMoversPeriod.custom, start_date: customStartDate, end_date: customEndDate });
   };
 
   const handleOpenDrawer = React.useCallback(
@@ -418,10 +452,7 @@ export default function Dashboard() {
         <SectorHeatmap refetchIntervalMs={refetchIntervalMs} />
 
         <Grid container spacing={2} alignItems="stretch">
-          <Grid item xs={12} lg={6}>
-            <TopPerformersCard onOpenSymbol={(symbol) => handleOpenDrawer(symbol, poolData?.as_of)} />
-          </Grid>
-          <Grid item xs={12} lg={6}>
+          <Grid item xs={12} lg={12} data-testid="etf-watch-grid">
             <EtfWatchCard />
           </Grid>
         </Grid>
@@ -570,6 +601,9 @@ export default function Dashboard() {
             {moversData ? (
               <Typography variant="caption" color="text.secondary">
                 {`Snapshot ${displayDate(moversData.as_of ?? 'latest')} • Updated ${displayDateTime(moversData.generated_at)}`}
+                {moversData.resolved_start_date && moversData.resolved_end_date
+                  ? ` • Range ${moversData.resolved_start_date} – ${moversData.resolved_end_date}`
+                  : ''}
               </Typography>
             ) : (
               <Typography variant="caption" color="text.secondary">
@@ -577,7 +611,7 @@ export default function Dashboard() {
               </Typography>
             )}
           </Stack>
-          <ToggleButtonGroup exclusive value={period} onChange={handlePeriodChange} size="small">
+          <ToggleButtonGroup exclusive value={selectedPeriod} onChange={handlePeriodChange} size="small">
             {PERIOD_OPTIONS.map((option) => (
               <ToggleButton key={option.value} value={option.value} sx={{ textTransform: 'none' }}>
                 {option.label}
@@ -585,6 +619,35 @@ export default function Dashboard() {
             ))}
           </ToggleButtonGroup>
         </Stack>
+        {selectedPeriod === TopMoversPeriod.custom ? (
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ sm: 'flex-start' }} sx={{ mb: 2 }}>
+            <TextField
+              label="Start date"
+              type="date"
+              size="small"
+              value={customStartDate}
+              onChange={(event) => { setCustomStartDate(event.target.value); setCustomDateError(null); }}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              label="End date"
+              type="date"
+              size="small"
+              value={customEndDate}
+              onChange={(event) => { setCustomEndDate(event.target.value); setCustomDateError(null); }}
+              InputLabelProps={{ shrink: true }}
+            />
+            <Button
+              variant="contained"
+              size="small"
+              disabled={!isValidIsoDate(customStartDate) || !isValidIsoDate(customEndDate)}
+              onClick={handleApplyCustomPeriod}
+            >
+              Apply
+            </Button>
+            {customDateError ? <Typography color="error" variant="caption">{customDateError}</Typography> : null}
+          </Stack>
+        ) : null}
         <Divider sx={{ mb: 2 }} />
         {moversQuery.isError ? (
           <Typography color="error">Unable to load top movers right now.</Typography>

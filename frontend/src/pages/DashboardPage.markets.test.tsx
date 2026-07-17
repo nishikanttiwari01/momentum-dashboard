@@ -24,7 +24,6 @@ vi.mock('../components/TradePositionsPanel', () => ({ default: () => <div data-t
 vi.mock('../components/SectorHeatmap', () => ({ default: () => null }));
 vi.mock('../components/AccumulationWatchCard', () => ({ default: () => null }));
 vi.mock('../components/EtfWatchCard', () => ({ default: () => null }));
-vi.mock('../components/TopPerformersCard', () => ({ default: () => null }));
 vi.mock('../components/RelevantNewsCard', () => ({ default: () => null }));
 vi.mock('@/features/detail/RightDrawer', () => ({ default: () => null }));
 
